@@ -191,7 +191,8 @@ object AppStore {
         }
     }
 
-    private fun env(confirm: suspend (String, String) -> Boolean) = object : InstallPipeline.Env {
+    /** The real on-phone Env. internal (was private) only so the emulator checks (androidTest StoreEmuTest) can wrap it. */
+    internal fun env(confirm: suspend (String, String) -> Boolean): InstallPipeline.Env = object : InstallPipeline.Env {
         private val abis = Build.SUPPORTED_ABIS.toList()
         override suspend fun confirmInstall(title: String, detail: String) = confirm(title, detail)
         override suspend fun confirmRisk(title: String, detail: String) = confirm(title, detail)

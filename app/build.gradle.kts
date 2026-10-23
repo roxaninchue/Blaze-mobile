@@ -18,7 +18,10 @@ android {
         // v0.30.1 Music Store: Jamendo client_id, from the environment or -Pjamendo.clientId at build time. Never hard-coded;
         // empty = "not configured" (the user can paste one in the Music Store instead).
         buildConfigField("String", "JAMENDO_CLIENT_ID", "\"" + (System.getenv("JAMENDO_CLIENT_ID") ?: (project.findProperty("jamendo.clientId") as String?) ?: "").replace("\"", "") + "\"")
-        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+        // app/emu-store (emulator checks only): -Pblaze.abis=x86_64 builds a debug APK that installs on x86_64 emulators.
+        // Default (no property) is unchanged: arm64-v8a + armeabi-v7a.
+        ndk { abiFilters += ((project.findProperty("blaze.abis") as String?)?.split(",")?.map { it.trim() } ?: listOf("arm64-v8a", "armeabi-v7a")) }
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     // 0.45.15 (key rotation, user-approved 22 Oct 08:32): no signing key or password lives in this repo. Gradle signs with the
     // SDK's own debug key (fine for local runs and CI test builds); a release APK is re-signed outside the repo with the
@@ -264,4 +267,12 @@ dependencies {
     testImplementation("androidx.test:core:1.6.1")
     testImplementation("androidx.test.ext:junit:1.2.1")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+    // app/emu-store: instrumented Store installer checks on emulators (androidTest/.../appstore/StoreEmuTest.kt).
+    androidTestImplementation(bom)
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.test:core:1.6.1")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
 }

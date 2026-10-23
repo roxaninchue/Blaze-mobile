@@ -12,3 +12,4 @@ app/src/main/jniLibs/*/libblazerouter.so
 
 # YouTube Store plug-in: private repo blazeinchue/Blaze-mobile, cloned here for builds (see README "YouTube plug-in")
 youtube/
+app/src/androidTest/assets/emu/
