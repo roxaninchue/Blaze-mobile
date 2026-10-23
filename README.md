@@ -12,11 +12,11 @@ Chat, voice ("Hey Blaze"), floating orb, and phone control through an Accessibil
 Local and CI builds are signed with the Android SDK's own debug key. No signing key lives in this repo: releases are re-signed outside it with the private Blaze release key and a v3 lineage from the old key (rotated in 0.45.15; the old key is public and burned).
 
 ### YouTube plug-in (private, optional)
-The YouTube Store plug-in (Gradle module `:youtube`) lives in the private repo
-[blazeinchue/Blaze-mobile](https://github.com/blazeinchue/Blaze-mobile), not here. `youtube/` is in
+The YouTube Store plug-in (Gradle module `:youtube`) lives in a separate private repo
+(ask the owner for access), not here. `youtube/` is in
 `.gitignore`; Gradle includes `:youtube` only when `youtube/build.gradle.kts` exists, so without it Blaze builds as
 normal with no YouTube Store.
-- **Local dev with YouTube:** `git clone https://github.com/blazeinchue/Blaze-mobile.git youtube` in this folder
+- **Local dev with YouTube:** clone the private YouTube plug-in repo as `youtube/` in this folder
   (needs access), then `./gradlew :storeapi:test :youtube:test assembleRelease`. Commit plug-in changes inside `youtube/`
   (its own repo).
 - **CI (historic, GitHub):** `build.yml` checked Blaze-mobile `main` out into `youtube/` with the Actions secret `BLAZE_MOBILE_TOKEN`
