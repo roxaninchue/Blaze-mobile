@@ -38,7 +38,10 @@ class LaunchInterceptor(
         val instanceField = HiddenApi.field(singletonCls, "mInstance")
         val real = HiddenApi.get(instanceField, singleton) ?: return false
         if (java.lang.reflect.Proxy.isProxyClass(real.javaClass)) return true // already ours
-        val shim = ServiceShim.wrap(className, real, rewriter, AndroidArgAdapters.all(), handlers())
+        // Content providers handed out by the activity manager are wrapped too (ProviderShim): their calls carry the
+        // caller's AttributionSource, which must name Blaze, not the guest.
+        val providerResults = ProviderShim.RESULT_METHODS.associateWith { _ -> { r: Any? -> ProviderShim.wrapHolder(r, rewriter) } }
+        val shim = ServiceShim.wrap(className, real, rewriter, AndroidArgAdapters.all(), handlers(), providerResults)
         return HiddenApi.set(instanceField, singleton, shim)
     }
 

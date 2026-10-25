@@ -37,6 +37,8 @@ class ServiceShim(
     private val rewriter: IdentityRewriter,
     private val adapters: List<IdentityRewriter.ArgAdapter>,
     private val handlers: Map<String, ShimHandler>,
+    /** Post-processes a real service's result by method name (e.g. wrap a returned content provider). */
+    private val results: Map<String, (Any?) -> Any?> = emptyMap(),
 ) : InvocationHandler {
 
     override fun invoke(proxy: Any?, method: Method, rawArgs: Array<Any?>?): Any? {
@@ -51,7 +53,9 @@ class ServiceShim(
                 if (r !== PassThrough) return r
             }
             rewriter.rewriteArgs(args, adapters)
-            return method.invoke(real, *args)
+            val r = method.invoke(real, *args)
+            val post = results[method.name] ?: return r
+            return try { post(r) } catch (t: Throwable) { KilnLog.w("$serviceName.${method.name} result filter failed: ${t.javaClass.simpleName}"); r }
         } catch (e: java.lang.reflect.InvocationTargetException) {
             val cause = e.cause ?: e
             // The real service refused even after the identity rewrite: record which one (harness diagnostics).
@@ -75,10 +79,11 @@ class ServiceShim(
             rewriter: IdentityRewriter,
             adapters: List<IdentityRewriter.ArgAdapter> = emptyList(),
             handlers: Map<String, ShimHandler> = emptyMap(),
+            results: Map<String, (Any?) -> Any?> = emptyMap(),
         ): Any = Proxy.newProxyInstance(
             real.javaClass.classLoader,
             allInterfaces(real.javaClass),
-            ServiceShim(serviceName, real, rewriter, adapters, handlers),
+            ServiceShim(serviceName, real, rewriter, adapters, handlers, results),
         )
 
         private fun allInterfaces(cls: Class<*>): Array<Class<*>> {

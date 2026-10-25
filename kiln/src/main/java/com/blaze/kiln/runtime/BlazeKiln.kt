@@ -235,6 +235,9 @@ class BlazeKiln private constructor(private val appContext: Context) {
         val loader = GuestLoader(appContext, layout)
         val swap = LaunchSwap(
             onGuestLaunch = { pkg, profile, abi ->
+                // Providers Blaze's own code acquired in this process after the hooks went in.
+                val swept = try { ProviderShim.sweep(rewriter) } catch (t: Throwable) { -1 }
+                if (swept != 0) KilnDiag.info("PROVIDERS", "wrapped $swept content provider(s) before the guest launch")
                 if (GuestApp.loaded(pkg) == null) {
                     val loaded = try { loader.load(pkg, profile, abi) } catch (t: Throwable) {
                         KilnDiag.step(HarnessStep.GUEST_LOADED, false, "${t.javaClass.simpleName}: ${t.message}")
@@ -263,6 +266,7 @@ class BlazeKiln private constructor(private val appContext: Context) {
         val swapOk = swap.install()
         val icOk = interceptor.install()
         val cached = ServiceCacheShim.install(RefusalClassifier.CACHE_SHIMMED, rewriter, AndroidArgAdapters.all())
+        val providers = try { ProviderShim.sweep(rewriter) } catch (t: Throwable) { -1 }
         val ok = swapOk && icOk
         if (!pmOk) KilnLog.w("package-manager shim not installed; guests cannot query themselves")
         intercepting = ok
@@ -271,7 +275,7 @@ class BlazeKiln private constructor(private val appContext: Context) {
         KilnDiag.step(HarnessStep.GUEST_HOOKS, ok,
             "API ${android.os.Build.VERSION.SDK_INT}; hidden API ${if (unsealed) "open" else "CLOSED"}; launch swap ${if (swapOk) "ok" else "FAILED"}; " +
                 "activity manager shim ${if (icOk) "ok" else "FAILED"}; package shim ${if (pmOk) "ok" else "FAILED"}; " +
-                "services wrapped: ${cached.joinToString(",").ifEmpty { "none" }}" + (if (missing.isNotEmpty()) "; not wrapped: ${missing.joinToString(",")}" else ""))
+                "providers wrapped: $providers; services wrapped: ${cached.joinToString(",").ifEmpty { "none" }}" + (if (missing.isNotEmpty()) "; not wrapped: ${missing.joinToString(",")}" else ""))
         return ok
     }
 
