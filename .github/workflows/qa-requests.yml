@@ -1,0 +1,32 @@
+name: QA replay requests
+# Temporary (0.45.26 gate): writes the app's own replay request files (HaloReplayRequestTest) and uploads them. Branch deleted after.
+on:
+  push:
+    branches: [ "app/qa-rel26" ]
+permissions:
+  contents: read
+env:
+  GRADLE_OPTS: "-Dorg.gradle.daemon=false"
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21" }
+      - uses: gradle/actions/setup-gradle@v4
+      - name: SDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-34" "build-tools;34.0.0" > /dev/null
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          chmod +x gradlew
+      - name: Request files
+        run: set -o pipefail; ./gradlew :app:testDebugUnitTest --tests 'com.blaze.assistant.agent.HaloReplayRequestTest' --console=plain "-Dorg.gradle.jvmargs=-Xmx5g -Xss8m -XX:MaxMetaspaceSize=1g" -Pkotlin.compiler.execution.strategy=in-process -Pkotlin.jvm.target.validation.mode=warning 2>&1 | tail -80
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qa-requests
+          retention-days: 3
+          path: app/build/qa/
