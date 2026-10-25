@@ -1,3 +1,10 @@
+## v0.45.26: cleanup, no hidden leftovers (versionCode 172)
+- Maintenance only: no new features.
+- Removed leftover code from the retired on-phone Linux desktop that had come back into the app; it was not reachable from any screen. Pairing with Blaze Desktop on your computer stays.
+- Removed two unused settings screens that could have shown model and provider names; Blaze never shows which model replied.
+- Merging memories now records a problem quietly instead of ignoring it when a merged line can't be removed.
+- Updates in place from 0.45.23, 0.45.24 and 0.45.25.
+
 ## v0.45.25: Sky browser, sleeping tabs (versionCode 170)
 - New "Sky" browser look: frosted glass over a sky new-tab page (BLAZE wordmark, time and date, search with voice, your site apps and bookmarks, pick up where you left off), the page edge to edge with one floating pill (site info, address, VPN, tabs, Blaze), small chips for back / forward / reload / home and what Blaze is doing in the background (tap Watch to see that tab).
 - Tap the address for the launcher: search open tabs, history and Ask Blaze, every tool in one grid (Ask page, Pointer, Translate, Find in page, Bookmarks, History, Downloads, Saved, Passwords, Install app, My apps, Desktop site, Share, Tasks) and the VPN, location mask, tracker blocking and private browsing switches. Tap the lock for the site sheet.

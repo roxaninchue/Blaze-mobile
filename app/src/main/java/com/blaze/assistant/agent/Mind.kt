@@ -677,7 +677,7 @@ object Mind {
         val (kind, subject) = MemoryMerge.pick(mems)
         val keep = mems.first()
         if (!d.update(keep.id, merged, kind, subject, max = MERGED_MAX)) return 0L to "Couldn't merge right now."
-        mems.drop(1).forEach { try { d.delete(it.id) } catch (_: Exception) { } }
+        mems.drop(1).forEach { try { d.delete(it.id) } catch (e: Exception) { com.blaze.assistant.device.CrashLog.quiet("Mind: merge delete", e) } }
         changed()
         return keep.id to ""
     }
