@@ -117,7 +117,7 @@ object CloudSync {
             ReactionAdapter(sp),
             MemoryAdapter(object : MemoryStore {
                 override fun all() = com.blaze.assistant.agent.Mind.all().map { MemoryStore.Line(it.kind, it.subject, it.text, it.related, it.updated) }
-                override fun add(l: MemoryStore.Line) { com.blaze.assistant.agent.Mind.save(l.kind, l.subject, l.text, l.related) }
+                override fun add(l: MemoryStore.Line) { com.blaze.assistant.agent.Mind.save(l.kind, l.subject, l.text, l.related, max = com.blaze.assistant.agent.Mind.MERGED_MAX) }
                 override fun remove(l: MemoryStore.Line) {
                     com.blaze.assistant.agent.Mind.all().filter { MemoryAdapter.idOf(it.text) == MemoryAdapter.idOf(l.text) }
                         .forEach { com.blaze.assistant.agent.Mind.delete(it.id) }
@@ -316,11 +316,11 @@ object CloudSync {
     /** Sync now: also retries items that were skipped for size or a full cloud copy. Returns the status line. */
     suspend fun syncNow(): String {
         try { val st = state(); st.retrySkipped(); st.save() } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("CloudSync: val st state st.retrySkipped st.save", e) }
-        return sync()
+        return sync(manual = true)
     }
 
     /** One round. Returns the status line (also in [view]). */
-    suspend fun sync(): String = withContext(Dispatchers.IO) {
+    suspend fun sync(manual: Boolean = false): String = withContext(Dispatchers.IO) {
         if (!isOn()) return@withContext "Cloud sync is off."
         lock.withLock {
             val key = key()
@@ -334,10 +334,12 @@ object CloudSync {
                 return@withLock _view.value.status
             }
             publish(busy = true)
+            // 0.45.24: a restore, a big round or Sync now shows how far it is in a notification (SyncNote).
+            val note = SyncNote(app, manual).also { it.start() }
             val msg = try {
                 applying = true
                 val st = state()
-                val r = try { SyncEngine(api, adapters(st), key, st).run() } finally { split?.release() }
+                val r = try { SyncEngine(api, adapters(st), key, st, progress = note::step).run() } finally { split?.release() }
                 Settings.setStr(LAST, System.currentTimeMillis().toString())
                 publish(skipped = r.skipped)
                 when {
@@ -347,6 +349,7 @@ object CloudSync {
                 }
             } catch (e: SyncEngine.NotSetUp) {
                 applying = false
+                note.end("Your cloud copy was deleted")
                 turnOff("Your cloud copy was deleted from another phone, so sync is off here. Everything on this phone stays.")
                 return@withLock _view.value.status
             } catch (e: SyncEngine.WrongKey) {
@@ -358,6 +361,7 @@ object CloudSync {
                 plain(e)
             } catch (e: Exception) { plain(e) } finally { applying = false }
             publish(msg, busy = false)
+            note.end(msg)
             msg
         }
     }

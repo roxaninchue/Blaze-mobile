@@ -1,5 +1,6 @@
 package com.blaze.assistant.agent
 
+import kotlinx.coroutines.launch
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -94,14 +95,29 @@ object OfflineBrain {
         return com.google.mediapipe.tasks.genai.llminference.LlmInference.createFromOptions(app, o).also { engine = it }
     }
 
-    fun close() { try { (engine as? com.google.mediapipe.tasks.genai.llminference.LlmInference)?.close() } catch (_: Throwable) { }; engine = null }
+    @Synchronized fun close() { idleClose?.cancel(); idleClose = null; try { (engine as? com.google.mediapipe.tasks.genai.llminference.LlmInference)?.close() } catch (_: Throwable) { }; engine = null }
+
+    // v0.45.23 perf: the model holds ~500 MB of RAM; release it after a few idle minutes (it reloads on the next offline reply).
+    private const val IDLE_CLOSE_MS = 5 * 60_000L
+    private val idleScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Default)
+    @Volatile private var idleClose: kotlinx.coroutines.Job? = null
+    @Volatile private var busy = 0
+    @Synchronized private fun armIdleClose() {
+        idleClose?.cancel()
+        if (engine == null) return
+        idleClose = idleScope.launch { kotlinx.coroutines.delay(IDLE_CLOSE_MS); synchronized(this@OfflineBrain) { if (busy == 0) close() } }
+    }
+    /** Memory pressure from Android: drop the engine if it isn't answering right now. */
+    @Synchronized fun trim() { if (busy == 0 && engine != null) close() }
 
     /** From LlmClient: an assistant message when offline and ready, else null (the cloud handles it). */
     suspend fun maybe(messages: JSONArray, onText: ((String) -> Unit)?): JSONObject? {
         lastUsed = false
         if (!::app.isInitialized || !on || !ready() || online()) return null
         val out = withContext(Dispatchers.Default) {
+            synchronized(this@OfflineBrain) { busy++ }
             try { llm().generateResponse(prompt(messages)).replace("<|im_end|>", "").trim() } catch (e: Throwable) { null }
+            finally { synchronized(this@OfflineBrain) { busy--; armIdleClose() } }
         } ?: return null
         val text = out.ifBlank { "I'm offline right now and couldn't think that one through. I'll pick it up when the connection is back." } + "\n\n_(offline brain)_"
         onText?.invoke(text); lastUsed = true

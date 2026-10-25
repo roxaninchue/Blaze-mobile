@@ -18,6 +18,8 @@ class SyncEngine(
     private val key: ByteArray,
     private val state: State,
     private val now: () -> Long = System::currentTimeMillis,
+    /** 0.45.24: how far the round is (after each pulled page and pushed batch), for the sync notification. */
+    private val progress: ((SyncProgress.Step) -> Unit)? = null,
 ) {
     // ---------------- the outside world ----------------
 
@@ -110,7 +112,7 @@ class SyncEngine(
             if (meta.check.isNotEmpty() && !SyncCrypto.checks(key, meta.check)) throw WrongKey()
             state.clearItems(); state.cursor = 0; state.epoch = meta.epoch
         }
-        pullAll()
+        pullAll(meta.bytes)
         flushAll()
         try { pushAll() } finally { flushAll() }
         state.save()
@@ -121,17 +123,23 @@ class SyncEngine(
 
     // ---------------- pull ----------------
 
-    private fun pullAll() {
+    private fun pullAll(cloudBytes: Long = 0) {
         var since = state.cursor
+        val full = since == 0L
         var guard = 0
+        var seen = 0; var bytes = 0L
         while (guard++ < 10_000) {
             val page = api.pull(since, PULL_LIMIT)
             for (r in page.items) take(r)
             since = page.next
             state.cursor = since
+            seen += page.items.size; bytes += page.items.sumOf { (it.blob?.length ?: 0).toLong() }
+            tell(SyncProgress.Step(SyncProgress.Phase.PULL, seen, 0, bytes, if (full) cloudBytes else 0, full, page.more && page.items.isNotEmpty()))
             if (!page.more || page.items.isEmpty()) break
         }
     }
+
+    private fun tell(s: SyncProgress.Step) { try { progress?.invoke(s) } catch (_: Exception) { } }
 
     /** A copy from the server (pulled, or the server's side of a push conflict). */
     private fun take(r: Remote) {
@@ -203,6 +211,8 @@ class SyncEngine(
             }
             if (out.isEmpty()) return
             var conflicts = 0
+            var sent = 0
+            tell(SyncProgress.Step(SyncProgress.Phase.PUSH, 0, out.size))
             for (batch in batches(out)) {
                 val res = pushWithRetry(batch.map { it.first })
                 val stampOf = batch.associate { (it.first.kind + "\u0000" + it.first.id) to it.second }
@@ -220,6 +230,8 @@ class SyncEngine(
                     state.put(r.kind, r.id, Entry(st?.rev ?: 0, stampOf[r.kind + "\u0000" + r.id] ?: "", st?.t ?: 0, skipped = true))
                 }
                 for (c in res.conflicts) { conflicts++; take(c) }
+                sent += batch.size
+                tell(SyncProgress.Step(SyncProgress.Phase.PUSH, sent, out.size))
             }
             if (conflicts == 0) return
         }

@@ -1167,7 +1167,7 @@ When you finish, say what you did in one short sentence.
                 s("control", "Phone control is turned off in settings, so you can only chat.")
             }
             s("pim", "\nYou can also read and send texts, check calls, read and add calendar events, look up contacts, toggle the flashlight and volume, and schedule routines with your tools. Sending a text or placing a call asks the user for approval automatically.")
-            if (Settings.followups) s("followups", "\nAt the very end of each final answer (never when calling tools), add one line exactly like <<follow-ups: first | second | third>> with three short next requests (max 6 words each) written as the user would say them. Skip it for routines.")
+            if (Settings.followups) s("followups", "\n" + QuickReplies.RULE + " Skip it for routines.")
             s("load_tools", "\nIf a tool you need isn't in your list, call load_tools with its group, then carry on.")
             s("weather", GatewayWeather.SYSTEM_LINE)   // v0.45.5 (#7b): one source for weather, chat and Home alike
             // v0.45.9: Blaze is on a phone and can save files; no capability refusals for registered tools.
@@ -1756,7 +1756,7 @@ When you finish, say what you did in one short sentence.
                 val isLast = i == parts.size - 1
                 val th = if (isFirst) think else ""
                 val ms = if (isFirst) tms else 0L
-                val fu2 = if (isLast) p.followups else emptyList()
+                val fu2 = if (isLast) QuickReplies.filter(p.followups, lastUserText()) else emptyList()
                 val meta2 = if (isLast) meta else ""
                 val media2 = if (isLast) media else emptyList()
                 val rc2 = if (isLast) receipt else ""
@@ -4286,7 +4286,7 @@ When you finish, say what you did in one short sentence.
                         else kotlinx.coroutines.withContext(Dispatchers.IO) { Mind.run(name, args) }.also { add(Role.STEP, it.take(80)) }
                     }
                 }
-                in Mind.toolNames -> { add(Role.STEP, if (name == "memory_search") (if (MemoryIntent.meansAll(args.optString("query"))) "Looking through what I remember" else "Checking memory for \u201c${args.optString("query").take(40)}\u201d") else "Saving to memory")
+                in Mind.toolNames -> { add(Role.STEP, if (name == "memory_search") (if (MemoryIntent.meansAll(args.optString("query"))) "Looking through what I remember" else "Checking memory for \u201c${args.optString("query").take(40)}\u201d") else if (name == "memory_merge") "Merging memories" else "Saving to memory")
                     kotlinx.coroutines.withContext(Dispatchers.IO) { Mind.run(name, args) } }
                 "generate_image" -> if (Regex("(?i)\\b(pie|bar|line)\\s*chart|\\bgraph\\b|\\bplot\\b|\\bdiagram\\b|\\btable\\b|\\bpdf\\b|\\binfographic|\\bspreadsheet").containsMatchIn(args.optString("prompt"))) {
                     "Refused: the AI picture tool can't draw exact charts, tables or documents (it makes a random look-alike). Make it with run_code (Python matplotlib / reportlab) and save under /root/phone/. " +
@@ -4896,7 +4896,7 @@ When you finish, say what you did in one short sentence.
                 SkillGuard.Freq.note(sig, userText, covered)
             } else false
             val d00 = Learn.decide(Learn.Turn(userText, reply.text, tools,
-                savedMemory = tools.any { it == "remember" || it == "forget" || it == "memory_save" || it == "memory_update" },
+                savedMemory = tools.any { it == "remember" || it == "forget" || it == "memory_save" || it == "memory_update" || it == "memory_merge" },
                 savedSkill = savedSkill), repeat || frequent)
             val d0 = if (frequent && !savedSkill && !d00.skill) d00.copy(reflect = true, skill = true, why = "a task done often has no skill yet") else d00
             // One mind: save as you go. One cheap extraction call per real turn writes or merges memories; the

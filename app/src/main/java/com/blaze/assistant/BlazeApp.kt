@@ -131,6 +131,8 @@ class BlazeApp : Application() {
         super.onTrimMemory(level)
         if (com.blaze.assistant.device.MemoryTrim.shouldDropCaches(level)) {
             try { com.blaze.assistant.device.MemoryTrim.dropCaches() } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("onTrimMemory", e) }
+            // v0.45.23 perf: also give back the offline model's ~500 MB if it isn't answering (it reloads on demand).
+            try { com.blaze.assistant.agent.OfflineBrain.trim() } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("onTrimMemory", e) }
         }
     }
 
@@ -138,5 +140,6 @@ class BlazeApp : Application() {
     override fun onLowMemory() {
         super.onLowMemory()
         try { com.blaze.assistant.device.MemoryTrim.dropCaches() } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("onLowMemory", e) }
+        try { com.blaze.assistant.agent.OfflineBrain.trim() } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("onLowMemory", e) }
     }
 }

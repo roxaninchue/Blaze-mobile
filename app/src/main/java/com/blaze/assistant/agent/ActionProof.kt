@@ -94,7 +94,7 @@ object ActionProof {
             r("""\b(turn|switch|toggle|enable|disable|mute|unmute|wi-?fi|bluetooth|flashlight|torch|hotspot|airplane|dark mode|brightness|volume|do not disturb|dnd)\b""")),
         Action("memory", "save that to memory",
             r("""$ME(?:saved|noted|stored|added|put)\b[^.!?\n]{0,30}\bmemor(?:y|ies)\b|$ME(?:remembered|memori[sz]ed)\b|\bi(?:'ll| will) remember\b|\b(?:saved|added) (?:it |that )?to (?:my |your )?memory\b|\bgot it,? i(?:'ll| will) remember\b"""),
-            setOf("memory_save", "memory_update", "remember", "update_brief"),
+            setOf("memory_save", "memory_update", "memory_merge", "remember", "update_brief"),
             r("""\b(remember|memori[sz]e|save|note|don't forget|keep in mind|memory)\b""")),
         Action("file", "write that file",
             r("""$ME(?:saved|created|wrote|written|exported|deleted|renamed|moved)\b[^.!?\n]{0,30}\b(?:file|pdf|document|doc|csv|spreadsheet|folder|download)s?\b|\b(?:file|pdf|document)\b[^.!?\n]{0,15}\b(?:is |has been )(?:saved|created|exported|ready)\b"""),

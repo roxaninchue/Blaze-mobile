@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -158,7 +159,15 @@ private fun TabCard(t: BrowserEngine.Tab, selected: Boolean, g: GridColors, open
         }
         Box(Modifier.fillMaxWidth().aspectRatio(0.78f).padding(start = 4.dp, end = 4.dp, bottom = 4.dp).clip(RoundedCornerShape(12.dp))
             .background(if (t.isPrivate) Color(0xFF2A2B2E) else Color.White), contentAlignment = Alignment.Center) {
-            val th = t.thumb
+            // v0.45.25: a sleeping tab's picture is on disk; decoded (160 px, RGB_565) only while its card shows.
+            val disk by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, t.id, t.thumbOnDisk) {
+                value = if (!t.thumbOnDisk) null else kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    try { BrowserEngine.thumbFile(t)?.takeIf { it.exists() }?.let { f ->
+                        android.graphics.BitmapFactory.decodeFile(f.path, android.graphics.BitmapFactory.Options().apply { inPreferredConfig = android.graphics.Bitmap.Config.RGB_565 })
+                    }?.asImageBitmap() } catch (_: Throwable) { null }
+                }
+            }
+            val th = t.thumb ?: disk
             val blank = t.url.isBlank() || t.url == "about:blank"
             when {
                 th != null && !blank -> Image(th, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)

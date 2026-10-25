@@ -116,7 +116,10 @@ object MindReview {
         val now = System.currentTimeMillis()
         if (now - last < THROTTLE_MS) return 0
         d.setMeta("review_at", now.toString())
-        return review()
+        val n = review()
+        // 0.45.24: then fold near-duplicate lines together (MemoryMerge.groups); never cuts a line.
+        try { lock.withLock { Mind.consolidate() } } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Throwable) { }
+        return n
     }
 }
 

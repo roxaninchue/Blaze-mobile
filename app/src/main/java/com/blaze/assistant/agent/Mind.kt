@@ -34,6 +34,10 @@ object Mind {
     const val EXTRACT_CHARS = 6_000
     const val SAME = 0.5
     const val INFERRED = "(inferred)"
+    /** 0.45.24: one saved line keeps at most this many characters (MemoryMerge.cap)… */
+    const val TEXT_MAX = 280
+    /** …and a line merged from several related ones up to this many. */
+    const val MERGED_MAX = 1200
 
     // ---------------- shared prompt text (word for word with Desktop) ----------------
 
@@ -80,11 +84,18 @@ object Mind {
     fun squash(s: String) = s.trim().split(Regex("\\s+")).joinToString(" ")
 
     /** One clean line; "(inferred)" added once when [inferred]. */
-    fun clean(text: String, inferred: Boolean = false): String {
+    fun clean(text: String, inferred: Boolean = false, max: Int = TEXT_MAX): String {
         var t = squash(text).removePrefix("- ").removePrefix("* ").trim().removeSuffix(".").trim()
-        if (inferred && !t.contains(INFERRED, true)) t = "$t $INFERRED"
-        return t.take(600)
+        if (inferred && !t.contains(INFERRED, true)) {
+            // 0.45.24: the "(inferred)" mark always survives the cap.
+            t = MemoryMerge.cap(t, max - INFERRED.length - 1) + " " + INFERRED
+            return t
+        }
+        return MemoryMerge.cap(t, max)
     }
+
+    /** How long an edit of [old] may be: the normal cap, or the merged cap for a line already longer than that (never cut). */
+    fun editMax(old: String): Int = if (old.length > TEXT_MAX) maxOf(MERGED_MAX, old.length) else TEXT_MAX
 
     /** What [save] does with a new line, given what is already stored. */
     fun decide(existing: List<Mem>, kind: String, subject: String, text: String): Decision {
@@ -93,8 +104,16 @@ object Mind {
         same.firstOrNull { squash(it.text).equals(squash(text), true) }?.let { return Decision.Same(it.id) }
         // The identical line saved under another subject or kind is still a duplicate.
         existing.firstOrNull { squash(it.text).equals(squash(text), true) }?.let { return Decision.Same(it.id) }
+        // 0.45.24: the same words with other punctuation, a near-copy, or a line that adds nothing to a saved one.
+        existing.firstOrNull { MemoryMerge.norm(it.text) == MemoryMerge.norm(text) }?.let { return Decision.Same(it.id) }
+        existing.filter { MemoryMerge.covers(it.text, text) }.maxByOrNull { jaccard(it.text, text) }?.let { return Decision.Same(it.id) }
+        existing.filter { MemoryMerge.nearDup(it.text, text) }.maxByOrNull { jaccard(it.text, text) }?.let { near ->
+            // A slightly fuller wording replaces a normal line; a merged (long) line is never overwritten.
+            return if (near.text.length <= TEXT_MAX && Mind.words(text).size > Mind.words(near.text).size) Decision.Update(near.id) else Decision.Same(near.id)
+        }
         val best = same.maxByOrNull { jaccard(it.text, text) } ?: return Decision.Insert
-        return if (jaccard(best.text, text) >= SAME) Decision.Update(best.id) else Decision.Insert
+        // A merged line (longer than a normal one) is never replaced by a newer short one: the new line is kept beside it.
+        return if (jaccard(best.text, text) >= SAME && best.text.length <= TEXT_MAX) Decision.Update(best.id) else Decision.Insert
     }
 
     /** Pinned core: every profile line (newest [CORE_PROFILE]) then the newest [CORE_PREFS] preferences, under [CORE_MAX] chars. */
@@ -239,8 +258,10 @@ object Mind {
         fun all(): List<Mem>
         fun mem(id: Long): Mem?
         /** Insert or rewrite through [decide]. Returns (outcome, id); outcome is "saved", "updated" or "same". Times in ms. */
-        fun save(kind: String, subject: String, text: String, related: String = "", sourceTurn: Long = 0, now: Long = System.currentTimeMillis()): Pair<String, Long>
-        fun update(id: Long, text: String, kind: String? = null, subject: String? = null, now: Long = System.currentTimeMillis()): Boolean
+        /** [max]: the line's character cap ([TEXT_MAX] for a normal save, [MERGED_MAX] for a merge, a sync or an import). */
+        fun save(kind: String, subject: String, text: String, related: String = "", sourceTurn: Long = 0, now: Long = System.currentTimeMillis(), max: Int = TEXT_MAX): Pair<String, Long>
+        /** [max] 0 = [editMax] of the stored line (an edit never cuts what is already saved). */
+        fun update(id: Long, text: String, kind: String? = null, subject: String? = null, now: Long = System.currentTimeMillis(), max: Int = 0): Boolean
         fun delete(id: Long)
         fun search(query: String, kind: String? = null, limit: Int = 12): List<Mem>
         // v0.19.0 logs (MindLogs): journal rows that aren't chat turns.
@@ -419,9 +440,9 @@ object Mind {
         }
 
         /** Insert or rewrite through [decide]. Returns (outcome, id); outcome is "saved", "updated" or "same". */
-        @Synchronized override fun save(kind: String, subject: String, text: String, related: String, sourceTurn: Long, now: Long): Pair<String, Long> {
-            retired?.let { return it.save(kind, subject, text, related, sourceTurn, now) }
-            val k = normKind(kind); val s = squash(subject).ifBlank { "You" }.take(60); val t = clean(text)
+        @Synchronized override fun save(kind: String, subject: String, text: String, related: String, sourceTurn: Long, now: Long, max: Int): Pair<String, Long> {
+            retired?.let { return it.save(kind, subject, text, related, sourceTurn, now, max) }
+            val k = normKind(kind); val s = squash(subject).ifBlank { "You" }.take(60); val t = clean(text, max = max)
             val db = writableDatabase
             return when (val d = decide(all(), k, s, t)) {
                 is Decision.Same -> "same" to d.id
@@ -438,10 +459,10 @@ object Mind {
             }
         }
 
-        @Synchronized override fun update(id: Long, text: String, kind: String?, subject: String?, now: Long): Boolean {
-            retired?.let { return it.update(id, text, kind, subject, now) }
+        @Synchronized override fun update(id: Long, text: String, kind: String?, subject: String?, now: Long, max: Int): Boolean {
+            retired?.let { return it.update(id, text, kind, subject, now, max) }
             val old = mem(id) ?: return false
-            val t = clean(text).ifBlank { old.text }
+            val t = clean(text, max = if (max > 0) max else editMax(old.text)).ifBlank { old.text }
             val s = subject?.let { squash(it).take(60) }?.ifBlank { null } ?: old.subject
             val db = writableDatabase
             db.update("memories", ContentValues().apply { put("text", t); put("subject", s); put("updated", now)
@@ -625,18 +646,49 @@ object Mind {
 
     fun promptBlock(): String = block(all())
 
-    fun save(kind: String, subject: String, text: String, related: String = "", sourceTurn: Long = 0): Pair<String, Long> {
+    /** [max]: [TEXT_MAX] for a normal save; [MERGED_MAX] for a line that comes in whole (cloud sync, a restore). */
+    fun save(kind: String, subject: String, text: String, related: String = "", sourceTurn: Long = 0, max: Int = TEXT_MAX): Pair<String, Long> {
         val d = db ?: return "unavailable" to 0L
-        val t = clean(text)
+        val t = clean(text, max = max)
         if (t.length < 3) return "empty" to 0L
         if (Learn.secret(t)) return "secret" to 0L
-        return d.save(kind, subject, t, related, sourceTurn).also { if (it.first != "same") changed() }
+        return d.save(kind, subject, t, related, sourceTurn, max = max).also { if (it.first != "same") changed() }
     }
 
     fun update(id: Long, text: String, kind: String? = null, subject: String? = null): Boolean {
         val d = db ?: return false
         if (Learn.secret(text)) return false
         return d.update(id, text, kind, subject).also { if (it) changed() }
+    }
+
+    /**
+     * 0.45.24: merges the lines [ids] into one (the oldest keeps its #id; the others are deleted). [text] is the merged
+     * line when the model or the user wrote it; otherwise the lines are combined ([MemoryMerge.combine]). Up to
+     * [MERGED_MAX] characters; a longer result is refused, never cut. Returns (merged id, "") or (0, why not).
+     */
+    fun merge(ids: List<Long>, text: String = ""): Pair<Long, String> {
+        val d = db ?: return 0L to "Memory isn't available on this phone right now."
+        val byId = try { d.all().associateBy { it.id } } catch (_: Exception) { return 0L to "Memory isn't available on this phone right now." }
+        val mems = ids.distinct().mapNotNull { byId[it] }.sortedWith(compareBy({ it.created }, { it.id }))
+        if (mems.size < 2) return 0L to "Pick at least two saved lines to merge (memory_search gives the #ids)."
+        val merged = (if (text.isNotBlank()) squash(text).removeSuffix(".").takeIf { it.length <= MERGED_MAX } else MemoryMerge.combine(mems.map { it.text }))
+            ?: return 0L to "Too long to merge into one line (over $MERGED_MAX characters). Merge fewer lines."
+        if (Learn.secret(merged)) return 0L to "Not merged: that looks like a password, code or account number."
+        val (kind, subject) = MemoryMerge.pick(mems)
+        val keep = mems.first()
+        if (!d.update(keep.id, merged, kind, subject, max = MERGED_MAX)) return 0L to "Couldn't merge right now."
+        mems.drop(1).forEach { try { d.delete(it.id) } catch (_: Exception) { } }
+        changed()
+        return keep.id to ""
+    }
+
+    /** 0.45.24: the automatic pass: merges each group of near-duplicate lines ([MemoryMerge.groups]). Returns how many groups. */
+    fun consolidate(): Int {
+        val d = db ?: return 0
+        val groups = try { MemoryMerge.groups(d.all()) } catch (_: Exception) { return 0 }
+        var n = 0
+        for (g in groups) if (merge(g.map { it.id }).first > 0) n++
+        return n
     }
 
     fun delete(id: Long) { db?.delete(id); changed() }
@@ -679,9 +731,10 @@ object Mind {
     fun importFacts(d: Store, facts: List<String>): Int {
         var n = 0
         for (f in facts) {
-            val t = clean(f); if (t.length < 3 || Learn.secret(t)) continue
+            // 0.45.24: an import (a restored backup's list) keeps long lines whole, up to the merged cap.
+            val t = clean(f, max = MERGED_MAX); if (t.length < 3 || Learn.secret(t)) continue
             val (k, s) = guessKind(t)
-            if (d.save(k, s, t).first == "saved") n++
+            if (d.save(k, s, t, max = MERGED_MAX).first == "saved") n++
         }
         return n
     }
@@ -693,7 +746,7 @@ object Mind {
 
     // ---------------- tools ----------------
 
-    val toolNames = setOf("memory_search", "memory_save", "memory_update", "memory_delete")
+    val toolNames = setOf("memory_search", "memory_save", "memory_update", "memory_delete", "memory_merge")
 
     private fun fn(name: String, desc: String, props: JSONObject, req: List<String>) = JSONObject().put("type", "function").put("function",
         JSONObject().put("name", name).put("description", desc).put("parameters", JSONObject().put("type", "object").put("properties", props).put("required", JSONArray(req))))
@@ -714,6 +767,11 @@ object Mind {
         // text match, which found nothing for "#12" and could hit several lines for a word.
         fn("memory_delete", "Delete saved lines by their #ids from memory_search (e.g. duplicates or outdated lines the user asked to remove). The user confirms once for the whole list.",
             JSONObject().put("ids", JSONObject().put("type", "array").put("items", JSONObject().put("type", "integer")).put("description", "The #ids to delete, at most ${MemoryDelete.MAX} per call")),
+            listOf("ids")),
+        // 0.45.24: several lines about one thing become one (up to $MERGED_MAX characters, a normal line keeps $TEXT_MAX).
+        fn("memory_merge", "Merge saved lines that repeat or belong together (#ids from memory_search) into one line. Give text to write the merged line yourself (keep every fact and condition, at most $MERGED_MAX characters), or leave it out to combine them as they are.",
+            JSONObject().put("ids", JSONObject().put("type", "array").put("items", JSONObject().put("type", "integer")).put("description", "Two or more #ids"))
+                .put("text", str("The merged line (optional)")),
             listOf("ids")),
     )
 
@@ -757,8 +815,14 @@ object Mind {
             }
             "memory_update" -> {
                 val id = args.optLong("id")
-                if (update(id, clean(args.optString("text")), args.optString("kind").ifBlank { null }, args.optString("subject").ifBlank { null })) "Updated #$id."
+                // 0.45.24: the store caps the edit (TEXT_MAX, or the line's own length when it is a merged one).
+                if (update(id, squash(args.optString("text")), args.optString("kind").ifBlank { null }, args.optString("subject").ifBlank { null })) "Updated #$id."
                 else "No saved line #$id (memory_search gives the ids)."
+            }
+            "memory_merge" -> {
+                val want = MemoryDelete.idsOf(args.opt("ids") ?: args.opt("id"))
+                val (id, err) = merge(want, args.optString("text"))
+                if (id > 0) "Merged ${want.size} lines into #$id." else err
             }
             else -> "Unknown tool"
         }

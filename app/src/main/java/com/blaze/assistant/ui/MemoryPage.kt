@@ -84,6 +84,10 @@ fun MemoryPage(mems0: List<Mind.Mem>? = null, mode0: String = "", select0: Long 
     var query by remember { mutableStateOf(query0) }
     var sel by remember { mutableLongStateOf(select0) }
     if (sel != 0L && mems.none { it.id == sel }) sel = 0L
+    // 0.45.24: pick memories in the list, then Merge them into one line (Mind.merge); Tidy up merges near-duplicates.
+    var picking by remember { mutableStateOf(false) }
+    var picked by remember { mutableStateOf(emptySet<Long>()) }
+    var mergeNote by remember { mutableStateOf("") }
     // v0.26.3: one plain line when blaze.db couldn't be used (Blaze is on the copy it kept in mind.db).
     val notice = if (mems0 == null) Mind.notice else null
 
@@ -108,6 +112,27 @@ fun MemoryPage(mems0: List<Mind.Mem>? = null, mode0: String = "", select0: Long 
         Spacer(Modifier.width(8.dp))
         Segmented(listOf("graph" to "Graph", "list" to "List"), mode) { mode = it; runCatching { Settings.setStr("memory_view", it) } }
     }
+    if (Mind.ready && mems0 == null && mems.size >= 2) {
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (!picking) {
+                KitButton("Select to merge", Btn.GHOST) { picking = true; picked = emptySet(); sel = 0L; mergeNote = ""; if (mode != "list") { mode = "list" } }
+                KitButton("Tidy up duplicates", Btn.GHOST) {
+                    val n = Mind.consolidate()
+                    mergeNote = if (n == 0) "No duplicates to merge" else "Merged $n ${if (n == 1) "group" else "groups"} of duplicates"
+                }
+            } else {
+                KitButton(if (picked.size >= 2) "Merge ${picked.size}" else "Merge", Btn.ACCENT, enabled = picked.size >= 2) {
+                    val (id, err) = Mind.merge(picked.toList())
+                    mergeNote = if (id > 0) "Merged ${picked.size} into one" else err
+                    if (id > 0) { picking = false; picked = emptySet(); sel = id }
+                }
+                KitButton("Cancel", Btn.LINE) { picking = false; picked = emptySet(); mergeNote = "" }
+            }
+        }
+        if (picking) Label("Tap the memories to merge into one line", size = 9.sp, color = c.sub, modifier = Modifier.padding(top = 6.dp))
+        if (mergeNote.isNotEmpty()) Label(mergeNote, size = 9.sp, color = c.accent, modifier = Modifier.padding(top = 6.dp))
+    }
     if (matches != null) Label(if (matches.isEmpty()) "No memory matches \u201c$q\u201d" else "${matches.size} ${if (matches.size == 1) "match" else "matches"}",
         size = 9.sp, color = if (matches.isEmpty()) c.sub else c.accent, modifier = Modifier.padding(top = 8.dp))
     Spacer(Modifier.height(12.dp))
@@ -123,7 +148,10 @@ fun MemoryPage(mems0: List<Mind.Mem>? = null, mode0: String = "", select0: Long 
             Box(Modifier.bringIntoViewRequester(bring)) { MemoryDetail(selected, graph, onSelect = { sel = it }, onClose = { sel = 0L }) }
         }
     } else {
-        MemoryList(mems, matches, sel, graph) { sel = if (sel == it) 0L else it }
+        MemoryList(mems, matches, sel, graph, picking, picked) { id ->
+            if (picking) picked = if (id in picked) picked - id else picked + id
+            else sel = if (sel == id) 0L else id
+        }
     }
     Spacer(Modifier.height(16.dp))
     ForgetAll(mems.size)
@@ -393,7 +421,7 @@ private fun dotGrid(ds: DrawScope, c: BlazeColors) = with(ds) {
 // ---------------------------------------------------------------- list
 
 @Composable
-private fun MemoryList(mems: List<Mind.Mem>, matches: Set<Long>?, sel: Long, graph: MemGraph, onTap: (Long) -> Unit) {
+private fun MemoryList(mems: List<Mind.Mem>, matches: Set<Long>?, sel: Long, graph: MemGraph, picking: Boolean = false, picked: Set<Long> = emptySet(), onTap: (Long) -> Unit) {
     val shown = mems.filter { matches == null || it.id in matches }
     if (shown.isEmpty()) { Rows { EmptyState("No memory matches", "Try a name, a place or a word from the memory.", mark = false) }; return }
     Mind.KINDS.forEach { k ->
@@ -403,13 +431,23 @@ private fun MemoryList(mems: List<Mind.Mem>, matches: Set<Long>?, sel: Long, gra
         Rows {
             group.forEachIndexed { i, m ->
                 KitRow(m.subject.ifBlank { m.text }, if (m.subject.isBlank()) "" else m.text, first = i == 0,
-                    onClick = { onTap(m.id) }, lead = { KindMark(k, on = m.id == sel) })
-                if (m.id == sel) Box(Modifier.padding(start = 10.dp, end = 10.dp, bottom = 10.dp)) {
+                    onClick = { onTap(m.id) }, lead = { if (picking) PickMark(m.id in picked) else KindMark(k, on = m.id == sel) })
+                if (!picking && m.id == sel) Box(Modifier.padding(start = 10.dp, end = 10.dp, bottom = 10.dp)) {
                     MemoryDetail(m, graph, onSelect = { onTap(it) }, onClose = { onTap(m.id) })
                 }
             }
         }
         Spacer(Modifier.height(16.dp))
+    }
+}
+
+/** 0.45.24: the tick box of a memory while picking lines to merge. */
+@Composable
+private fun PickMark(on: Boolean) {
+    val c = LocalBlaze.current.mono
+    Box(Modifier.size(16.dp).clip(BlazeShapes.pill).background(if (on) c.accent else androidx.compose.ui.graphics.Color.Transparent, BlazeShapes.pill)
+        .drawBehind { if (!on) drawCircle(c.sub, style = Stroke(1.dp.toPx())) }, contentAlignment = Alignment.Center) {
+        if (on) Text("\u2713", style = TextStyle(fontFamily = Type.Sans, fontSize = 10.sp, color = c.paper))
     }
 }
 

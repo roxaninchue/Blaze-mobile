@@ -1,5 +1,6 @@
 package com.blaze.assistant.ui
 
+import kotlinx.coroutines.flow.first
 import android.Manifest
 import android.content.Context
 import android.content.Intent
@@ -257,6 +258,11 @@ object Overlay {
         cardWatch = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main + com.blaze.assistant.device.CrashLog.guard).launch {
             var wasBusy = false; var wasFg = Agent.inForeground
             while (true) {
+                // v0.45.23 perf: nothing to show while no chat is busy, so suspend until one is instead of waking every 400 ms.
+                if (Agent.busyChats.value.isEmpty() && !wasBusy && cardView == null) {
+                    Agent.busyChats.first { it.isNotEmpty() }
+                    wasFg = Agent.inForeground
+                }
                 val busy = Agent.busyChats.value.isNotEmpty()
                 val now = System.currentTimeMillis()
                 // Pop up briefly when a task starts (or you leave Blaze mid-task), then get out of the way.

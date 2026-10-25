@@ -40,6 +40,8 @@ object Watchers {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val log = ArrayDeque<String>()
     @Volatile private var scheduled = false
+    @Volatile private var lastCheckAt = 0L
+    private const val CHECK_GAP_MS = 150L
     @Volatile private var acting = false
     private var lastHumanNote = 0L
 
@@ -128,7 +130,10 @@ object Watchers {
     fun onEvent(svc: BlazeAccessibilityService, pkg: String) {
         if (list.isEmpty() || scheduled || acting) return
         scheduled = true
-        main.postDelayed({ scheduled = false; try { check(svc, pkg) } catch (_: Exception) { } }, 60)
+        // v0.45.23 perf: at most one full-tree scan per CHECK_GAP_MS (content-changed events can arrive ~10/s from any app);
+        // still a trailing check, so the newest screen is always looked at.
+        val wait = maxOf(60L, CHECK_GAP_MS - (SystemClock.uptimeMillis() - lastCheckAt))
+        main.postDelayed({ scheduled = false; lastCheckAt = SystemClock.uptimeMillis(); try { check(svc, pkg) } catch (_: Exception) { } }, wait)
     }
 
     private fun live(pkg: String): List<W> {

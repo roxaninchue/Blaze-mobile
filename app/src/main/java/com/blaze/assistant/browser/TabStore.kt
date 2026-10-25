@@ -11,7 +11,14 @@ import java.io.File
  * The JSON codec is pure so it's tested on the JVM; the WebView parts live in [BrowserEngine].
  */
 object TabStore {
-    data class Snap(val url: String, val title: String, val state: Map<String, String> = emptyMap())
+    /**
+     * [stateFile] (v0.45.25): a sleeping normal tab keeps its back/forward state on disk, not in RAM; [encode] (run on
+     * the writer thread) reads it from there.
+     */
+    data class Snap(val url: String, val title: String, val state: Map<String, String> = emptyMap(), val stateFile: File? = null) {
+        /** The state, from memory or from its file. */
+        fun fullState(): Map<String, String> = if (state.isEmpty() && stateFile != null) readState(stateFile) else state
+    }
     data class Saved(val tabs: List<Snap>, val active: Int)
 
     const val VERSION = 1
@@ -30,10 +37,11 @@ object TabStore {
         val a = JSONArray()
         tabs.forEach { t ->
             val o = JSONObject().put("u", if (t.url == "about:blank") "" else t.url).put("t", t.title.take(300))
-            val size = t.state.entries.sumOf { it.key.length + it.value.length }
-            if (t.state.isNotEmpty() && size <= MAX_STATE && size <= budget) {
+            val st = t.fullState()
+            val size = st.entries.sumOf { it.key.length + it.value.length }
+            if (st.isNotEmpty() && size <= MAX_STATE && size <= budget) {
                 budget -= size
-                o.put("s", JSONObject().apply { t.state.forEach { (k, v) -> put(k, v) } })
+                o.put("s", JSONObject().apply { st.forEach { (k, v) -> put(k, v) } })
             }
             a.put(o)
         }
@@ -74,6 +82,25 @@ object TabStore {
         val f = file() ?: return
         try { val tmp = File(f.path + ".tmp"); tmp.writeText(encode(s)); if (!tmp.renameTo(f)) { f.writeText(tmp.readText()); tmp.delete() } } catch (_: Exception) { }
     }
+
+    // ---------- v0.45.25 sleeping tabs: one small state file per tab ----------
+    private fun stateDir() = dir?.let { File(it, "browser_tabstate") }
+    fun stateFileFor(tabId: Int): File? = stateDir()?.let { File(it, "$tabId.json") }
+
+    fun writeState(f: File, state: Map<String, String>) {
+        try {
+            f.parentFile?.mkdirs()
+            val tmp = File(f.path + ".tmp"); tmp.writeText(JSONObject().apply { state.forEach { (k, v) -> put(k, v) } }.toString())
+            if (!tmp.renameTo(f)) { f.writeText(tmp.readText()); tmp.delete() }
+        } catch (_: Exception) { f.delete() }
+    }
+
+    fun readState(f: File): Map<String, String> = try {
+        if (!f.exists()) emptyMap() else JSONObject(f.readText()).let { o -> o.keys().asSequence().associateWith { o.optString(it) } }
+    } catch (_: Exception) { emptyMap() }
+
+    /** Clears state files left by tabs of an earlier run (they are all in browser_tabs.json by now). */
+    fun clearStateFiles() { try { stateDir()?.listFiles()?.forEach { it.delete() } } catch (_: Exception) { } }
 
     fun read(): Saved = decode(try { file()?.takeIf { it.exists() }?.readText() } catch (_: Exception) { null })
 }

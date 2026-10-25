@@ -106,9 +106,17 @@ object Proactive {
             if (com.blaze.assistant.phone.Skills.granted(app, arrayOf(android.Manifest.permission.READ_CALENDAR)))
                 com.blaze.assistant.phone.Skills.run(app, "calendar_events", JSONObject().put("days", 1)).take(1500) else "(no calendar access)"
         } catch (_: Exception) { "(calendar unavailable)" }
+        val signals = sweepSignals(since)
+        val device = DeviceStatus.describe(app)
+        // v0.45.23 perf: in quiet hours only urgent heads-ups are shown (say() drops the rest). With no new notifications or
+        // chats, no phone signals, no device warnings, no calendar events, no open follow-ups, no urgent hint, and outside the
+        // morning/evening brief windows, there is nothing the model could raise: skip the background LLM call.
+        if (urgentHint == null && quietNow() && notes.isEmpty() && signals.isBlank() && !device.contains("\nAttention:") &&
+            (cal.trim().startsWith("No events") || cal.trim().startsWith("(")) && quietSkipSafe(since))
+            return@withLock
         val ctx = buildString {
             append("Now: ").append(SimpleDateFormat("EEEE d MMMM, HH:mm", Locale.getDefault()).format(Date())).append('\n')
-            append(DeviceStatus.describe(app)).append("\n\n")
+            append(device).append("\n\n")
             if (urgentHint != null) append("URGENT-LOOKING MESSAGE JUST ARRIVED: $urgentHint\n\n")
             append("New notifications since ${f.format(Date(since))}:\n")
             // v0.45.5 (P1): chats are summarised per conversation with each speaker named (MessagingStyle), never from the
@@ -133,7 +141,7 @@ object Proactive {
                 append('\n')
             }
             append("Calendar today:\n$cal\n\n")
-            sweepSignals(since).takeIf { it.isNotBlank() }?.let { append("Phone signals:\n").append(it).append("\n\n") }
+            signals.takeIf { it.isNotBlank() }?.let { append("Phone signals:\n").append(it).append("\n\n") }
             synchronized(digest) { if (digest.isNotEmpty()) append("Saved for the next brief:\n").append(digest.joinToString("\n") { "- $it" }).append("\n\n") }
             try { com.blaze.assistant.proactive.FollowUps.run(JSONObject()).takeIf { it != "Nothing open." }?.let { append("Follow-ups Blaze is tracking (don't repeat these unless the time is close; never nudge about one marked replied):\n").append(it).append("\n\n") } } catch (_: Throwable) { }
             append("Already told the user recently:\n").append(recent.value.takeLast(6).joinToString("\n") { "- ${it.text}" }.ifEmpty { "(nothing)" })
@@ -154,6 +162,16 @@ Reply ONLY with JSON: {"say": "" or "one or two short friendly sentences", "urge
         val o = try { JSONObject(raw.substring(raw.indexOf('{'), raw.lastIndexOf('}') + 1)) } catch (_: Exception) { return@withLock }
         val text = o.optString("say").trim()
         if (text.isNotEmpty()) say(text, (if (morning || evening) "brief:" else "") + text.lowercase().take(40), o.optBoolean("urgent"), o.optString("suggest").trim())
+    }
+
+    /** v0.45.23 perf: the rest of the quiet-hours skip test (no brief window, no new chats, no open follow-ups). */
+    private fun quietSkipSafe(since: Long): Boolean {
+        val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        if (hour in quietTo..(quietTo + 4) || hour in 19..21) return false
+        val chats = try { com.blaze.assistant.notify.Conversations.list().any { it.updated > since } } catch (_: Throwable) { true }
+        if (chats) return false
+        val follow = try { com.blaze.assistant.proactive.FollowUps.run(JSONObject()) } catch (_: Throwable) { "" }
+        return follow == "Nothing open."
     }
 
     private val digest = mutableListOf<String>()

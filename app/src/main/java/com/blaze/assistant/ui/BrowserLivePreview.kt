@@ -71,7 +71,7 @@ fun BrowserLivePreview(onHide: () -> Unit) {
 
     TiltGlassPane(
         paneSize = { mw, mh -> previewSize(mw, mh, ratio) },
-        capture = { GlassPaneLook.capture(BrowserEngine.tab()?.web?.takeIf { it.isAttachedToWindow }, scale.coerceIn(0.1f, 1f)) },
+        capture = { GlassPaneLook.capture(BrowserEngine.tab()?.live?.takeIf { it.isAttachedToWindow }, scale.coerceIn(0.1f, 1f)) },
         onBackdropTap = { },
         header = {
             Box(Modifier.size(8.dp).clip(CircleShape).background(c.accent))
@@ -99,7 +99,7 @@ fun BrowserLivePreview(onHide: () -> Unit) {
                 }
             }, update = { f ->
                 f.visibility = if (showLive) View.VISIBLE else View.INVISIBLE
-                if (stepAt >= 0L) hostPage(f, BrowserEngine.tab()?.web, vw, vh, scale)
+                if (stepAt >= 0L) hostPage(f, BrowserEngine.tab()?.live, vw, vh, scale)   // v0.45.25: never wakes a sleeping tab
             }, onRelease = { f -> giveBack(f) }, modifier = Modifier.fillMaxSize().onSizeChanged { boxW = it.width })
             if (tab == null) Text("Starting the browser\u2026", modifier = Modifier.align(Alignment.Center).padding(12.dp),
                 style = TextStyle(fontFamily = Type.Sans, fontSize = 12.sp, color = LightColors.sub))

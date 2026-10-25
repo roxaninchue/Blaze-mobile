@@ -2,6 +2,8 @@ package com.blaze.assistant.ui
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -39,18 +41,19 @@ import androidx.compose.ui.unit.sp
 object StepPillView { const val TAG = "step_pill" }
 
 @Composable
-fun StepPillRow(text: String?, specialist: Boolean = false, modifier: Modifier = Modifier) {
+fun StepPillRow(text: String?, specialist: Boolean = false, modifier: Modifier = Modifier, inline: Boolean = false) {
     val c = LocalBlaze.current
-    AnimatedVisibility(text != null, modifier = modifier, enter = fadeIn(), exit = fadeOut()) {
+    // 0.45.24: beside the drop ([inline]); it leaves at once (no fade over the reply's first words). Remove animations: no fades at all.
+    AnimatedVisibility(text != null, modifier = modifier, enter = MotionTokens.fade(), exit = if (inline) ExitTransition.None else MotionTokens.fadeAway()) {
         val shown = text.orEmpty()
-        Row(Modifier.fillMaxWidth().padding(start = 4.dp, top = 6.dp, bottom = 2.dp)) {
+        Row(if (inline) Modifier.padding(start = 6.dp) else Modifier.fillMaxWidth().padding(start = 4.dp, top = 6.dp, bottom = 2.dp)) {
             Row(Modifier.widthIn(max = 300.dp).clip(RoundedCornerShape(14.dp)).background(BubblePalette.capsule(c), RoundedCornerShape(14.dp))
                 .border(1.dp, BubblePalette.edge(c), RoundedCornerShape(14.dp))
                 .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite; contentDescription = shown }
                 .padding(horizontal = 11.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(if (specialist) 6.dp else 5.dp).clip(CircleShape).background(if (specialist) c.accent else BubblePalette.capsuleInk(c)))
                 Spacer(Modifier.width(7.dp))
-                AnimatedContent(shown, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "stepPill") { t ->
+                AnimatedContent(shown, transitionSpec = { if (MotionTokens.enabled) fadeIn() togetherWith fadeOut() else EnterTransition.None togetherWith ExitTransition.None }, label = "stepPill") { t ->
                     Text(t, maxLines = 1, overflow = TextOverflow.Ellipsis,
                         style = TextStyle(fontFamily = Type.Sans, fontSize = 12.sp, lineHeight = 15.sp, color = BubblePalette.capsuleInk(c)))
                 }

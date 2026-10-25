@@ -1,3 +1,26 @@
+## v0.45.25: Sky browser, sleeping tabs (versionCode 170)
+- New "Sky" browser look: frosted glass over a sky new-tab page (BLAZE wordmark, time and date, search with voice, your site apps and bookmarks, pick up where you left off), the page edge to edge with one floating pill (site info, address, VPN, tabs, Blaze), small chips for back / forward / reload / home and what Blaze is doing in the background (tap Watch to see that tab).
+- Tap the address for the launcher: search open tabs, history and Ask Blaze, every tool in one grid (Ask page, Pointer, Translate, Find in page, Bookmarks, History, Downloads, Saved, Passwords, Install app, My apps, Desktop site, Share, Tasks) and the VPN, location mask, tracker blocking and private browsing switches. Tap the lock for the site sheet.
+- Tabs: a frosted sheet with Open / Private / Blaze and Awake vs Sleeping; the picture grid is still in its menu. Swipe the pill sideways to switch tabs; long-press the tab count for a new tab.
+- New: Block ads & trackers (off until you turn it on), with counts per page and in total.
+- Much lighter on memory: only the tab on screen (and the one Blaze is using) keeps a page in memory; every other tab sleeps with its back/forward history on disk and wakes where it was when you open it. Restored tabs no longer each start a page at launch. Tab pictures are 160 px and kept on disk while a tab sleeps; favicons are kept small; Android's memory warnings put hidden tabs to sleep.
+- The system navigation bar is hidden in the browser (swipe up to show it); the pill stays above the gesture bar, and back (edge swipe or button) closes what's open, then goes back a page, then closes the browser.
+
+## v0.45.24: real quick replies, sync progress, status beside the drop, tidier memory (versionCode 169)
+- Quick replies under an answer are the next thing you'd tap (an answer to Blaze's question, or the next step), never a copy of what you just said; near-identical chips are dropped, and no chips is better than an echo.
+- Syncing with Blaze Cloud shows a notification with how far it is (items or size, and percent), then "Synced" for a few seconds, or a short reason when it stops. Small background rounds stay quiet.
+- What Blaze is doing now sits beside the Blaze drop on the same line, and goes away as soon as the reply starts appearing. Remove animations is respected.
+- Memory skips a line that is a near-copy of one already saved, and keeps a single line to 280 characters, cut at a word.
+- Merge memories: select lines on the Memory screen and tap Merge, or ask Blaze to merge them; a merged line keeps up to 1200 characters. Tidy up duplicates (and the background memory review) folds near-duplicates together. Lines already saved are never cut.
+
+## v0.45.23: lighter on battery, CPU and memory (versionCode 168)
+- Optimization only: no feature is removed or changed.
+- New release signing key (cert 7a4ad469…). Earlier installs can't update in place: uninstall, then install this build.
+- The floating task card no longer wakes the phone every 400 ms while no task is running; it waits until a task starts.
+- Screen watchers scan the screen at most once every 150 ms during bursts of on-screen changes, and still look at the newest screen.
+- The Offline Brain model (~500 MB of RAM) is released after 5 idle minutes, or when Android is low on memory, and reloads on the next offline reply.
+- In quiet hours, the background heads-up check skips its AI call when nothing new has arrived (no notifications, chats, phone signals, device warnings, calendar events or open follow-ups) and it is outside the morning/evening brief windows. Urgent messages still go through.
+
 ## v0.45.22: private downloads, usage meters, permissions when needed, steadier playback (versionCode 167)
 - Downloads stay in Blaze's private storage; export songs and videos to Music, Movies, Downloads or any folder, one at a time or in bulk.
 - Usage meters in Account and Downloads show what's left this month; downloads run in parallel up to your plan and are checked while they download.

@@ -59,8 +59,8 @@ class MindStore(val blaze: BlazeDb, val sql: Sql) : Mind.Store {
             id, created, subject, related, sourceTurn)
     }
 
-    override fun save(kind: String, subject: String, text: String, related: String, sourceTurn: Long, now: Long): Pair<String, Long> = synchronized(lock) {
-        val k = Mind.normKind(kind); val s = Mind.squash(subject).ifBlank { "You" }.take(60); val t = Mind.clean(text)
+    override fun save(kind: String, subject: String, text: String, related: String, sourceTurn: Long, now: Long, max: Int): Pair<String, Long> = synchronized(lock) {
+        val k = Mind.normKind(kind); val s = Mind.squash(subject).ifBlank { "You" }.take(60); val t = Mind.clean(text, max = max)
         val sec = now / 1000
         when (val d = Mind.decide(all(), k, s, t)) {
             is Mind.Decision.Same -> "same" to d.id
@@ -87,9 +87,9 @@ class MindStore(val blaze: BlazeDb, val sql: Sql) : Mind.Store {
         }
     }
 
-    override fun update(id: Long, text: String, kind: String?, subject: String?, now: Long): Boolean = synchronized(lock) {
+    override fun update(id: Long, text: String, kind: String?, subject: String?, now: Long, max: Int): Boolean = synchronized(lock) {
         val old = mem(id) ?: return false
-        val t = Mind.clean(text).ifBlank { old.text }
+        val t = Mind.clean(text, max = if (max > 0) max else Mind.editMax(old.text)).ifBlank { old.text }
         val s = subject?.let { Mind.squash(it).take(60) }?.ifBlank { null } ?: old.subject
         val k = if (!kind.isNullOrBlank()) Mind.normKind(kind) else old.kind
         sql.tx {

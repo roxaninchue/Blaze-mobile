@@ -74,7 +74,7 @@ object ClaimGuard {
                 (c.name in setOf("file_write", "file_edit") && Regex("""(?i)\.(html?|svg|css|js)$""").containsMatchIn(c.args.optString("path").trim()))
             "gallery" -> c.name in setOf("generate_image", "gallery", "run_code")
             // v0.27.x: showing / listing memories is backed by a lookup too.
-            "memory" -> c.name in setOf("memory_save", "memory_update", "memory_delete", "remember", "forget", "memory_search", "recall_memory")
+            "memory" -> c.name in setOf("memory_save", "memory_update", "memory_delete", "memory_merge", "remember", "forget", "memory_search", "recall_memory")
             "browser" -> c.name.startsWith("browser_") || c.name in setOf("open_url", "navigate_to")
             else -> c.name in spec.tools
         }

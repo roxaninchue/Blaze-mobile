@@ -41,9 +41,9 @@ object ToolPick {
         Cue("skills", "skills, goals and saved workflows",
             setOf("use_skill", "find_skill", "run_skill", "goal"),
             r("""\b(skills?|workflows?|goals?|plan|step by step|checklist|recipe|how do i|guide)\b""")),
-        Cue("make", "designs and views, apps list, the camera, forgetting and editing memories",
-            setOf("design", "list_apps", "blaze_camera", "forget", "memory_update", "memory_delete"),
-            r("""\b(design|3d|mock-?up|page|website|landing|poster|diagram|apps?|installed|camera|photo|picture|scan|forget|wrong|update|change|correct|clean|duplicates?|delete|remove)\b""")),
+        Cue("make", "designs and views, apps list, the camera, forgetting, editing and merging memories",
+            setOf("design", "list_apps", "blaze_camera", "forget", "memory_update", "memory_delete", "memory_merge"),
+            r("""\b(design|3d|mock-?up|page|website|landing|poster|diagram|apps?|installed|camera|photo|picture|scan|forget|wrong|update|change|correct|clean|duplicates?|merge|tidy|delete|remove)\b""")),
     )
 
     private val cueOf: Map<String, String> = CUES.flatMap { c -> c.names.map { it to c.id } }.toMap()

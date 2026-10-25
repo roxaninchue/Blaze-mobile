@@ -904,6 +904,9 @@ private fun MessageList(mood: Mood, onQuote: (String) -> Unit, onFollowup: (Stri
     // v0.32.0 split: Halo talking with you while Blaze works (her replies stream on their own; the drop stays on the work).
     val sideLive by Agent.sideLive.collectAsState()
     val split by Agent.split.collectAsState()
+    // 0.45.24: the live line beside the drop shows until the reply's first words appear (WaitRow).
+    val replyAtEnd = (items.lastOrNull() as? Item.Msg)?.m?.let { it.role == Role.BLAZE && it.meta != com.blaze.assistant.agent.Ack.META && (lastUserId == null || it.id > lastUserId) } == true
+    val waitLineOn = WaitRow.showLine(mood != Mood.IDLE, streamId >= 0, replyAtEnd)
     // v0.31.2: the newest reply keeps the joined drop + halo, dimmed and waiting, while the chat is idle.
     val waitingId = if (mood == Mood.IDLE) messages.lastOrNull { it.role == Role.BLAZE }?.id ?: -1L else -1L
     // v0.30.6 rapid messages: quote chips on replies, the glow on what Blaze is working on, tap a chip to jump (ReplyQuote.kt).
@@ -937,10 +940,10 @@ private fun MessageList(mood: Mood, onQuote: (String) -> Unit, onFollowup: (Stri
                             val m = if (Settings.longChat && com.blaze.assistant.agent.ReplyChips.showTech() && (item.live || item.key == lastStepsKey)) meter else null
                             when (com.blaze.assistant.agent.SimpleMode.work(simpleUi, Settings.showSteps, item.live)) {
                                 com.blaze.assistant.agent.SimpleMode.Work.CARD ->
-                                    WorkCard(item.steps, item.live, item.startAt, item.endAt, status = if (item.live) st else "", exact = Settings.showSteps,
+                                    WorkCard(item.steps, item.live, item.startAt, item.endAt, status = if (item.live && !waitLineOn) st else "", exact = Settings.showSteps,
                                         meter = m?.text.orEmpty(), meterHigh = m?.high == true, simple = false)
                                 // v0.41.0 Simple mode: one small quiet line while working, nothing once done.
-                                com.blaze.assistant.agent.SimpleMode.Work.HINT -> if (chipOn.isBlank()) SimpleWorkHint(com.blaze.assistant.agent.SimpleMode.hint(st, item.steps.lastOrNull()?.text.orEmpty()))
+                                com.blaze.assistant.agent.SimpleMode.Work.HINT -> if (chipOn.isBlank() && !(item.live && waitLineOn)) SimpleWorkHint(com.blaze.assistant.agent.SimpleMode.hint(st, item.steps.lastOrNull()?.text.orEmpty()))
                                 com.blaze.assistant.agent.SimpleMode.Work.NONE -> Unit
                             }
                         }
@@ -967,19 +970,29 @@ private fun MessageList(mood: Mood, onQuote: (String) -> Unit, onFollowup: (Stri
                 // 0.45.20 step pill: the newest step under the pending reply (agent/StepPill.kt), this chat only.
                 val pill by com.blaze.assistant.agent.StepPills.current.collectAsState()
                 val chatNow by Agent.chatId.collectAsState()
-                Column(Modifier.fillMaxWidth()) {
-                // Ack-and-background: an acknowledged task shows its small chip instead of the "Blaze is thinking" line.
-                if (chip.isNotBlank() && mood != Mood.IDLE && streamId < 0) TaskChip(chip)
-                AnimatedVisibility(chip.isBlank() && mood != Mood.IDLE && streamId < 0 && duoLive.isEmpty(), enter = MotionTokens.enterUp(), exit = androidx.compose.animation.ExitTransition.None) {
-                    Column(Modifier.padding(top = if (hasLiveSteps || items.lastOrNull()?.side == Side.BLAZE) 3.dp else 16.dp)) {
+                // 0.45.24: the live line sits beside the drop (same row, centred) and goes as soon as the reply starts.
+                val working = mood != Mood.IDLE
+                val lineOn = waitLineOn
+                val dropOn = WaitRow.showDrop(working, streamId >= 0, chip.isNotBlank(), duoLive.isNotEmpty())
+                // The step pill first; otherwise what Blaze is doing (the status line that used to sit above in the work card).
+                val liveSteps = (items.lastOrNull() as? Item.Steps)?.takeIf { it.live }
+                val pillText = WaitRow.line(pill?.takeIf { it.chat == chatNow }?.text, if (chip.isBlank()) status else "",
+                    liveSteps?.steps?.lastOrNull()?.text.orEmpty(), simple = simpleUi && liveSteps != null, on = lineOn)
+                // The row moves up with the drop so the drop keeps its spot on the reply's first line.
+                Row(Modifier.fillMaxWidth().padding(top = if (dropOn && !(hasLiveSteps || items.lastOrNull()?.side == Side.BLAZE)) 13.dp else 0.dp)
+                    .offset(y = if (dropOn) OrbAnchor.thinkingOffsetY else 0.dp), verticalAlignment = Alignment.CenterVertically) {
+                AnimatedVisibility(dropOn, enter = MotionTokens.enterUp(), exit = androidx.compose.animation.ExitTransition.None) {
+                    Box(Modifier.padding(top = 3.dp)) {
                         val label = com.blaze.assistant.agent.ThinkingLabel.label(live = true, hasThought = live.isNotBlank(), show = Settings.showReasoning)
                             ?: status.ifBlank { "Blaze is thinking" }
                         // v0.32.0 split: while Halo talks with you, the drop works alone (its halo went with her).
                         val ring by androidx.compose.animation.core.animateFloatAsState(if (split) 0f else 1f, androidx.compose.animation.core.tween(520), label = "ring")
-                        ThinkingOrb(if (split) "Blaze is working" else label, Modifier.offset(y = OrbAnchor.thinkingOffsetY), size = OrbAnchor.SIZE, ring = ring)
+                        ThinkingOrb(if (split) "Blaze is working" else label, size = OrbAnchor.SIZE, ring = ring)
                     }
                 }
-                StepPillRow(pill?.takeIf { it.chat == chatNow && mood != Mood.IDLE }?.text, pill?.specialist == true)
+                // Ack-and-background: an acknowledged task shows its small chip instead of the drop.
+                if (chip.isNotBlank() && working && streamId < 0) TaskChip(chip)
+                StepPillRow(pillText, pill?.specialist == true, Modifier.weight(1f, fill = false), inline = true)
                 }
                 // v0.26.0: no "this chat is getting long" banner; long chats compact themselves (AutoCompact).
             }
