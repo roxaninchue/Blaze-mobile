@@ -36,6 +36,7 @@ class KilnHarnessActivity : Activity() {
     private var sessionStart = 0L
     private var local = ArrayList<StepResult>()
     private var pkg: String? = null
+    private var autorunDone = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -62,9 +63,14 @@ class KilnHarnessActivity : Activity() {
         col.addView(out)
         setContentView(ScrollView(this).apply { addView(col) })
         render()
-        if (savedInstanceState == null && intent?.getBooleanExtra(EXTRA_AUTORUN, false) == true) {
+        // Autorun once per launch intent. A configuration change can recreate the activity before the posted run starts
+        // (seen on the API 34 emulator: "relaunch" right after onCreate), so "done" is saved only once it really ran.
+        autorunDone = savedInstanceState?.getBoolean("autorunDone") ?: false
+        if (!autorunDone && intent?.getBooleanExtra(EXTRA_AUTORUN, false) == true) {
             KilnDiag.info("HARNESS", "autorun: clear Kiln, install + launch $BUNDLED_GUEST")
             out.post {
+                if (isFinishing || isDestroyed || autorunDone) return@post
+                autorunDone = true
                 kiln.stopGuestProcesses()
                 kiln.installed().forEach { kiln.uninstall(it.packageName) }
                 installAndLaunch(bundledGuest())
@@ -80,6 +86,7 @@ class KilnHarnessActivity : Activity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putLong("session", sessionStart)
+        outState.putBoolean("autorunDone", autorunDone)
         pkg?.let { outState.putString("pkg", it) }
     }
 
