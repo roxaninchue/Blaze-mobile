@@ -30,7 +30,7 @@ object Terminal {
     private fun busybox() = File(app.applicationInfo.nativeLibraryDir, "libbusybox.so")
     fun hasBusybox() = ::app.isInitialized && busybox().exists()
 
-    fun init(ctx: Context) { app = ctx.applicationContext; Linux.init(ctx) }
+    fun init(ctx: Context) { app = ctx.applicationContext; Linux.init(ctx); LinuxReadyRunner.init(ctx) }
 
     /**
      * v0.29.8: false when BusyBox can't run on this phone (the start-up probe failed), so the phone tab uses Android's own

@@ -1,6 +1,7 @@
 package com.blaze.assistant.agent
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -13,7 +14,7 @@ import java.net.URL
 object LlmClient {
 
     /** [unanswered]: no answer came at all (connect / send / wait for the status failed), so the request may not have arrived. */
-    class LlmException(msg: String, val code: Int = 0, val retryAfterSec: Int = 0, val unanswered: Boolean = false) : Exception(msg)
+    open class LlmException(msg: String, val code: Int = 0, val retryAfterSec: Int = 0, val unanswered: Boolean = false) : Exception(msg)
 
     /** Every key for the user's chosen model ran out: the chat shows a provider/model switcher. */
     class UsedUp(val pid: String, val model: String, msg: String) : Exception(msg)
@@ -116,20 +117,75 @@ object LlmClient {
             heavyTurn && lane != Lane.BACKGROUND, tools != null && tools.length() > 0, Cloud.textChars(msgs, ModelRoute.AGENT_MAX_CHARS + 1))
         val task = pick.task
         var trimmed = false
-        // v0.26.2: Cloud.drive owns the tries; an empty (reasoning-only) reply is a failed try, never an answer.
-        return try {
+        // v0.45.26: Blaze Cloud first; the on-device backup brain when Blaze Cloud fails or is too slow to start answering;
+        // the gateway's Nous reserve last (BackupRoute). Without a ready backup the gateway puts its reserve after its own
+        // lineup in the same call, as before this version only better.
+        val backupReady = try { BackupBrain.ready() } catch (_: Throwable) { false }
+        val cloudLabel = { "Blaze Cloud" + (if (lastServedBy.isNotBlank()) " · $lastServedBy" else "") + ModelRoute.label(pick) + if (trimmed) " · trimmed" else "" }
+        val cloud: suspend (String) -> JSONObject = { reserve ->
             Cloud.drive(onText != null, call = { a ->
                 call(t, if (a.nudge) EmptyReply.withNudge(msgs) else msgs, tools, if (a.stream) onText else null,
-                    if (lane == Lane.MAIN) onThink else null, false, task = task, avoid = ModelRoute.avoid(a.avoid, pick.strong), idemKey = a.key)
-                    .also { lastRoute = "Blaze Cloud" + (if (lastServedBy.isNotBlank()) " · $lastServedBy" else "") + ModelRoute.label(pick) + if (trimmed) " · trimmed" else "" }
+                    if (lane == Lane.MAIN) onThink else null, false, task = task, avoid = ModelRoute.avoid(a.avoid, pick.strong), idemKey = a.key, reserve = reserve)
+                    .also { lastRoute = cloudLabel() }
             }, served = { lastServedKey },
                 trim = { e -> lastCloudError = e.message.orEmpty().take(300); CallState.current().errors.add(lastCloudError); if (!trimmed && tooLarge(e)) { trimmed = true; msgs = shrink(msgs); true } else false },
                 onEmpty = { n -> lastCloudError = "empty reply #$n from ${lastServedBy.ifBlank { "the gateway" }}"; CallState.current().errors.add(lastCloudError)
                     try { com.blaze.assistant.device.CrashLog.write("Blaze Cloud: $lastCloudError (reasoning only / no content)") } catch (_: Throwable) { } })
+        }
+        val first: LlmException
+        try {
+            val reserve = BackupRoute.reserveHeader(BackupRoute.Step.CLOUD, backupReady)
+            return if (!backupReady) cloud(reserve) else watchFirstChunk(onText != null) { cloud(reserve) }
         } catch (e: LlmException) {
             if (e.code != 401 && e.code != 403) try { com.blaze.assistant.device.CrashLog.write("Blaze Cloud failed: ${lastCloudError}") } catch (_: Throwable) { }
-            throw e
+            if (e is TooSlow && !backupReady) throw LlmException(Cloud.BUSY, 503)
+            if (!backupReady || ToolCalls.isShapeError(e) || !BackupRoute.moveOn(e.code, e.message.orEmpty())) throw e
+            first = e
         }
+        // The backup brain: same messages, same tools; its tool calls come back as real tool_calls for the agent loop.
+        try {
+            val m = BackupBrain.complete(msgs, tools, onText, if (lane == Lane.MAIN) onThink else null)
+            lastServedBy = ""; lastServedKey = ""
+            lastRoute = "Blaze Cloud" + ModelRoute.label(pick)
+            CallState.current().errors.add("answered by the on-device backup")
+            return m
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e
+        } catch (e: Exception) {
+            CallState.current().errors.add("backup: " + e.message.orEmpty().take(200))
+            try { com.blaze.assistant.device.CrashLog.write("Backup brain failed: ${e.message.orEmpty().take(200)}") } catch (_: Throwable) { }
+        }
+        // The Nous reserve (owner key, server-side): slower, consistent. If it can't answer either, the first error stands.
+        return try { cloud(BackupRoute.reserveHeader(BackupRoute.Step.RESERVE, true)) }
+        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (e: LlmException) { CallState.current().errors.add("reserve: " + e.message.orEmpty().take(200)); throw if (first is TooSlow) LlmException(Cloud.BUSY, 503) else first }
+    }
+
+    /** Thrown inside [watchFirstChunk] when Blaze Cloud showed no sign of life in time (the backup takes over). */
+    class TooSlow(ms: Long) : LlmException("Blaze Cloud too slow (no first chunk in ${ms / 1000}s)", 0)
+
+    /**
+     * v0.45.26: runs [block] (the Blaze Cloud call) and gives up on it when no chunk at all (text, thinking or a tool call)
+     * arrived within [BackupRoute.ttftMs] (Settings "backup_ttft_ms"). Halfway there the backup brain is warmed so the
+     * switch is quick. Once anything arrived, the call runs to its end as before.
+     */
+    private suspend fun watchFirstChunk(streaming: Boolean, block: suspend () -> JSONObject): JSONObject = kotlinx.coroutines.coroutineScope {
+        val st = CallState.current()
+        val ttft = BackupRoute.ttftMs(streaming, Settings.str("backup_ttft_ms").trim().toLongOrNull())
+        val started = System.currentTimeMillis()
+        val job = async { block() }
+        var warmed = false
+        while (!job.isCompleted) {
+            kotlinx.coroutines.delay(250)
+            val now = System.currentTimeMillis()
+            val alive = BackupRoute.alive(started, st.chunkAt.get(), st.gotFirst, st.callStart)
+            if (!alive && !warmed && ttft > 0 && now - started >= ttft / 2) { warmed = true; try { BackupBrain.prewarm() } catch (_: Throwable) { } }
+            if (BackupRoute.tooSlow(started, now, alive, ttft)) {
+                job.cancel()
+                lastCloudError = "no first chunk in ${ttft / 1000}s"; st.errors.add(lastCloudError)
+                throw TooSlow(ttft)
+            }
+        }
+        try { job.await() } catch (e: LlmException) { try { BackupBrain.prewarm() } catch (_: Throwable) { }; throw e }
     }
 
     /** Why the optional steps model last failed (shown in diagnostics); the main model took over. */
@@ -250,7 +306,7 @@ object LlmClient {
 
     internal suspend fun call(t: Target, messages: JSONArray, tools: JSONArray?, onText: ((String) -> Unit)?,
                               onThink: ((String) -> Unit)?, thoughts: Boolean, timeoutMs: Int = 120_000, task: String? = null,
-                              avoid: List<String> = emptyList(), idemKey: String = ""): JSONObject = withContext(Dispatchers.IO) {
+                              avoid: List<String> = emptyList(), idemKey: String = "", reserve: String = ""): JSONObject = withContext(Dispatchers.IO) {
         val key = t.key
         if (key.isBlank() && t.pid != Providers.keyless.id)
             throw LlmException("No API key for ${Providers.byId(t.pid).name} yet. Switch Settings to Advanced and paste your key on the AI page.", 401)
@@ -281,6 +337,8 @@ object LlmClient {
         turnModel?.headers()?.forEach { (k, v) -> conn.setRequestProperty(k, v) }
         // v0.45.8 (Site): the reply-language picker as a header (BCP-47); none for Auto.
         if (t.pid == Providers.GATEWAY) ReplyLanguage.header(ReplyLanguage.current())?.let { (k, v) -> conn.setRequestProperty(k, v) }
+        // v0.45.26: where the gateway's Nous reserve goes (BackupRoute): "skip" while the on-device backup is next, "only" last.
+        if (t.pid == Providers.GATEWAY && reserve.isNotBlank()) conn.setRequestProperty("X-Blaze-Reserve", reserve)
 
         val body = JSONObject().apply {
             put("model", t.model)

@@ -13,7 +13,7 @@ android {
         applicationId = "com.blaze.assistant"
         minSdk = 26
         targetSdk = 34
-        versionCode = 172
+        versionCode = 173
         versionName = "0.45.26"
         // v0.30.1 Music Store: Jamendo client_id, from the environment or -Pjamendo.clientId at build time. Never hard-coded;
         // empty = "not configured" (the user can paste one in the Music Store instead).

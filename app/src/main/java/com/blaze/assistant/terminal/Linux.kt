@@ -81,8 +81,12 @@ object Linux {
             }
             prepare()
             File(rootfs(), ".blaze_ok").writeText(VER)
-            status.value = "Installed. Run: apk update && apk add python3"
-            "Alpine Linux $VER installed."
+            // v0.45.26: ready out of the box: package lists refreshed, python3/pip/curl/wget/git/nano and the Blaze CLI in.
+            // Offline or a mirror failing doesn't fail the install (it's retried later in the background).
+            status.value = "Getting Python, git and friends ready\u2026"
+            val ready = try { LinuxReadyRunner.ensure("alpine", force = true) } catch (_: Exception) { null }
+            status.value = "Installed. " + (ready ?: "Python, pip, git, curl, wget and nano are ready.")
+            "Alpine Linux $VER installed." + (ready?.let { " $it" } ?: "")
         } catch (e: Exception) {
             status.value = "Install failed: ${e.message}. Tap Install to retry."
             "Install failed: ${e.message}"

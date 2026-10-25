@@ -53,6 +53,14 @@ jobs:
           VER=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
           mkdir -p out
           cp app/build/outputs/apk/release/*-unsigned.apk "out/Blaze-v${VER}-release-unsigned.apk"
+          # Aligned copy for signing outside GitHub (apksigner keeps the alignment; the signing sandbox is aarch64, so align here).
+          BT="$ANDROID_HOME/build-tools/34.0.0"
+          "$BT/zipalign" -f -p 4 "out/Blaze-v${VER}-release-unsigned.apk" "out/Blaze-v${VER}-release-unsigned-aligned.apk"
+          "$BT/zipalign" -c -p 4 "out/Blaze-v${VER}-release-unsigned-aligned.apk"
+          "$BT/aapt2" dump badging "out/Blaze-v${VER}-release-unsigned-aligned.apk" > out/badging.txt
+          if grep -q "application-debuggable" out/badging.txt; then echo "::error::debuggable"; exit 1; fi
+          grep -E "package:|sdkVersion|targetSdkVersion" out/badging.txt | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "zipalign -p 4: ok (aligned copy)" | tee -a "$GITHUB_STEP_SUMMARY"
           (cd out && sha256sum *.apk | tee SHA256SUMS)
           echo "${GITHUB_SHA}" > out/COMMIT
       - uses: actions/upload-artifact@v4

@@ -1,7 +1,8 @@
-## v0.45.26: cleanup, no hidden leftovers (versionCode 172)
-- Maintenance only: no new features.
-- Removed leftover code from the retired on-phone Linux desktop that had come back into the app; it was not reachable from any screen. Pairing with Blaze Desktop on your computer stays.
-- Removed two unused settings screens that could have shown model and provider names; Blaze never shows which model replied.
+## v0.45.26: a backup brain on the phone and a Linux that's ready out of the box (versionCode 173)
+- Blaze keeps answering when Blaze Cloud struggles. Blaze Cloud always goes first; when it fails, or hasn't started answering within 15 s (45 s when not streaming), a backup brain on the phone takes over, and Blaze's server-side reserve is the last step. You can change the wait ("backup_wait" in seconds; 0 = switch only on errors). Replies stay in Blaze's voice and in the normal chat, and any action still goes through Blaze's own tools and confirmations. Nothing extra is shown.
+- The backup brain is a small open-source OpenCode server (MIT) inside Blaze's Alpine Linux. It uses only free models, strongest first, and moves to the next one on errors or limits. It needs a 64-bit phone with Linux installed, downloads once on Wi-Fi by default (about 78 MB, about 218 MB on the phone), listens only on the phone itself behind a random password, gets ready halfway through the wait, and stops after 15 idle minutes. Switches: "backup_brain" and "backup_brain_mobile_data".
+- Every Linux in the Terminal comes ready: package lists refreshed and upgraded, python3, pip, curl, wget, git, ca-certificates and nano installed, and the Blaze CLI on PATH as `blaze` (64-bit, checksum-checked). This happens right after install and once for Linuxes installed earlier; when offline it is retried later and the Terminal works meanwhile.
+- Cleanup: leftover code from the retired on-phone Linux desktop and two unused settings screens that could have shown model and provider names are removed again. Pairing with Blaze Desktop on your computer stays.
 - Merging memories now records a problem quietly instead of ignoring it when a merged line can't be removed.
 - Updates in place from 0.45.23, 0.45.24 and 0.45.25.
 

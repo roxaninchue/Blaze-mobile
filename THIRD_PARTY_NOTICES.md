@@ -102,6 +102,17 @@ shipped inside the APK. Each keeps its own licence (as packaged by Alpine; `apk 
 
 Blaze's VNC viewer (`desktop/Rfb.kt`) is Blaze's own code, written from the public RFB protocol specification (RFC 6143).
 
+## OpenCode (v0.45.26 backup brain), downloaded in the background, not bundled
+The on-device backup brain (`agent/BackupBrain.kt`) downloads OpenCode's official linux-arm64 musl release
+(`opencode-linux-arm64-musl.tar.gz`, v1.19.4, SHA-256 pinned) from https://github.com/anomalyco/opencode/releases into
+Blaze's Alpine Linux and runs it headless (`opencode serve` on 127.0.0.1). It is not shipped inside the APK.
+Licence: MIT, Copyright (c) 2025 opencode (https://github.com/anomalyco/opencode/blob/dev/LICENSE). Its hosted free
+models are OpenCode's service, used under OpenCode's own terms (https://opencode.ai).
+
+The Linux "ready" step (v0.45.26) installs python3, pip, curl, wget, git, ca-certificates and nano from each Linux's own
+official repositories (each under its own licence, as packaged by that distribution), plus libstdc++/libgcc on Alpine for
+the backup brain.
+
 ## Mermaid (v0.26.3, bundled for offline diagrams)
 
 Chat replies draw Mermaid diagrams on the phone, with no network, from the bundled mermaid 11.17.2

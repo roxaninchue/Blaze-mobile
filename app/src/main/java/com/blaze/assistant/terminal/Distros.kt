@@ -63,7 +63,10 @@ object Distros {
             }
             Linux.prepare(r, id)
             File(r, ".blaze_ok").writeText(url)
-            "${d.name} installed.".also { status.value = it }
+            // v0.45.26: ready out of the box (package lists refreshed, everyday tools + the Blaze CLI); never fails the install.
+            status.value = "Getting Python, git and friends ready\u2026"
+            val ready = try { LinuxReadyRunner.ensure(id, force = true) } catch (_: Exception) { null }
+            ("${d.name} installed." + (ready?.let { " $it" } ?: "")).also { status.value = it }
         } catch (e: Exception) {
             "Install failed: ${e.message}".also { status.value = it }
         } finally { installing.value = null }
