@@ -17,6 +17,8 @@ android {
         versionName = "0.45.25"
         // v0.30.1 Music Store: Jamendo client_id, from the environment or -Pjamendo.clientId at build time. Never hard-coded;
         // empty = "not configured" (the user can paste one in the Music Store instead).
+        // Blaze Kiln M1 phone test harness: true only in the kilnTest build type (ENGINE_M1_PHONE_TEST.md).
+        buildConfigField("boolean", "KILN_HARNESS", "false")
         buildConfigField("String", "JAMENDO_CLIENT_ID", "\"" + (System.getenv("JAMENDO_CLIENT_ID") ?: (project.findProperty("jamendo.clientId") as String?) ?: "").replace("\"", "") + "\"")
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
@@ -30,7 +32,20 @@ android {
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
+        // Blaze Kiln M1 phone TEST build (never a release): its own applicationId so it installs beside the real Blaze,
+        // signed with the SDK debug key, debuggable, with :kiln, the slot manifest and the harness activity. Release and
+        // debug never depend on :kiln (CI checks releaseRuntimeClasspath).
+        create("kilnTest") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".kilntest"
+            versionNameSuffix = "-kiln-m1-test"
+            matchingFallbacks += listOf("debug")
+            signingConfig = signingConfigs.getByName("debug")
+            buildConfigField("boolean", "KILN_HARNESS", "true")
+        }
     }
+    // kilnTest bundles the Kiln test guest APK (built from :kiln-testguest) as assets/kiln/kiln-testguest.apk.
+    sourceSets.getByName("kilnTest").assets.srcDir(layout.buildDirectory.dir("generated/kilnGuestAssets"))
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -254,6 +269,7 @@ dependencies {
     implementation("com.dylibso.chicory:runtime:1.7.5")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")   // 0.45.20: runTest / virtual time (PermissionGateTest)
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")   // 0.45.20: runTest / virtual time (PermissionGateTest)
     testImplementation("org.hamcrest:hamcrest-core:1.3")   // 0.45.18: was a root hamcrest.jar; now a normal test dependency
     testImplementation("org.json:json:20240303")   // the real org.json (android.jar only has stubs)
     testImplementation("org.xerial:sqlite-jdbc:3.46.1.3")   // v0.26.3: blaze.db tests on a JVM SQLite with FTS5 (store/JdbcSql)
@@ -264,4 +280,16 @@ dependencies {
     testImplementation("androidx.test:core:1.6.1")
     testImplementation("androidx.test.ext:junit:1.2.1")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+    // Blaze Kiln: only in the M1 phone test build.
+    "kilnTestImplementation"(project(":kiln"))
 }
+
+// ---------------------------------------------------------------- Blaze Kiln M1 test build
+val copyKilnGuest = tasks.register<Copy>("copyKilnGuest") {
+    dependsOn(":kiln-testguest:assembleDebug")
+    from(rootProject.layout.projectDirectory.file("kiln-testguest/build/outputs/apk/debug/kiln-testguest-debug.apk"))
+    into(layout.buildDirectory.dir("generated/kilnGuestAssets/kiln"))
+    rename { "kiln-testguest.apk" }
+}
+tasks.matching { it.name == "mergeKilnTestAssets" || it.name == "generateKilnTestAssets" || it.name.startsWith("lintVitalAnalyzeKilnTest") }
+    .configureEach { dependsOn(copyKilnGuest) }
