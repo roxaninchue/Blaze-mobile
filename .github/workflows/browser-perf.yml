@@ -1,0 +1,100 @@
+# app/perf-browser: BEFORE vs AFTER evidence for the in-app browser speed work. EMULATOR evidence only (x86_64
+# google_apis image on a GitHub runner, software GPU), not a real phone. Debug builds signed with the runner's throwaway
+# SDK debug key just so the emulator installs them: no release key, no secrets, nothing published, no version bump.
+# BEFORE = main 0.45.25 (785d23f, unmodified source); AFTER = this branch. Both are built by the same job definition with
+# the same one-line build patch (adds the x86_64 ABI so the emulator runs native code without ARM translation), then
+# benchmarked on ONE emulator in alternating rounds by tools/perf/bench.sh.
+name: Browser perf (EMULATOR)
+
+on:
+  push:
+    branches: [ "app/perf-browser" ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browser-perf-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GRADLE_OPTS: "-Dorg.gradle.daemon=false"
+  BEFORE_SHA: 785d23f35634b4b6cfe388f8831c2f72e56e8d0e
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [ before, after ]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.variant == 'before' && env.BEFORE_SHA || github.sha }}
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21" }
+      - uses: gradle/actions/setup-gradle@v4
+      - name: SDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-34" "build-tools;34.0.0" > /dev/null
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          chmod +x gradlew
+      - name: Same build patch for both (x86_64 ABI for the emulator)
+        run: |
+          git log --oneline -1
+          sed -i 's/abiFilters += listOf("arm64-v8a", "armeabi-v7a")/abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")/' app/build.gradle.kts
+          grep -n 'abiFilters' app/build.gradle.kts
+          git diff --stat
+      - name: Debug APK
+        run: |
+          set -o pipefail
+          ./gradlew :app:assembleDebug --console=plain --stacktrace "-Dorg.gradle.jvmargs=-Xmx5g -Xss8m -XX:MaxMetaspaceSize=1g" \
+            -Pkotlin.compiler.execution.strategy=in-process -Pkotlin.jvm.target.validation.mode=warning 2>&1 | tee build.log
+          mkdir -p apk && cp app/build/outputs/apk/debug/app-debug.apk apk/ && git rev-parse HEAD > apk/COMMIT && (cd apk && sha256sum app-debug.apk | tee SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: apk-${{ matrix.variant }}
+          retention-days: 3
+          path: |
+            apk/
+            build.log
+
+  bench:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 80
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: apk-before, path: apk/before }
+      - uses: actions/download-artifact@v4
+        with: { name: apk-after, path: apk/after }
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          cat apk/before/apk/COMMIT apk/after/apk/COMMIT || true
+      - name: Bench on one emulator (API 34, x86_64 google_apis, Pixel 6 profile)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          cores: 3
+          ram-size: 4096M
+          disk-size: 8000M
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none -no-snapshot
+          disable-animations: false
+          script: ROUNDS=3 bash tools/perf/bench.sh apk/before/apk/app-debug.apk apk/after/apk/app-debug.apk perf-out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-perf-results
+          retention-days: 14
+          path: perf-out/

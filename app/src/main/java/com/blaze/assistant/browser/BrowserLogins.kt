@@ -154,13 +154,13 @@ object BrowserLogins {
         if (!submitty) return;
         stash(); setTimeout(send, 0);
       }, true);
-      var told = false;
+      var told = false, obs = null;
       function scan(){ if (told) return; var p = [].slice.call(document.querySelectorAll('input[type=password]')).filter(vis)[0];
         var u = !p && document.querySelector('input[autocomplete~=username]');
-        if (p || (u && vis(u))) { told = true; try { B.postMessage(JSON.stringify({t:'form'})); } catch(x) {} } }
+        if (p || (u && vis(u))) { told = true; if (obs) { try { obs.disconnect(); } catch(x) {} obs = null; } try { B.postMessage(JSON.stringify({t:'form'})); } catch(x) {} } }
       var pend = 0;
-      function watch(){ scan(); if (!document.body) return; new MutationObserver(function(){ if (told || pend) return; pend = setTimeout(function(){ pend = 0; scan(); }, 400); })
-        .observe(document.body, {childList:true, subtree:true, attributes:true, attributeFilter:['type','style','class','hidden']}); }
+      function watch(){ scan(); if (told || !document.body) return; obs = new MutationObserver(function(){ if (told || pend) return; pend = setTimeout(function(){ pend = 0; scan(); }, 400); });
+        obs.observe(document.body, {childList:true, subtree:true, attributes:true, attributeFilter:['type','style','class','hidden']}); }
       if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', watch); else watch();
     })()"""
 

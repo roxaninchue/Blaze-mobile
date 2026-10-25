@@ -93,6 +93,9 @@ object BrowserEngine {
         internal var pending: TabStore.Snap? = null
         /** v0.29.7: saved accounts for this page's sign-in form (the "Use a saved password" bar). */
         var fillAccounts by mutableStateOf<List<BrowserLogins.Login>>(emptyList())
+        /** perf-browser: the last saved snapshot of this tab, re-taken only after it navigated ([snapDirty]). */
+        internal var snapCache: TabStore.Snap? = null
+        internal var snapDirty = true
     }
 
     /** v0.29.7: a sign-in the user just sent, waiting for "Save password?" (memory only, never written unless they tap Save). */
@@ -237,6 +240,7 @@ object BrowserEngine {
                 main.post { if (t.pending === snap && f.exists()) t.pending = snap.copy(state = emptyMap(), stateFile = f) }
             }
         }
+        t.snapCache = null; t.snapDirty = true   // perf-browser: no state copy in RAM while asleep
         thumbToDisk(t)
         t.progress = 100; if (!t.loaded.isCompleted) t.loaded.complete(Unit)
         t.mask = null; t.maskJs = null
@@ -305,18 +309,26 @@ object BrowserEngine {
         if (!restored || !::app.isInitialized) return
         main.removeCallbacks(saveTask)
         try {
-            val snaps = tabs.filter { !it.isPrivate }.map { snapOf(it) }   // sleeping tabs' state is read from disk on the writer thread
+            // Sleeping tabs return their pending snap (state on disk, read on the writer thread). perf-browser: of the awake
+            // tabs, only the one on screen and those that navigated since the last save run WebView.saveState (and its
+            // base64) on the main thread; the rest reuse their last snapshot.
+            val onScreen = tabs.getOrNull(current)
+            val snaps = tabs.filter { !it.isPrivate }.map { snapOf(it, it === onScreen) }
             val saved = TabStore.Saved(snaps, TabStore.activeIndex(tabs.map { it.isPrivate }, current))
             io.execute { TabStore.write(saved) }   // one writer thread, in order
         } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.error("Browser tabs not saved", e) }
-        flushCookies()
+        flushCookiesAsync()
     }
+
+    /** perf-browser: CookieManager.flush blocks until the cookie store is on disk; done on the writer thread, not the UI. */
+    fun flushCookiesAsync() { try { io.execute { flushCookies() } } catch (_: Throwable) { flushCookies() } }
 
     fun flushCookies() { try { CookieManager.getInstance().flush() } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("BrowserEngine: CookieManager.getInstance.flush", e) } }
 
     @Suppress("DEPRECATION")
-    private fun snapOf(t: Tab): TabStore.Snap {
+    private fun snapOf(t: Tab, onScreen: Boolean = true): TabStore.Snap {
         t.pending?.let { return it.copy(title = t.title) }
+        BrowserPerf.reuseSnap(t.snapCache, t.snapDirty, onScreen, t.url, t.title)?.let { t.snapCache = it; return it }
         val st = HashMap<String, String>()
         val w = t.live
         if (w != null) try {
@@ -330,6 +342,7 @@ object BrowserEngine {
         } catch (_: Throwable) { st.clear() }
         val url = t.url.takeIf { it.isNotBlank() && it != "about:blank" } ?: ""
         return TabStore.Snap(url, if (url.isEmpty()) "" else t.title, if (url.isEmpty()) emptyMap() else st)
+            .also { t.snapCache = it; t.snapDirty = false }
     }
 
     /** Reopens last session's normal tabs. Only the active one loads now; the rest load when you switch to them. */
@@ -421,6 +434,35 @@ object BrowserEngine {
     fun remask() {
         tabs.forEach { if (it.live != null) installMask(it) }   // sleeping tabs get the mask when they wake
         tab()?.let { t -> t.live?.let { if (t.url.startsWith("http")) it.reload() } }
+    }
+
+    /**
+     * perf-browser: the tab grid's picture of the page, then [done]. When it looks the same ([BrowserPerf.fastThumb]) it is
+     * copied from the screen with PixelCopy (GPU, off the main thread) instead of [snapshot]'s software draw of the whole
+     * WebView, which stalled the Tabs button for a few hundred ms on heavy pages. [done] always runs, on the main thread.
+     */
+    fun snapshotThen(window: android.view.Window?, dockBottom: Boolean, overlay: Boolean, done: () -> Unit) {
+        val t = tab() ?: run { done(); return }
+        val w = t.live ?: run { done(); return }   // a sleeping tab keeps its picture; never wake it just for that
+        if (window == null || !BrowserPerf.fastThumb(android.os.Build.VERSION.SDK_INT, w.isAttachedToWindow, w.width, w.height, dockBottom, overlay)) {
+            snapshot(t); done(); return
+        }
+        var finished = false
+        fun finish(b: Bitmap?) { if (finished) return; finished = true; if (b != null) { t.thumb = b.asImageBitmap(); t.thumbOnDisk = false }; done() }
+        try {
+            // v0.45.25 size: TabDiet.thumbSize (160 px wide, card-shaped), copied from the matching top part of the page.
+            val (bw, bh) = TabDiet.thumbSize(w.width, w.height)
+            if (bw <= 0) { snapshot(t); done(); return }
+            val srcH = (bh.toLong() * w.width / bw).toInt().coerceIn(1, w.height)
+            val b = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
+            val at = IntArray(2); w.getLocationInWindow(at)
+            val src = android.graphics.Rect(at[0], at[1], at[0] + w.width, at[1] + srcH)
+            android.view.PixelCopy.request(window, src, b, { r -> finish(if (r == android.view.PixelCopy.SUCCESS) b else null) }, main)
+            main.postDelayed({ finish(null) }, 300)   // never hold the grid back for a slow copy (the old picture stays)
+        } catch (e: Throwable) {
+            com.blaze.assistant.device.CrashLog.quiet("BrowserEngine: PixelCopy thumb", e)
+            if (!finished) { finished = true; snapshot(t); done() }
+        }
     }
 
     /** Takes a small picture of the tab for the tab grid (only works while it's on screen). */
@@ -524,7 +566,7 @@ object BrowserEngine {
             override fun onPageStarted(v: WebView, url: String?, favicon: Bitmap?) {
                 if (v !== t.live) return   // a WebView that's going away
                 if (!t.url.equals(url, true)) t.blocked = 0
-                t.url = url.orEmpty(); t.progress = 5
+                t.url = url.orEmpty(); t.progress = 5; t.snapDirty = true
                 // A page that got here without shouldOverrideUrlLoading (redirect, history) never keeps file access it shouldn't.
                 if (!fileAccessFor(url)) allowFiles(t, url.orEmpty())
                 t.pulls = 0; t.pulling = ""; t.loadStart = System.currentTimeMillis(); t.lastPull = t.loadStart
@@ -541,19 +583,24 @@ object BrowserEngine {
             }
             override fun onPageFinished(v: WebView, url: String?) {
                 if (v !== t.live) return
-                t.url = url.orEmpty(); t.progress = 100; t.canBack = v.canGoBack(); t.canForward = v.canGoForward()
+                t.url = url.orEmpty(); t.progress = 100; t.canBack = v.canGoBack(); t.canForward = v.canGoForward(); t.snapDirty = true
                 t.loaded.complete(Unit)
                 // v0.33.3: room under the page for the floating toolbar, so the last lines can scroll above it.
                 if (url.orEmpty().startsWith("http")) v.evaluateJavascript(BOTTOM_PAD_JS, null)
-                if (!t.isPrivate && !url.isNullOrBlank() && url != "about:blank" && !SavedPages.isSavedUrl(url)) BrowserData.addHistory(app, v.title ?: url, url)
+                // perf-browser: history (browser.json, up to 300 entries) is written on the writer thread, not the UI thread.
+                if (!t.isPrivate && !url.isNullOrBlank() && url != "about:blank" && !SavedPages.isSavedUrl(url)) {
+                    val title = v.title ?: url
+                    io.execute { try { BrowserData.addHistory(app, title, url) } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("BrowserEngine: addHistory", e) } }
+                }
                 if (!t.isPrivate) {
                     if (captureLate) v.evaluateJavascript(BrowserLogins.CAPTURE_JS, null)
                     offerSoon(t, 700)
-                    scheduleSave(); flushCookies()
+                    // perf-browser: cookies flush with the debounced tab save (writer thread), not a blocking flush per page.
+                    scheduleSave()
                 }
             }
             override fun doUpdateVisitedHistory(v: WebView, url: String?, isReload: Boolean) {
-                t.url = url.orEmpty(); t.canBack = v.canGoBack(); t.canForward = v.canGoForward()
+                t.url = url.orEmpty(); t.canBack = v.canGoBack(); t.canForward = v.canGoForward(); t.snapDirty = true
                 if (!t.isPrivate) { offerSoon(t, 1200); scheduleSave() }
             }
         }
@@ -737,6 +784,7 @@ object BrowserEngine {
         t.mask = null; t.maskJs = null
         destroyWeb(dead)
         t.pending = url?.let { TabStore.Snap(it, t.title) }
+        t.snapCache = null; t.snapDirty = true
         t.progress = 100; if (!t.loaded.isCompleted) t.loaded.complete(Unit)
         if (t === tab() && (uiVisible || agentRecent(TabDiet.AGENT_KEEP_PRESSED_MS))) wakeUp(t)
         lastCrash = "The page ${url?.take(80) ?: ""} stopped (Android closed it to save memory) and was reopened; anything typed there was lost."
@@ -792,7 +840,7 @@ object BrowserEngine {
         t.pending = null
         if (u.startsWith("file:") && !SavedPages.isSavedUrl(u)) { toast("Blaze only opens its own saved pages from the phone."); return }
         allowFiles(t, u)
-        t.url = u; t.loaded = CompletableDeferred()
+        t.url = u; t.loaded = CompletableDeferred(); t.snapDirty = true
         t.web.loadUrl(u)
     }
 

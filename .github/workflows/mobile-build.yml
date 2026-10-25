@@ -8,7 +8,7 @@ name: Mobile build
 # Also runs the JVM unit tests and the 360/375 dp screenshot tests (ShotsTest / Shots375Test) on x86.
 on:
   push:
-    branches: [ "app/mobile" ]
+    branches: [ "app/mobile", "app/perf-browser" ]
   workflow_dispatch:
 
 permissions:

@@ -77,6 +77,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import kotlin.math.roundToInt
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import com.blaze.assistant.ui.Glass
 import com.blaze.assistant.ui.GlassIconButton
@@ -367,8 +368,10 @@ internal fun BrowserScreen(onClose: () -> Unit, onImport: () -> Unit, onPopOut: 
     }
 
     // v0.33.3: the floating toolbar hides on scroll down and comes back on scroll up (or a tap on the page top).
-    var barShown by remember { mutableStateOf(true) }
-    LaunchedEffect(tab?.id, tab?.url) { barShown = true }
+    // perf-browser: a plain state object that composition never reads (only the slide animation below collects it), so
+    // each scroll-direction flip no longer recomposes this whole screen.
+    val barShown = remember { mutableStateOf(true) }
+    LaunchedEffect(tab?.id, tab?.url) { barShown.value = true }
     // v0.34.1: where the floating toolbar is docked (bottom, top, left or right of the page), kept across launches.
     var dock by remember { mutableStateOf(ToolbarDock.load()) }
     var areaSize by remember { mutableStateOf(IntSize.Zero) }
@@ -388,7 +391,7 @@ internal fun BrowserScreen(onClose: () -> Unit, onImport: () -> Unit, onPopOut: 
             }
         } else if (tab != null) {
             Box(Modifier.fillMaxSize().statusBarsPadding()) {
-                key(tab.id) { WebHost(tab, onScroll = { down -> if (panel == Panel.NONE) barShown = !down }) }
+                key(tab.id) { WebHost(tab, onScroll = { down -> if (panel == Panel.NONE) barShown.value = !down }) }
             }
             if (blank) SkyStartPage(tick, bottomSpace = 64.dp + navBottom, open = { u -> BrowserEngine.load(tab, u); panel = Panel.NONE },
                 onSearch = { panel = Panel.LAUNCHER }, onVoice = onVoice)
@@ -431,8 +434,14 @@ internal fun BrowserScreen(onClose: () -> Unit, onImport: () -> Unit, onPopOut: 
         // v0.33.3 floating bar, v0.34.1 docking (drag the grip to any edge; remembered), v0.45.25 Sky look: one frosted pill
         // (lock · address · VPN · tabs · Blaze) with small chips beside it (back / forward / reload / home, Blaze's status).
         val sheetOpen = panel == Panel.TABS || panel == Panel.LAUNCHER || panel == Panel.SITE
-        val showBar = !sheetOpen && (barShown || panel != Panel.NONE || pointer || blank)
-        val hide by androidx.compose.animation.core.animateFloatAsState(if (showBar) 0f else 1f, androidx.compose.animation.core.tween(220), label = "bar")
+        val pinned = panel != Panel.NONE || pointer || blank
+        // perf-browser: same 220 ms slide and same rule as before (hidden under a sheet, else scrolled-up or pinned), but
+        // driven from the scroll state off-composition; the value is read only in graphicsLayer (draw phase).
+        val hideAnim = remember { Animatable(if (sheetOpen) 1f else 0f) }
+        LaunchedEffect(sheetOpen, pinned) {
+            snapshotFlow { !sheetOpen && BrowserPerf.barShown(barShown.value, pinned) }
+                .collectLatest { show -> hideAnim.animateTo(if (show) 0f else 1f, tween(220)) }
+        }
         val density = LocalDensity.current
         val scope = rememberCoroutineScope()
         val dragOff = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
@@ -462,6 +471,7 @@ internal fun BrowserScreen(onClose: () -> Unit, onImport: () -> Unit, onPopOut: 
         val barMod = Modifier.align(dock.alignment)
             .offset { IntOffset(dragOff.value.x.roundToInt(), dragOff.value.y.roundToInt()) }
             .graphicsLayer {
+                val hide = hideAnim.value
                 val away = hide * ((if (vertical) size.width else size.height) + 48.dp.toPx())
                 when (dock) {
                     ToolbarDock.BOTTOM -> translationY = away
@@ -499,7 +509,13 @@ internal fun BrowserScreen(onClose: () -> Unit, onImport: () -> Unit, onPopOut: 
         val tabCount: @Composable () -> Unit = {
             val n = BrowserEngine.tabs.count { it.isPrivate == priv }
             Box(Modifier.size(40.dp).clip(CircleShape).combinedClickable(
-                onClick = { BrowserEngine.snapshot(); tabsSeg = if (priv) TabSeg.PRIVATE else TabSeg.OPEN; panel = Panel.TABS },
+                onClick = {
+                    // perf-browser: the grid picture is copied from the screen (PixelCopy, off the main thread) when nothing
+                    // covers the page, then the grid opens; otherwise the software snapshot as before.
+                    val covered = blank || pointer || askOpen || panel != Panel.NONE || BrowserEngine.loginOffer != null || tab?.fillAccounts?.isNotEmpty() == true
+                    BrowserEngine.snapshotThen((ctx as? Activity)?.window, dockBottom = dock == ToolbarDock.BOTTOM, overlay = covered) {
+                        tabsSeg = if (priv) TabSeg.PRIVATE else TabSeg.OPEN; panel = Panel.TABS }
+                },
                 onLongClick = { BrowserEngine.newTab(ctx, isPrivate = priv); panel = Panel.NONE },
                 onClickLabel = "Tabs", onLongClickLabel = "New tab")
                 .semantics { contentDescription = "Tabs ($n). Long-press for a new tab" }, contentAlignment = Alignment.Center) {
