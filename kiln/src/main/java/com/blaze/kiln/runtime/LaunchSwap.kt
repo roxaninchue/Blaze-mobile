@@ -20,6 +20,8 @@ class LaunchSwap(
     private val onGuestLaunch: (pkg: String, profile: Int, abi: String?) -> Unit,
     private val abiOf: (String) -> String?,
     private val tokens: com.blaze.kiln.route.LaunchToken,
+    /** Called after a successful swap (the guest activity is about to be created). */
+    private val onSwapped: (pkg: String, cls: String, profile: Int) -> Unit = { _, _, _ -> },
 ) {
     private val LAUNCH_ACTIVITY = 100
     private val EXECUTE_TRANSACTION = 159
@@ -98,6 +100,7 @@ class LaunchSwap(
         val intent = Intent(original)
         intent.setClassName(env.guestPackage, env.guestClass)
         KilnDiag.step(HarnessStep.GUEST_SWAP, true, "${env.guestClass.substringAfterLast('.')} in slot ${env.slotClass.substringAfterLast('.')}, theme 0x${Integer.toHexString(info.themeResource)}")
+        try { onSwapped(env.guestPackage, env.guestClass, env.profile) } catch (t: Throwable) { KilnLog.w("post-swap hook failed: ${t.javaClass.simpleName}") }
         return intent to info
     }
 }

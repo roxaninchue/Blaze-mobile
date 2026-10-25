@@ -15,6 +15,7 @@ import java.io.FileOutputStream
 
 object KilnDiag {
     private const val MAX_BYTES = 256 * 1024L
+    const val LOGCAT_TAG = "KilnDiag"
     @Volatile private var file: File? = null
     @Volatile private var proc: String = "?"
 
@@ -54,6 +55,8 @@ object KilnDiag {
                 f.writeText(keep.substringAfter('\n'))
             }
             val line = DiagLog.format(DiagEntry(System.currentTimeMillis(), proc, kind, key, ok, detail)) + "\n"
+            // Same line to logcat (tag KilnDiag) so a test run can collect it with `adb logcat -s KilnDiag`.
+            android.util.Log.i(LOGCAT_TAG, line.trimEnd())
             FileOutputStream(f, true).use { it.write(line.toByteArray(Charsets.UTF_8)) }
         } catch (t: Throwable) {
             KilnLog.w("diag write failed: ${t.javaClass.simpleName}")

@@ -5,6 +5,8 @@ import android.content.Intent
 import com.blaze.kiln.apk.ApkInspector
 import com.blaze.kiln.apk.ApkReport
 import com.blaze.kiln.apk.DeviceProfile
+import com.blaze.kiln.apk.GuestTrust
+import com.blaze.kiln.apk.SignerCheck
 import com.blaze.kiln.diag.HarnessStep
 import com.blaze.kiln.diag.RefusalClassifier
 import com.blaze.kiln.diag.StepResult
@@ -56,12 +58,20 @@ class BlazeKiln private constructor(private val appContext: Context) {
 
     fun inspect(apk: File): ApkReport = ApkInspector.inspect(apk, device())
 
+    /** Pinned signer + integrity check (apk/ApkSignature.kt). Kiln never installs an APK that fails it. */
+    fun verify(apk: File, packageName: String): SignerCheck = GuestTrust.check(apk, packageName, android.os.Build.VERSION.SDK_INT)
+
     /** Copies the APK in and records it. Returns null with the reason logged when the APK cannot run here. */
     fun install(apk: File): GuestPackage? {
         val report = inspect(apk)
         val manifest = report.manifest
         if (manifest == null || report.milestone == null) {
             KilnLog.w("cannot run this APK: ${report.blockers.joinToString { it.why }}")
+            return null
+        }
+        val trust = verify(apk, manifest.packageName)
+        if (!trust.ok) {
+            KilnLog.w("guest APK rejected: ${trust.describe()}")
             return null
         }
         val rec = registry.install(apk, manifest, report.chosenAbi)
@@ -100,6 +110,12 @@ class BlazeKiln private constructor(private val appContext: Context) {
         }
         val beyond = if (report.concerns.isEmpty()) "" else "; beyond M1: " + report.concerns.joinToString { it.why }
         steps += StepResult(HarnessStep.READ_APK, true, "${m.packageName} ${m.versionName ?: ""} needs ${report.milestone}$beyond")
+        val trust = try { verify(apk, m.packageName) } catch (t: Throwable) {
+            steps += StepResult(HarnessStep.VERIFY, false, "${t.javaClass.simpleName}: ${t.message}")
+            return done(null, report)
+        }
+        steps += StepResult(HarnessStep.VERIFY, trust.ok, trust.describe())
+        if (!trust.ok) return done(null, report)
         val rec = try {
             registry.install(apk, m, report.chosenAbi)
         } catch (t: Throwable) {
@@ -235,6 +251,7 @@ class BlazeKiln private constructor(private val appContext: Context) {
             // The guest process may have started before the latest install: re-read the registry once if needed.
             abiOf = { pkg -> (registry.get(pkg) ?: run { registry.load(); registry.get(pkg) })?.abi },
             tokens = tokens,
+            onSwapped = { pkg, cls, profile -> ForegroundProbe.watch(pkg, cls, layout.dataDir(profile, pkg)) },
         )
         val interceptor = LaunchInterceptor(rewriter) { intent ->
             val cn = intent.component ?: return@LaunchInterceptor null

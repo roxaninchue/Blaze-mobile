@@ -128,7 +128,7 @@ class DiagTest {
         DiagEntry(at, proc, DiagKind.STEP, s.name, ok, d)
 
     private fun mainSteps(ok: Boolean = true) = listOf(
-        StepResult(HarnessStep.READ_APK, true, "pkg"), StepResult(HarnessStep.INSTALL, true, ""),
+        StepResult(HarnessStep.READ_APK, true, "pkg"), StepResult(HarnessStep.VERIFY, true, ""), StepResult(HarnessStep.INSTALL, true, ""),
         StepResult(HarnessStep.NATIVE_LIBS, true, ""), StepResult(HarnessStep.PREPARE_LAUNCH, true, ""),
         StepResult(HarnessStep.START_SLOT, ok, ""))
 
@@ -154,7 +154,7 @@ class DiagTest {
         )
         val r = HarnessReport.build(1500, mainSteps(), entries)
         assertEquals(r.firstFailure, HarnessStep.GUEST_LOADED)
-        assertEquals(r.verdict, "FAILED at step 7: ${HarnessStep.GUEST_LOADED.label}")
+        assertEquals(r.verdict, "FAILED at step 8: ${HarnessStep.GUEST_LOADED.label}")
         assertEquals(r.steps.first { it.step == HarnessStep.GUEST_HOOKS }.ok, true)
         assertEquals(r.refusals.size, 1, "duplicates collapse")
         assertTrue(r.lines().any { it.contains("System services that refused") })
@@ -184,7 +184,7 @@ class DiagTest {
         val notStarted = HarnessReport.build(1000, emptyList(), emptyList())
         assertEquals(notStarted.verdict, "Not started")
         val partial = HarnessReport.build(1000, mainSteps(), emptyList())
-        assertTrue(partial.verdict.startsWith("In progress: 5/10"), partial.verdict)
+        assertTrue(partial.verdict.startsWith("In progress: 6/11"), partial.verdict)
     }
 
     @Test

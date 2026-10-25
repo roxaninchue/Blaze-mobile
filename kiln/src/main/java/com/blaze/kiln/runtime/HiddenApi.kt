@@ -108,6 +108,9 @@ object HiddenApi {
         "android.content.pm.ApplicationInfo#credentialProtectedDataDir",
         "android.content.pm.ApplicationInfo#deviceProtectedDataDir",
         "android.content.pm.ApplicationInfo#scanSourceDir",
+        "android.app.ActivityThread#mActivities",
+        "android.app.ActivityThread\$ActivityClientRecord#activity",
+        "android.app.Activity#mResumed",
     )
 }
 

@@ -15,6 +15,17 @@ Checked 2026-10-23 against each project's LICENSE file (GitHub licence API + the
 Test runner: the app's own tests use JUnit 4 (EPL-1.0). Kiln does NOT use JUnit, so that every Kiln dependency,
 test scope included, is Apache-2.0/MIT/BSD. TestNG's optional deps (Guice, SnakeYAML) are not pulled.
 
+## Guest apps and test tooling (not linked into Kiln)
+| Item | Licence | URL | Used for |
+|---|---|---|---|
+| Shopping List Calculator 2.3 (F-Droid APK) | MIT | https://github.com/buildsbyben/shopping-list-calc/blob/main/LICENSE | M1 guest, kilnTest assets + unit-test fixture only (GUEST_APPS.md) |
+| Bouncy 0.0.1 (F-Droid APK) | Apache-2.0 | https://github.com/ebraminio/bouncy/blob/main/LICENSE | v3 signature unit-test fixture only |
+| Python `cryptography` | Apache-2.0 OR BSD-3-Clause | https://github.com/pyca/cryptography/blob/main/LICENSE | `tools/kiln/make_resigned_fixture.py` (offline fixture generator, not in any build) |
+| reactivecircus/android-emulator-runner | Apache-2.0 | https://github.com/ReactiveCircus/android-emulator-runner/blob/main/LICENSE | CI emulator job only |
+
+APK signature verification (`kiln/.../apk/ApkSignature.kt`) uses only `java.security` and is written from the public
+APK Signature Scheme v2/v3 specification (source.android.com/docs/security/features/apksigning); no apksig code.
+
 ## Checked and REJECTED (do not add)
 | Library | Licence found | Why |
 |---|---|---|

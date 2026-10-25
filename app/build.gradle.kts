@@ -44,7 +44,7 @@ android {
             buildConfigField("boolean", "KILN_HARNESS", "true")
         }
     }
-    // kilnTest bundles the Kiln test guest APK (built from :kiln-testguest) as assets/kiln/kiln-testguest.apk.
+    // kilnTest bundles the pinned F-Droid guest APK (kiln-guests/fdroid, GUEST_APPS.md) under assets/kiln/guests/.
     sourceSets.getByName("kilnTest").assets.srcDir(layout.buildDirectory.dir("generated/kilnGuestAssets"))
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -285,11 +285,12 @@ dependencies {
 }
 
 // ---------------------------------------------------------------- Blaze Kiln M1 test build
+// kilnTest bundles the pinned F-Droid M1 guest (GUEST_APPS.md) as assets/kiln/guests/<file>. The project's own
+// :kiln-testguest is only used by :kiln unit tests: it is signed by a per-machine debug key and cannot be pinned.
 val copyKilnGuest = tasks.register<Copy>("copyKilnGuest") {
-    dependsOn(":kiln-testguest:assembleDebug")
-    from(rootProject.layout.projectDirectory.file("kiln-testguest/build/outputs/apk/debug/kiln-testguest-debug.apk"))
-    into(layout.buildDirectory.dir("generated/kilnGuestAssets/kiln"))
-    rename { "kiln-testguest.apk" }
+    from(rootProject.layout.projectDirectory.file("kiln-guests/fdroid/io.github.buildsbyben.shoppinglistcalc_21.apk"))
+    from(rootProject.layout.projectDirectory.file("kiln-guests/fdroid/LICENSE-shoppinglistcalc.txt"))
+    into(layout.buildDirectory.dir("generated/kilnGuestAssets/kiln/guests"))
 }
 tasks.matching { it.name == "mergeKilnTestAssets" || it.name == "generateKilnTestAssets" || it.name.startsWith("lintVitalAnalyzeKilnTest") }
     .configureEach { dependsOn(copyKilnGuest) }

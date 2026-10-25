@@ -23,6 +23,8 @@ android {
             it.dependsOn(":kiln-testguest:assembleDebug")
             it.systemProperty("kiln.testGuestApk", rootProject.file("kiln-testguest/build/outputs/apk/debug/kiln-testguest-debug.apk").path)
             it.systemProperty("kiln.manifest", file("src/main/AndroidManifest.xml").path)
+            // ApkSignatureTest: the pinned F-Droid guest bundled into kilnTest (GUEST_APPS.md).
+            it.systemProperty("kiln.fdroidGuestApk", rootProject.file("kiln-guests/fdroid/io.github.buildsbyben.shoppinglistcalc_21.apk").path)
             it.testLogging { events("failed"); exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL }
         }
     }

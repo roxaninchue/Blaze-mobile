@@ -75,7 +75,11 @@ jobs:
           grep -q "com.blaze.kiln.slot.A0_0_0" manifest.txt
           grep -q "com.blaze.kiln.slot.P0" manifest.txt
           grep -q '":g0"' manifest.txt
-          unzip -l blaze-kiln-m1-test.apk | grep -q "assets/kiln/kiln-testguest.apk"
+          # The pinned F-Droid guest (GUEST_APPS.md) is bundled byte-for-byte; the own test guest is not.
+          G=assets/kiln/guests/io.github.buildsbyben.shoppinglistcalc_21.apk
+          unzip -p blaze-kiln-m1-test.apk "$G" | sha256sum | grep -q "^d5a1e434bd54270dadee55217758568c05c3f89f93693d9a9c2e8a065b9690ee "
+          if unzip -l blaze-kiln-m1-test.apk | grep -q "kiln-testguest.apk"; then echo "::error::own test guest bundled"; exit 1; fi
+          echo "bundled guest: $G sha256 d5a1e434... (pinned)" | tee -a "$GITHUB_STEP_SUMMARY"
           sha256sum blaze-kiln-m1-test.apk | tee SHA256SUMS
           grep -E "package:|sdkVersion|targetSdkVersion" badging.txt | tee -a "$GITHUB_STEP_SUMMARY"
           cat SHA256SUMS >> "$GITHUB_STEP_SUMMARY"
@@ -114,6 +118,43 @@ jobs:
           name: kiln-test-apk
           retention-days: 7
           path: kiln-test/
+
+  # Kiln M1 EMULATOR evidence (not a real phone): boot an emulator, install the kilnTest APK, let the harness verify,
+  # install and launch the pinned F-Droid guest inside Kiln, and pass only if the guest activity reaches the
+  # foreground in Kiln's :g0 process (tools/kiln/emulator-check.sh). Emulator runner: reactivecircus (Apache-2.0).
+  kiln-emulator:
+    if: ${{ (startsWith(github.ref_name, 'app/engine') || github.ref_name == 'feat/blaze-engine') }}
+    needs: engine
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [ 34 ]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: kiln-test-apk, path: kiln-test }
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: "Emulator API ${{ matrix.api }} - Kiln verifies, installs and launches the F-Droid guest"
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
+          script: bash tools/kiln/emulator-check.sh kiln-test/blaze-kiln-m1-test.apk emu-evidence
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kiln-emulator-api${{ matrix.api }}
+          retention-days: 7
+          path: emu-evidence/
 
   apk:
     if: ${{ !(startsWith(github.ref_name, 'app/engine') || github.ref_name == 'feat/blaze-engine') }}

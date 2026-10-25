@@ -8,6 +8,7 @@ package com.blaze.kiln.diag
 /** The launch pipeline in the order a tester sees it. */
 enum class HarnessStep(val label: String, val inGuestProcess: Boolean) {
     READ_APK("Read APK (manifest, verdict)", false),
+    VERIFY("Verify pinned signer + APK integrity", false),
     INSTALL("Install into Kiln (read-only copy + record)", false),
     NATIVE_LIBS("Native libraries", false),
     PREPARE_LAUNCH("Prepare launch (slot + token)", false),
@@ -15,7 +16,7 @@ enum class HarnessStep(val label: String, val inGuestProcess: Boolean) {
     GUEST_HOOKS("Guest process: install hooks", true),
     GUEST_LOADED("Guest process: load guest code + resources", true),
     GUEST_SWAP("Guest process: swap slot for guest activity", true),
-    GUEST_ACTIVITY("Guest activity ran onCreate", true),
+    GUEST_ACTIVITY("Guest activity resumed in the foreground", true),
     GUEST_STORAGE("Guest files under Kiln storage", true),
 }
 

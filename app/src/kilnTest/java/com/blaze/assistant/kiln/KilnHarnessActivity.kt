@@ -22,8 +22,13 @@ import java.io.File
 
 /**
  * Blaze Kiln M1 test harness (kilnTest build type only; BuildConfig.KILN_HARNESS gates it a second time). Installs the
- * bundled Kiln test guest, or an APK the tester picks, into Kiln, launches it in the :g0 guest process and shows which
- * step failed and which system service refused. Plain Views on purpose: nothing here shares code with Blaze's UI.
+ * bundled F-Droid guest (GUEST_APPS.md), or an APK the tester picks, into Kiln after the pinned signer + integrity
+ * check, launches it in the :g0 guest process and shows which step failed and which system service refused.
+ * Plain Views on purpose: nothing here shares code with Blaze's UI.
+ *
+ * Automation (emulator CI, tools/kiln/emulator-check.sh):
+ *   am start -n <pkg>/com.blaze.assistant.kiln.KilnHarnessActivity --ez kiln.autorun true
+ * clears Kiln, then installs and launches the bundled guest once; every step also goes to logcat tag KilnDiag.
  */
 class KilnHarnessActivity : Activity() {
     private lateinit var out: TextView
@@ -46,7 +51,7 @@ class KilnHarnessActivity : Activity() {
             textSize = 12f
         })
         fun button(label: String, onClick: () -> Unit) = col.addView(Button(this).apply { text = label; setOnClickListener { onClick() } })
-        button("1. Install + launch bundled test app") { installAndLaunch(bundledGuest()) }
+        button("1. Install + launch bundled F-Droid app") { installAndLaunch(bundledGuest()) }
         button("Pick an APK file to install + launch…") { pickApk() }
         button("Restart guest (cold) + launch again") { launchAgain() }
         button("Stop guest process") { val n = kiln.stopGuestProcesses(); toastLine("Stopped $n guest process(es).") }
@@ -57,6 +62,14 @@ class KilnHarnessActivity : Activity() {
         col.addView(out)
         setContentView(ScrollView(this).apply { addView(col) })
         render()
+        if (savedInstanceState == null && intent?.getBooleanExtra(EXTRA_AUTORUN, false) == true) {
+            KilnDiag.info("HARNESS", "autorun: clear Kiln, install + launch $BUNDLED_GUEST")
+            out.post {
+                kiln.stopGuestProcesses()
+                kiln.installed().forEach { kiln.uninstall(it.packageName) }
+                installAndLaunch(bundledGuest())
+            }
+        }
     }
 
     override fun onResume() {
@@ -71,8 +84,8 @@ class KilnHarnessActivity : Activity() {
     }
 
     private fun bundledGuest(): File {
-        val f = File(cacheDir, "kiln-testguest.apk")
-        assets.open("kiln/kiln-testguest.apk").use { input -> f.outputStream().use { input.copyTo(it) } }
+        val f = File(cacheDir, BUNDLED_GUEST)
+        assets.open("kiln/guests/$BUNDLED_GUEST").use { input -> f.outputStream().use { input.copyTo(it) } }
         return f
     }
 
@@ -132,17 +145,22 @@ class KilnHarnessActivity : Activity() {
             local += StepResult(HarnessStep.PREPARE_LAUNCH, false, "${t.javaClass.simpleName}: ${t.message}"); render(); return
         }
         if (intent == null) {
-            local += StepResult(HarnessStep.PREPARE_LAUNCH, false, "no launcher activity or no free guest process")
+            record(HarnessStep.PREPARE_LAUNCH, false, "no launcher activity or no free guest process")
             render(); return
         }
-        local += StepResult(HarnessStep.PREPARE_LAUNCH, true, intent.component?.className?.substringAfterLast('.') ?: "")
+        record(HarnessStep.PREPARE_LAUNCH, true, intent.component?.className?.substringAfterLast('.') ?: "")
         try {
             startActivity(intent)
-            local += StepResult(HarnessStep.START_SLOT, true, "startActivity accepted")
+            record(HarnessStep.START_SLOT, true, "startActivity accepted")
         } catch (t: Throwable) {
-            local += StepResult(HarnessStep.START_SLOT, false, "${t.javaClass.simpleName}: ${t.message}")
+            record(HarnessStep.START_SLOT, false, "${t.javaClass.simpleName}: ${t.message}")
         }
         render()
+    }
+
+    private fun record(step: HarnessStep, ok: Boolean, detail: String) {
+        local += StepResult(step, ok, detail)
+        KilnDiag.step(step, ok, detail)
     }
 
     /** Steps 9-10 come from the guest's own start file: it proves onCreate ran and where its files really went. */
@@ -162,7 +180,7 @@ class KilnHarnessActivity : Activity() {
 
     private fun render() {
         if (sessionStart == 0L) {
-            out.text = "Tap step 1 to install and launch the bundled Kiln test app.\nInstalled guests: " +
+            out.text = "Tap step 1 to install and launch the bundled F-Droid app (Shopping List Calculator).\nInstalled guests: " +
                 kiln.installed().joinToString { it.packageName }.ifEmpty { "none" }
             return
         }
@@ -193,5 +211,10 @@ class KilnHarnessActivity : Activity() {
         out.visibility = View.VISIBLE
     }
 
-    companion object { private const val REQ_PICK = 41 }
+    companion object {
+        private const val REQ_PICK = 41
+        const val EXTRA_AUTORUN = "kiln.autorun"
+        /** F-Droid guest bundled by app/build.gradle.kts (copyKilnGuest) from kiln-guests/fdroid; pinned in TrustedGuests. */
+        const val BUNDLED_GUEST = "io.github.buildsbyben.shoppinglistcalc_21.apk"
+    }
 }
