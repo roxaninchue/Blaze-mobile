@@ -26,6 +26,7 @@ import com.blaze.assistant.kiln.KilnPreviewActivity
 import com.blaze.assistant.ui.Label
 import com.blaze.assistant.ui.LocalBlaze
 import com.blaze.assistant.ui.Type
+import com.blaze.assistant.ui.mono
 
 /**
  * kilnPreview build only (private "Kiln preview" test build, never a release). Tapping the version in Settings > About
