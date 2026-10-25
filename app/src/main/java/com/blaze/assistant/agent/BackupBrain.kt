@@ -71,7 +71,71 @@ object BackupBrain {
         // Install quietly once Alpine exists (and refresh the everyday tools of every installed Linux).
         scope.launch { delay(60_000); runCatching { install(false) } }
         LinuxReadyRunner.ensureAllLater()
+        // v0.45.27: and as soon as the phone gets onto Wi-Fi (an unmetered, working connection), not only at start.
+        watchWifi()
     }
+
+    // ---------------- v0.45.27: the one-time download, automatic on Wi-Fi ----------------
+
+    /** What [BackupNudge] needs to know about the phone right now. */
+    fun phone(): BackupNudge.Phone = try {
+        val sup = supported()
+        BackupNudge.Phone(
+            supported = sup, enabled = enabled, linuxInstalled = sup && Linux.installed(), backupInstalled = installed(),
+            online = LinuxReadyRunner.online(), unmetered = LinuxReadyRunner.unmetered(),
+            mobileDataOk = Settings.bool("backup_brain_mobile_data", false))
+    } catch (_: Throwable) { BackupNudge.Phone(false, false, false, false, false, false) }
+
+    private val installing = java.util.concurrent.atomic.AtomicBoolean(false)
+    @Volatile private var lastAutoTry = 0L
+    private val wifiCheck = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** Starts the one-time download in the background (once at a time); true when it was started or is running. */
+    fun startDownload(): Boolean {
+        if (!installing.compareAndSet(false, true)) return true
+        lastAutoTry = System.currentTimeMillis()
+        scope.launch {
+            try { val r = runCatching { install(false) }.getOrElse { it.message.orEmpty() }; note("download: $r") }
+            finally { installing.set(false) }
+        }
+        return true
+    }
+
+    /** Registers a callback for unmetered networks while the backup brain still has to be downloaded. */
+    private fun watchWifi() {
+        try {
+            if (!supported() || installed()) return
+            val cm = app.getSystemService(android.net.ConnectivityManager::class.java) ?: return
+            val req = android.net.NetworkRequest.Builder()
+                .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED).build()
+            cm.registerNetworkCallback(req, object : android.net.ConnectivityManager.NetworkCallback() {
+                override fun onCapabilitiesChanged(network: android.net.Network, caps: android.net.NetworkCapabilities) {
+                    // Fires again on every signal change: one check at a time, off the callback thread.
+                    if (!caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)) return
+                    if (installing.get() || !wifiCheck.compareAndSet(false, true)) return
+                    val cb = this
+                    scope.launch {
+                        try {
+                            delay(5_000)   // let the phone make the Wi-Fi its default network first (install checks it)
+                            if (installed()) { runCatching { cm.unregisterNetworkCallback(cb) }; return@launch }
+                            if (BackupNudge.autoInstall(phone(), System.currentTimeMillis(), lastAutoTry)) startDownload()
+                        } finally { wifiCheck.set(false) }
+                    }
+                }
+            })
+        } catch (e: Throwable) { note("wifi watch failed: ${e.message}") }
+    }
+
+    /**
+     * v0.45.27: the chat line for a request that failed for good ([BackupNudge]), or null for the normal error.
+     * On Wi-Fi with Linux installed the download is started here.
+     */
+    fun nudgeFor(code: Int, message: String): String? = try {
+        val pick = BackupNudge.pick(code, message, phone())
+        if (pick == BackupNudge.Pick.DOWNLOADING) startDownload()
+        BackupNudge.line(pick, DOWNLOAD_BYTES)
+    } catch (_: Throwable) { null }
 
     /** Settings: on by default; "backup_brain_mobile_data" lets the one-time download use mobile data. */
     private val enabled get() = Settings.bool("backup_brain", true)
