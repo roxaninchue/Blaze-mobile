@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- kilnPreview build type only (private "Kiln preview" test build of com.blaze.assistant, never a release). Release and
+     debug never contain this activity or :kiln. No launcher icon: it opens from the hidden switch in Settings > About.
+     Exported only behind DUMP so no app can start it; adb shell can (emulator CI check). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity
+            android:name="com.blaze.assistant.kiln.KilnPreviewActivity"
+            android:exported="true"
+            android:permission="android.permission.DUMP"
+            android:label="Kiln preview"
+            android:theme="@android:style/Theme.DeviceDefault.Light" />
+    </application>
+</manifest>

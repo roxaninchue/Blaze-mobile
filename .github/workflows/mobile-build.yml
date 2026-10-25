@@ -8,7 +8,7 @@ name: Mobile build
 # Also runs the JVM unit tests and the 360/375 dp screenshot tests (ShotsTest / Shots375Test) on x86.
 on:
   push:
-    branches: [ "app/mobile", "feat/blaze-engine" ]
+    branches: [ "app/mobile", "feat/blaze-engine", "feat/kiln-preview" ]
   workflow_dispatch:
 
 permissions:
@@ -27,7 +27,7 @@ jobs:
   # and build the M1 phone TEST APK (kilnTest build type: applicationId com.blaze.assistant.kilntest, SDK debug key).
   # Never a release: no version bump, no release key, no publishing.
   engine:
-    if: ${{ (startsWith(github.ref_name, 'app/engine') || github.ref_name == 'feat/blaze-engine') }}
+    if: ${{ (startsWith(github.ref_name, 'app/engine') || github.ref_name == 'feat/blaze-engine' || github.ref_name == 'feat/kiln-preview') }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -55,6 +55,14 @@ jobs:
           if grep -E "project :kiln" rel-deps.txt dbg-deps.txt; then echo "::error::Kiln leaked into release/debug"; exit 1; fi
           grep -q "KILN_HARNESS\", \"false\"" app/build.gradle.kts
           echo "release/debug: no :kiln dependency" | tee -a "$GITHUB_STEP_SUMMARY"
+          # Kiln preview: release/debug compile the no-op variant hooks; no Kiln class or text in main or debug classes.
+          if grep -rli "kiln" app/src/main; then echo "::error::Kiln named in app/src/main"; exit 1; fi
+          if [ -d app/build/tmp/kotlin-classes/debug ] && grep -rli "kiln" app/build/tmp/kotlin-classes/debug; then echo "::error::Kiln in debug classes"; exit 1; fi
+          grep -q "const val VERSION_TAPS = false" app/src/noPreview/java/com/blaze/assistant/variant/VariantHooks.kt
+          echo "release/debug: no Kiln classes, no hidden switch (src/noPreview)" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Kiln preview switch unit tests (app, debug = no-op hooks)
+        if: always()
+        run: set -o pipefail; ./gradlew :app:testDebugUnitTest --tests 'com.blaze.assistant.variant.TapCounterTest' --console=plain "-Dorg.gradle.jvmargs=-Xmx5g -Xss8m -XX:MaxMetaspaceSize=1g" -Pkotlin.compiler.execution.strategy=in-process -Pkotlin.jvm.target.validation.mode=warning 2>&1 | tee switch-tests.log
       - name: Kiln M1 test APK (kilnTest)
         if: always()
         run: set -o pipefail; ./gradlew :app:assembleKilnTest --console=plain "-Dorg.gradle.jvmargs=-Xmx5g -Xss8m -XX:MaxMetaspaceSize=1g" -Pkotlin.compiler.execution.strategy=in-process -Pkotlin.jvm.target.validation.mode=warning 2>&1 | tee kiln-apk.log
@@ -112,6 +120,8 @@ jobs:
             kiln/build/outputs/aar/
             kiln-apk.log
             rel-deps.txt
+            switch-tests.log
+            app/build/test-results/testDebugUnitTest/*.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -123,7 +133,7 @@ jobs:
   # install and launch the pinned F-Droid guest inside Kiln, and pass only if the guest activity reaches the
   # foreground in Kiln's :g0 process (tools/kiln/emulator-check.sh). Emulator runner: reactivecircus (Apache-2.0).
   kiln-emulator:
-    if: ${{ (startsWith(github.ref_name, 'app/engine') || github.ref_name == 'feat/blaze-engine') }}
+    if: ${{ (startsWith(github.ref_name, 'app/engine') || github.ref_name == 'feat/blaze-engine' || github.ref_name == 'feat/kiln-preview') }}
     needs: engine
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -156,8 +166,119 @@ jobs:
           retention-days: 7
           path: emu-evidence/
 
+  # PRIVATE Kiln preview test build (feat/kiln-preview): com.blaze.assistant 0.45.26-kiln-preview (vc171), release-like (R8),
+  # UNSIGNED here. Signed outside GitHub with the release key; never published on the public site.
+  kiln-preview:
+    if: ${{ github.ref_name == 'feat/kiln-preview' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21" }
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.26.x", cache: false }
+      - uses: gradle/actions/setup-gradle@v4
+      - name: SDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-34" "build-tools;34.0.0" > /dev/null
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          chmod +x gradlew
+      - name: Go libraries (browser VPN, BlazeRouter), same as the release build
+        run: |
+          VER=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts | head -1)
+          (cd wgproxy && CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o ../app/src/main/jniLibs/arm64-v8a/libwgproxy.so . \
+            && CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags "-s -w" -o ../app/src/main/jniLibs/armeabi-v7a/libwgproxy.so .) || echo "wgproxy build skipped"
+          (cd blazerouter && CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=$VER" -o ../app/src/main/jniLibs/arm64-v8a/libblazerouter.so . \
+            && CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags "-s -w -X main.version=$VER" -o ../app/src/main/jniLibs/armeabi-v7a/libblazerouter.so .) || echo "blazerouter build skipped"
+      - name: Build unsigned kilnPreview APK
+        run: set -o pipefail; ./gradlew :app:assembleKilnPreview --stacktrace --console=plain "-Dorg.gradle.jvmargs=-Xmx5g -Xss8m -XX:MaxMetaspaceSize=1g" -Pkotlin.compiler.execution.strategy=in-process -Pkotlin.jvm.target.validation.mode=warning 2>&1 | tee kiln-preview-build.log
+      - name: Verify kilnPreview APK
+        run: |
+          set -e
+          BT="$ANDROID_HOME/build-tools/34.0.0"
+          A=$(ls app/build/outputs/apk/kilnPreview/*.apk | head -1)
+          echo "built: $A"
+          mkdir -p kiln-preview && cp "$A" kiln-preview/blaze-kiln-preview-unsigned.apk
+          cd kiln-preview
+          "$BT/aapt2" dump badging blaze-kiln-preview-unsigned.apk > badging.txt
+          grep -q "package: name='com.blaze.assistant' versionCode='171' versionName='0.45.26-kiln-preview'" badging.txt
+          if grep -q "application-debuggable" badging.txt; then echo "::error::debuggable"; exit 1; fi
+          "$BT/aapt2" dump xmltree --file AndroidManifest.xml blaze-kiln-preview-unsigned.apk > manifest.txt
+          grep -q "com.blaze.assistant.kiln.KilnPreviewActivity" manifest.txt
+          grep -q "android.permission.DUMP" manifest.txt
+          grep -q "com.blaze.kiln.slot.A0_0_0" manifest.txt
+          grep -q "com.blaze.kiln.slot.P0" manifest.txt
+          grep -q '":g0"' manifest.txt
+          if grep -q "KilnHarnessActivity" manifest.txt; then echo "::error::kilnTest harness in preview"; exit 1; fi
+          G=assets/kiln/guests/io.github.buildsbyben.shoppinglistcalc_21.apk
+          unzip -p blaze-kiln-preview-unsigned.apk "$G" | sha256sum | grep -q "^d5a1e434bd54270dadee55217758568c05c3f89f93693d9a9c2e8a065b9690ee "
+          unzip -l blaze-kiln-preview-unsigned.apk | grep -E "lib/.*\.so" | awk '{print $4}' > libs.txt || true
+          "$BT/zipalign" -c -P 16 4 blaze-kiln-preview-unsigned.apk && echo "zipalign: ok" | tee -a "$GITHUB_STEP_SUMMARY" || echo "zipalign: NOT aligned" | tee -a "$GITHUB_STEP_SUMMARY"
+          sha256sum blaze-kiln-preview-unsigned.apk | tee SHA256SUMS
+          echo "${GITHUB_SHA}" > COMMIT
+          grep -E "package:|sdkVersion|targetSdkVersion" badging.txt | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "bundled guest $G sha256 d5a1e434... (pinned); native libs: $(wc -l < libs.txt)" | tee -a "$GITHUB_STEP_SUMMARY"
+          cat SHA256SUMS >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kiln-preview-apk-unsigned
+          retention-days: 7
+          path: |
+            kiln-preview/
+            kiln-preview-build.log
+
+  # Kiln preview EMULATOR evidence: the release-like (R8) com.blaze.assistant build, signed here with a THROWAWAY key (never
+  # the release key), runs the Kiln screen (KilnPreviewActivity, the screen the hidden switch opens) with autorun.
+  kiln-preview-emulator:
+    if: ${{ github.ref_name == 'feat/kiln-preview' }}
+    needs: kiln-preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: kiln-preview-apk-unsigned, path: art }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21" }
+      - name: Sign with a throwaway CI key (emulator only)
+        run: |
+          set -e
+          BT="$ANDROID_HOME/build-tools/34.0.0"
+          [ -x "$BT/apksigner" ] || { yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "build-tools;34.0.0" > /dev/null; }
+          keytool -genkeypair -keystore ci.p12 -storetype PKCS12 -storepass cikeyci -keypass cikeyci -alias ci -keyalg RSA -keysize 2048 -validity 2 -dname "CN=Kiln CI throwaway" > /dev/null
+          "$BT/zipalign" -f -P 16 4 art/kiln-preview/blaze-kiln-preview-unsigned.apk aligned.apk
+          "$BT/apksigner" sign --ks ci.p12 --ks-pass pass:cikeyci --ks-key-alias ci --out kiln-preview-ci.apk aligned.apk
+          rm -f ci.p12
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: "Emulator API 34 - Kiln preview screen verifies, installs and launches the F-Droid guest inside com.blaze.assistant"
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          KILN_HOST: com.blaze.assistant
+          KILN_ACTIVITY: com.blaze.assistant.kiln.KilnPreviewActivity
+          KILN_EXTRA: "--ez kiln.enable true"
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
+          script: bash tools/kiln/emulator-check.sh kiln-preview-ci.apk emu-preview
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kiln-preview-emulator-api34
+          retention-days: 7
+          path: emu-preview/
+
   apk:
-    if: ${{ !(startsWith(github.ref_name, 'app/engine') || github.ref_name == 'feat/blaze-engine') }}
+    if: ${{ !(startsWith(github.ref_name, 'app/engine') || github.ref_name == 'feat/blaze-engine' || github.ref_name == 'feat/kiln-preview') }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -199,7 +320,7 @@ jobs:
             build.log
 
   unit-tests:
-    if: ${{ !(startsWith(github.ref_name, 'app/engine') || github.ref_name == 'feat/blaze-engine') }}
+    if: ${{ !(startsWith(github.ref_name, 'app/engine') || github.ref_name == 'feat/blaze-engine' || github.ref_name == 'feat/kiln-preview') }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -254,7 +375,7 @@ jobs:
             app/build/test-results/testDebugUnitTest/*.xml
 
   shots:
-    if: ${{ !(startsWith(github.ref_name, 'app/engine') || github.ref_name == 'feat/blaze-engine') }}
+    if: ${{ !(startsWith(github.ref_name, 'app/engine') || github.ref_name == 'feat/blaze-engine' || github.ref_name == 'feat/kiln-preview') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:

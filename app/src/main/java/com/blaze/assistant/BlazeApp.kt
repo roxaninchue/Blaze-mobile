@@ -8,6 +8,8 @@ import kotlinx.coroutines.launch
 class BlazeApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        // Helper processes of a test build (VariantHooks) skip Blaze's own start-up; release/debug: always false.
+        if (com.blaze.assistant.variant.VariantHooks.skipAppInit(this)) return
         val t0 = android.os.SystemClock.elapsedRealtime()
         com.blaze.assistant.device.CrashLog.init(this)
         com.blaze.assistant.device.CrashLog.shieldMainThread()

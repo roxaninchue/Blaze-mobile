@@ -255,7 +255,12 @@ fun AboutPage() {
         Spacer(Modifier.width(14.dp))
         Column {
             Text("Blaze", style = TextStyle(fontFamily = Type.Display, fontWeight = FontWeight.Medium, fontSize = 22.sp, color = c.ink))
-            Label("Version $v", color = c.weak, size = 10.sp)
+            // Test builds can hang a hidden switch on the version line (VariantHooks; release/debug: no-op, not clickable).
+            val versionTap = if (com.blaze.assistant.variant.VariantHooks.VERSION_TAPS)
+                Modifier.clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) {
+                    com.blaze.assistant.variant.VariantHooks.versionTapped(ctx)
+                } else Modifier
+            Label("Version $v", color = c.weak, size = 10.sp, modifier = versionTap)
         }
     }
     Spacer(Modifier.height(16.dp))
@@ -263,4 +268,5 @@ fun AboutPage() {
         style = TextStyle(fontFamily = Type.Sans, fontSize = 14.sp, lineHeight = 21.sp, color = c.body))
     Spacer(Modifier.height(14.dp))
     Label("blazeinchue.pages.dev", color = c.sub, size = 10.sp)
+    com.blaze.assistant.variant.VariantHooks.AboutExtras()
 }

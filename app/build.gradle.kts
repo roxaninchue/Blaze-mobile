@@ -43,9 +43,22 @@ android {
             signingConfig = signingConfigs.getByName("debug")
             buildConfigField("boolean", "KILN_HARNESS", "true")
         }
+        // PRIVATE "Kiln preview" test build (never a release, never on the public site): SAME applicationId as release so it
+        // installs over the owner's Blaze, release-like (R8, not debuggable, unsigned here; signed outside the repo with the
+        // release key). versionName/versionCode are fixed below (0.45.26-kiln-preview, vc171) so the official 0.45.26
+        // (vc172) updates over it. :kiln + the pinned F-Droid guest are bundled; Kiln is reachable only through a hidden
+        // switch (tap the version in Settings > About 7 times). Release, debug and kilnTest use src/noPreview (no switch).
+        create("kilnPreview") {
+            initWith(getByName("release"))
+            matchingFallbacks += listOf("release")
+            proguardFile("kiln-preview-rules.pro")
+        }
     }
-    // kilnTest bundles the pinned F-Droid guest APK (kiln-guests/fdroid, GUEST_APPS.md) under assets/kiln/guests/.
+    // kilnTest and kilnPreview bundle the pinned F-Droid guest APK (kiln-guests/fdroid, GUEST_APPS.md) under assets/kiln/guests/.
     sourceSets.getByName("kilnTest").assets.srcDir(layout.buildDirectory.dir("generated/kilnGuestAssets"))
+    sourceSets.getByName("kilnPreview").assets.srcDir(layout.buildDirectory.dir("generated/kilnGuestAssets"))
+    // Variant hooks (Settings > About version taps, guest-process start-up): no-op everywhere except kilnPreview.
+    listOf("debug", "release", "kilnTest").forEach { sourceSets.getByName(it).java.srcDir("src/noPreview/java") }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -198,10 +211,22 @@ val fromRepo: BlazeDocsTask.() -> Unit = {
     repoDir.set(repoDirectory)
 }
 
+// Private Kiln preview test build: fixed version, one above the live 0.45.25 (vc170) and one below the official 0.45.26 (vc172).
+val KILN_PREVIEW_VERSION_NAME = "0.45.26-kiln-preview"
+val KILN_PREVIEW_VERSION_CODE = 171
+
 // One generator per variant, wired as a generated assets folder (AGP owns its output path).
 androidComponents {
     onVariants { v ->
-        val t = tasks.register<BlazeDocsTask>("generate" + v.name.replaceFirstChar { it.uppercase() } + "BlazeDocs") { fromRepo() }
+        val preview = v.buildType == "kilnPreview"
+        if (preview) v.outputs.forEach { o ->
+            o.versionCode.set(KILN_PREVIEW_VERSION_CODE)
+            o.versionName.set(KILN_PREVIEW_VERSION_NAME)
+        }
+        val t = tasks.register<BlazeDocsTask>("generate" + v.name.replaceFirstChar { it.uppercase() } + "BlazeDocs") {
+            fromRepo()
+            if (preview) { versionName.set(KILN_PREVIEW_VERSION_NAME); versionCode.set(KILN_PREVIEW_VERSION_CODE) }
+        }
         v.sources.assets?.addGeneratedSourceDirectory(t, BlazeDocsTask::outputDir)
     }
 }
@@ -280,8 +305,9 @@ dependencies {
     testImplementation("androidx.test:core:1.6.1")
     testImplementation("androidx.test.ext:junit:1.2.1")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
-    // Blaze Kiln: only in the M1 phone test build.
+    // Blaze Kiln: only in the M1 phone test build and the private Kiln preview build.
     "kilnTestImplementation"(project(":kiln"))
+    "kilnPreviewImplementation"(project(":kiln"))
 }
 
 // ---------------------------------------------------------------- Blaze Kiln M1 test build
@@ -292,5 +318,6 @@ val copyKilnGuest = tasks.register<Copy>("copyKilnGuest") {
     from(rootProject.layout.projectDirectory.file("kiln-guests/fdroid/LICENSE-shoppinglistcalc.txt"))
     into(layout.buildDirectory.dir("generated/kilnGuestAssets/kiln/guests"))
 }
-tasks.matching { it.name == "mergeKilnTestAssets" || it.name == "generateKilnTestAssets" || it.name.startsWith("lintVitalAnalyzeKilnTest") }
+tasks.matching { t -> listOf("KilnTest", "KilnPreview").any { v -> t.name == "merge${v}Assets" || t.name == "generate${v}Assets" ||
+        t.name.startsWith("lintVitalAnalyze$v") || t.name.startsWith("lintAnalyze$v") } }
     .configureEach { dependsOn(copyKilnGuest) }

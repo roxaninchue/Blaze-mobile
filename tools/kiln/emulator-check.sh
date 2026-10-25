@@ -14,13 +14,17 @@
 #   6. the guest package is NOT installed on the device (pm path fails)
 #
 # usage: emulator-check.sh <kilnTest.apk> [out-dir]
+# Kiln preview build (com.blaze.assistant, Kiln screen behind the hidden switch):
+#   KILN_HOST=com.blaze.assistant KILN_ACTIVITY=com.blaze.assistant.kiln.KilnPreviewActivity \
+#   KILN_EXTRA="--ez kiln.enable true" emulator-check.sh <kilnPreview.apk> [out-dir]
 set -u
 APK=${1:?kilnTest apk}
 OUT=${2:-emu}
 mkdir -p "$OUT"
-HOST=com.blaze.assistant.kilntest
+HOST=${KILN_HOST:-com.blaze.assistant.kilntest}
 GUEST=io.github.buildsbyben.shoppinglistcalc
-HARNESS=com.blaze.assistant.kiln.KilnHarnessActivity
+HARNESS=${KILN_ACTIVITY:-com.blaze.assistant.kiln.KilnHarnessActivity}
+EXTRA=${KILN_EXTRA:-}
 
 log() { echo "[kiln-emu] $*" | tee -a "$OUT/run.txt"; }
 diaglines() { adb logcat -d -v brief -s KilnDiag:I 2>/dev/null; }
@@ -42,7 +46,7 @@ adb logcat -c
 # Wake + unlock so the launch is really in the foreground.
 adb shell input keyevent KEYCODE_WAKEUP || true
 adb shell wm dismiss-keyguard || true
-adb shell am start -W -n "$HOST/$HARNESS" --ez kiln.autorun true 2>&1 | tee "$OUT/am-start.txt"
+adb shell am start -W -n "$HOST/$HARNESS" $EXTRA --ez kiln.autorun true 2>&1 | tee "$OUT/am-start.txt"
 
 verdict_activity=""
 for i in $(seq 1 120); do
@@ -93,7 +97,7 @@ grep -E "CRASH|REFUSAL" "$OUT/kilndiag-logcat.txt" | sed 's/^/[kiln-emu] INFO /'
 
 if [ $fail = 0 ]; then log "RESULT: PASS (EMULATOR evidence, not a real phone)"; else log "RESULT: FAIL"; fi
 {
-  echo "### Kiln M1 emulator check (EMULATOR evidence, not a real phone)"
+  echo "### Kiln emulator check: $HOST (EMULATOR evidence, not a real phone)"
   echo '```'; cat "$OUT/device.txt"; grep -E "PASS|FAIL|INFO|RESULT|top resumed|pid" "$OUT/run.txt"; echo '```'
   echo "KilnDiag lines:"; echo '```'; cut -c1-400 "$OUT/kilndiag-logcat.txt" | tail -40; echo '```'
 } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
