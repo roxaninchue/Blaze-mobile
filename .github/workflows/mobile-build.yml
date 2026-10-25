@@ -215,8 +215,11 @@ jobs:
           G=assets/kiln/guests/io.github.buildsbyben.shoppinglistcalc_21.apk
           unzip -p blaze-kiln-preview-unsigned.apk "$G" | sha256sum | grep -q "^d5a1e434bd54270dadee55217758568c05c3f89f93693d9a9c2e8a065b9690ee "
           unzip -l blaze-kiln-preview-unsigned.apk | grep -E "lib/.*\.so" | awk '{print $4}' > libs.txt || true
-          "$BT/zipalign" -c -P 16 4 blaze-kiln-preview-unsigned.apk && echo "zipalign: ok" | tee -a "$GITHUB_STEP_SUMMARY" || echo "zipalign: NOT aligned" | tee -a "$GITHUB_STEP_SUMMARY"
-          sha256sum blaze-kiln-preview-unsigned.apk | tee SHA256SUMS
+          # Aligned copy for signing outside GitHub (apksigner keeps the alignment).
+          "$BT/zipalign" -f -p 4 blaze-kiln-preview-unsigned.apk blaze-kiln-preview-unsigned-aligned.apk
+          "$BT/zipalign" -c -p 4 blaze-kiln-preview-unsigned-aligned.apk
+          echo "zipalign -p 4: ok (aligned copy)" | tee -a "$GITHUB_STEP_SUMMARY"
+          sha256sum blaze-kiln-preview-unsigned.apk blaze-kiln-preview-unsigned-aligned.apk | tee SHA256SUMS
           echo "${GITHUB_SHA}" > COMMIT
           grep -E "package:|sdkVersion|targetSdkVersion" badging.txt | tee -a "$GITHUB_STEP_SUMMARY"
           echo "bundled guest $G sha256 d5a1e434... (pinned); native libs: $(wc -l < libs.txt)" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -249,8 +252,7 @@ jobs:
           BT="$ANDROID_HOME/build-tools/34.0.0"
           [ -x "$BT/apksigner" ] || { yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "build-tools;34.0.0" > /dev/null; }
           keytool -genkeypair -keystore ci.p12 -storetype PKCS12 -storepass cikeyci -keypass cikeyci -alias ci -keyalg RSA -keysize 2048 -validity 2 -dname "CN=Kiln CI throwaway" > /dev/null
-          "$BT/zipalign" -f -P 16 4 art/kiln-preview/blaze-kiln-preview-unsigned.apk aligned.apk
-          "$BT/apksigner" sign --ks ci.p12 --ks-pass pass:cikeyci --ks-key-alias ci --out kiln-preview-ci.apk aligned.apk
+          "$BT/apksigner" sign --ks ci.p12 --ks-pass pass:cikeyci --ks-key-alias ci --out kiln-preview-ci.apk art/kiln-preview/blaze-kiln-preview-unsigned-aligned.apk
           rm -f ci.p12
       - name: Enable KVM
         run: |
