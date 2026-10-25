@@ -103,6 +103,8 @@ val advancedPages = listOf(
     SettingsPage("phonebrowser", "Blaze Phone", "Blaze's own phone browser: sign out of sites, clear its data"),
     SettingsPage("proactive", "Proactive & triggers", "Speak up on its own, when-X-do-Y"),
     SettingsPage("commands", "Slash commands", "Your own /commands and prompt skills"),
+    // 0.45.23: the account's specialties (gateway 0.8.45 /v1/specialties): list, view, delete.
+    SettingsPage("specialties", "Specialties", "What Blaze learned from tasks you repeat, and your rules"),
     SettingsPage("orb", "Floating orb", "Keep Blaze over other apps"),
     SettingsPage("logs", "Life logs", "Transcribe what the mic hears into memory, brainstorms"),
     SettingsPage("replies", "Notification replies", "Chat logs and replies from notifications, auto-reply"),
@@ -196,6 +198,7 @@ fun SettingsScreen(start: String?, a11yOn: Boolean, onOpenAccessibility: () -> U
                 "logs" -> LifeLogsPage()
                 "replies" -> RepliesPage()
                 "logins" -> SavedLoginsPage()
+                "specialties" -> SpecialtiesPage(onSignIn = { page = "account" })
                 "phonebrowser" -> PhoneBrowserSettingsPage()
                 "watches" -> com.blaze.assistant.phone.MagicHandWatchesPage()
             }

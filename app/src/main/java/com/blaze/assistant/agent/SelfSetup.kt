@@ -112,7 +112,7 @@ fun settingsPageFor(raw: String): String {
         "look" to "feel", "theme" to "feel", "sounds" to "feel", "accounts" to "connections", "connected" to "connections",
         "personality" to "persona", "phone" to "control", "accessibility" to "control", "skills" to "control",
         "library" to "skills", "signin" to "account", "login" to "account", "signup" to "account", "lock" to "privacy", "safety" to "privacy", "diagnostics" to "device", "health" to "device", "export" to "backup",
-        "brainstorm" to "logs", "lifelogs" to "logs", "transcripts" to "logs", "autoreply" to "replies")
+        "brainstorm" to "logs", "lifelogs" to "logs", "transcripts" to "logs", "autoreply" to "replies", "specialty" to "specialties")
     val words = raw.lowercase().replace("settings", " ").split(Regex("[^a-z_]+")).filter { it.isNotBlank() }
     if (words.isEmpty()) return ""
     // Several pages listed (the model copied the example): only trust it when they all point to one page.
