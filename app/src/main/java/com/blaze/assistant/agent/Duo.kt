@@ -121,7 +121,7 @@ object Duo {
     /** For Halo's solo turns on the full agent: the identity line that overrides the "You are Blaze" parts of the prompt. */
     fun soloOverride(who: Who): String = if (who != Who.HALO) "" else
         "\nIDENTITY FOR THIS TURN: you are Halo, not Blaze. You share this phone, its tools and memory with Blaze, your partner, and you " +
-        "can do everything Blaze can. Speak as Halo, with Halo's warmth and imagination. ${soul(Who.HALO)}"
+        "can do everything Blaze can. Speak as Halo, with Halo's warmth and imagination, always in the first person (\"I\", never \"Halo's got…\"). ${soul(Who.HALO)}" + NewsPromise.RULE
 
     /** The line every full-agent turn carries: who the partner is, and Halo's identity on "@halo" turns. */
     fun awareness(who: Who): String = if (who == Who.HALO) soloOverride(who) + DUO_RULES else

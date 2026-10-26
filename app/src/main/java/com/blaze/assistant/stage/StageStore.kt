@@ -41,7 +41,8 @@ object StageStore {
         if (loaded) return
         loaded = true
         try {
-            _state.value = StageTools.decode(Settings.str(KEY, ""))
+            val dm = ctx.resources.displayMetrics
+            _state.value = StageTools.decode(Settings.str(KEY, ""), if (dm.heightPixels > 0) dm.widthPixels.toFloat() / dm.heightPixels else 0f)
             _timers.value = decodeTimers(Settings.str(TKEY, ""))
             // Timers that ended while the app was closed catch up (exact end times, no drift).
             val now = System.currentTimeMillis()
@@ -52,7 +53,10 @@ object StageStore {
         } catch (_: Throwable) { }
     }
 
-    private fun save() { try { Settings.setStr(KEY, StageTools.encode(_state.value)); Settings.setStr(TKEY, encodeTimers(_timers.value)) } catch (_: Throwable) { } }
+    /** Width / height of the Stage as last laid out (saved with the layout, to spot a turned screen on restore). */
+    @Volatile var aspect: Float = 0f
+
+    private fun save() { try { Settings.setStr(KEY, StageTools.encode(_state.value, aspect)); Settings.setStr(TKEY, encodeTimers(_timers.value)) } catch (_: Throwable) { } }
 
     fun encodeTimers(m: Map<String, TimerState>): String = JSONArray(m.values.map { it.toJson() }).toString()
     fun decodeTimers(s: String?): Map<String, TimerState> = try { JSONArray(s ?: "[]").let { a -> (0 until a.length()).map { TimerState.from(a.getJSONObject(it)) }.associateBy { it.id } } } catch (_: Exception) { emptyMap() }
@@ -200,7 +204,7 @@ object StageStore {
             else " Ready with a Start button (${StageTimer.words(t?.left ?: 0L)}); it's not running until the user taps Start."
         }
         StageKind.MUSIC -> " " + com.blaze.assistant.mediaapps.StageMusic.play(ctx, args.optString("query"))
-        StageKind.VIDEO -> if (item.props["url"].isNullOrBlank()) " No video given: the card offers Blaze Video." else ""
+        StageKind.VIDEO -> if (item.props["url"].isNullOrBlank()) " No video given: the card offers Blaze Video." else { com.blaze.assistant.ui.StageVideo.autoplay = true; "" }
         StageKind.FLASHCARDS -> com.blaze.assistant.agent.Flashcards.queue(item.props["deck"].orEmpty()).size.let { n ->
             if (n == 0) " That deck has nothing due (or doesn't exist): add cards with flashcards action=add." else " $n card${if (n == 1) "" else "s"} to go." }
         else -> ""

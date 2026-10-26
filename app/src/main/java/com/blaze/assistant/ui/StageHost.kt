@@ -94,9 +94,11 @@ object StageDevice {
 object StageVideo {
     private var player: androidx.media3.exoplayer.ExoPlayer? = null
     private var url: String = ""
+    /** Play as soon as it's ready: only for a video just shown, never for a card restored after the app was closed. */
+    @Volatile var autoplay = false
     fun player(ctx: Context, u: String): androidx.media3.exoplayer.ExoPlayer {
         val p = player ?: androidx.media3.exoplayer.ExoPlayer.Builder(ctx.applicationContext).build().also { player = it }
-        if (u != url) { url = u; p.setMediaItem(androidx.media3.common.MediaItem.fromUri(u)); p.prepare(); p.playWhenReady = true
+        if (u != url) { url = u; p.setMediaItem(androidx.media3.common.MediaItem.fromUri(u)); p.prepare(); p.playWhenReady = autoplay; autoplay = false
             // Music pauses while a video plays (two sounds at once is never wanted).
             try { com.blaze.assistant.mediaapps.MusicService.current?.transport("pause") } catch (_: Exception) { } }
         return p
@@ -189,6 +191,7 @@ fun StageHost(lastMessage: String, chat: @Composable (Modifier) -> Unit) {
     var stageOrigin by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
     BoxWithConstraints(Modifier.fillMaxSize().onPlaced { stageOrigin = it }) {
         val stageW = constraints.maxWidth.toFloat().coerceAtLeast(1f); val stageH = constraints.maxHeight.toFloat().coerceAtLeast(1f)
+        LaunchedEffect(stageW, stageH) { StageStore.aspect = stageW / stageH }
         val dens = LocalDensity.current
         @Composable fun WidgetTile(i: StageItem, narrow: Boolean) {
             var dx by remember(i.id) { mutableFloatStateOf(0f) }; var dy by remember(i.id) { mutableFloatStateOf(0f) }

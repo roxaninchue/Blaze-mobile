@@ -44,6 +44,8 @@ class ViewsSkillsTest {
         for (s in ViewRouter.specs) {
             // Archive is search only since v0.24.0 (no chat list screen); every other routed view has a screen.
             if (s.id == "archive") assertTrue(ViewRouter.hint(s).contains("search_chat") && !ViewRouter.hint(s).contains("open_view"))
+            // 0.46.0: the Stage is the chat itself (no separate screen); its cards each have "Open in full view".
+            else if (s.id == "stage") assertTrue(ViewRouter.hint(s).contains("stage_show"))
             else assertTrue("no view ${s.id}", Views.find(s.id) != null)
             assertTrue("prompt misses ${s.name}", ViewRouter.PROMPT.contains("${s.name} (/${s.id})"))
             assertTrue(ViewRouter.hint(s).startsWith("\nREQUIRED VIEW THIS TURN: ${s.name}"))

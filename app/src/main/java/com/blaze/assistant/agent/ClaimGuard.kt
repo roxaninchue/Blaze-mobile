@@ -35,6 +35,8 @@ object ClaimGuard {
         "projects" to """projects?""",
         "memory" to """memory|memories""",
         "browser" to """browser|tabs?""",
+        // 0.46.0 Blaze Stage: "I've started a 30-minute timer", "the music player is on your screen".
+        "stage" to """stage|timers?|pomodoros?|countdowns?|mini ?players?""",
     )
 
     private const val VERBS = """created|made|built|generated|designed|drawn|drew|rendered|updated|changed|modified|edited|adjusted|tweaked|added|opened|saved|set up|scheduled|put|placed|switched|redesigned|rebuilt|shown|showing|displayed"""
@@ -76,6 +78,8 @@ object ClaimGuard {
             // v0.27.x: showing / listing memories is backed by a lookup too.
             "memory" -> c.name in setOf("memory_save", "memory_update", "memory_delete", "memory_merge", "remember", "forget", "memory_search", "recall_memory")
             "browser" -> c.name.startsWith("browser_") || c.name in setOf("open_url", "navigate_to")
+            // 0.46.0: music_ops / video_ops put their card on the Stage too; set_timer is the Clock app's timer.
+            "stage" -> c.name.startsWith("stage_") || c.name in setOf("music_ops", "video_ops", "set_timer", "set_alarm", "media_control")
             else -> c.name in spec.tools
         }
     }
@@ -123,6 +127,7 @@ object ClaimGuard {
             "projects" -> "open_view view=projects (or update_brief). "
             "memory" -> "memory_save / remember. "
             "browser" -> "browser_open and the other browser_ tools. "
+            "stage" -> "stage_show (kind=timer minutes=N title=…, or kind=music / quiz / flashcards / plan). "
             else -> "${spec.tools.joinToString(" / ")}. "
         } + "Then reply in one or two lines about what the tool actually did (its real result: 2D or 3D, what it shows). If it can't be done, say so plainly."
 
@@ -136,6 +141,7 @@ object ClaimGuard {
             "schedule" -> "set that up in Schedule this time, so nothing is scheduled yet"
             "gallery" -> "make it in the Gallery this time, so nothing new is there yet"
             "memory" -> "save that to memory this time"
+            "stage" -> "put it on the screen this time, so it isn't there yet"
             else -> "do that in ${spec.name} this time, so nothing changed there yet"
         } + ". Say \u201ctry again\u201d and I'll have another go."
         return if (rest.length < 12) line else "$line\n\n$rest"

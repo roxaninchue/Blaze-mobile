@@ -46,7 +46,7 @@ class DesignNavTest {
     @Test fun wiredIntoTheChatScreen() {
         val chat = src("ui/ChatScreen.kt")
         assertTrue("DesignNav.fullScreen(showing, nav)" in chat)
-        assertTrue("top bar hidden", "if (!designFull) Box(" in chat)
+        assertTrue("top bar hidden", "if (!designFull && (stage.topBar || !stageActive)) Box(" in chat)
         assertTrue("back button", "onBack = { Views.showing.value = DesignNav.back(Views.showing.value) }" in chat)
         assertTrue("system back", "BackHandler { Views.showing.value = DesignNav.back(Views.showing.value) }" in chat)
         val view = src("ui/DesignView.kt")

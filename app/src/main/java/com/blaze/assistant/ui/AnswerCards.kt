@@ -70,7 +70,8 @@ object AnswerCards {
 
     fun parse(src0: String): List<Seg> {
         // v0.31.1: HTML in replies (<b>, <table>, <img>, <pre>, lists…) becomes Markdown first, so it mixes with the rest.
-        val src = HtmlLite.normalize(src0)
+        // 0.46.0: rich blocks written the wrong way (kind word inside the fence or inline) are put right first (RichJson).
+        val src = RichJson.fixSource(HtmlLite.normalize(src0))
         val lines = src.replace("\r", "").split('\n')
         val out = mutableListOf<Seg>()
         val text = StringBuilder()

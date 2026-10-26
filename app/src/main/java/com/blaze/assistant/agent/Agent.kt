@@ -2156,7 +2156,7 @@ When you finish, say what you did in one short sentence.
                 // v0.45.28: either one working leaves the other free (side talk, and the wait line below).
                 soloRunning = true; soloWho = voice
                 val nudge = if (notificationContext.isNullOrBlank() && agentId == null && specialistId == null && Settings.bool("duo_on", true) &&
-                    Settings.bool("duo_wait_line", true)) startWaitNudge(voice, shown, turnFrom) else null
+                    Settings.bool("duo_wait_line", true) && !WaitNudge.skip(voice, shown)) startWaitNudge(voice, shown, turnFrom) else null
                 try { runLoop() } finally { soloRunning = false; nudge?.cancel() }
                 // v0.31.2: Halo's solo answer is marked as Halo's in the history, so Blaze knows who said it.
                 if (voice == Duo.Who.HALO) tagLast(Duo.Who.HALO)
@@ -3479,6 +3479,8 @@ When you finish, say what you did in one short sentence.
                         val intent = calledNames + (if (ToolRouter.looksEnglish(lastUserText())) emptySet() else sentNames)
                         val check = ClaimCheck.review(shown, synchronized(turnDone) { turnDone.toList() }, lastUserText(), intent)
                         if (check is ClaimCheck.Outcome.Rewrite) { textOut = check.text; reply.put("content", textOut); pendingFollowups = emptyList(); rewroteClaim = true }
+                        // 0.46.0: the user only shared news and nothing ran: no "locked in / coming / almost ready" promises.
+                        NewsPromise.clean(textOut, lastUserText(), synchronized(turnDone) { turnDone.isNotEmpty() })?.let { textOut = it; reply.put("content", textOut); pendingFollowups = emptyList() }
                         // 0.45.19-speed: while Blaze Phone is in play, "booked / paid / confirmed" needs a phone_read THIS turn that saw a
                         // confirmation; a status question counts too (device test: "Booking confirmed!" with nothing booked).
                         run {

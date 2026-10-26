@@ -123,17 +123,20 @@ class RichKitTest {
         assertNull(RichKit.compare("""{"columns":["Only one"],"rows":[["x","y"]]}"""))
     }
 
-    @Test fun malformedJsonFallsBackToCode() {
+    private fun rawCode(b: List<Block>) = b.any { it is Block.Plain && it.seg is AnswerCards.Seg.Code }
+
+    @Test fun malformedJsonNeverShowsRawCode() {
+        // 0.46.0: a closed rich block that can't be drawn shows readable text (its words / rows), never raw JSON in a code box.
         for (lang in listOf("chart", "form", "tool", "compare", "choices")) {
             val b = blocks(fence(lang, """{"type": "bar", "labels": [oops"""))
-            assertTrue(lang, b.any { it is Block.Plain && (it.seg as? AnswerCards.Seg.Code)?.lang == lang })
+            assertFalse(lang, rawCode(b))
             assertFalse(lang, b.any { it is Block.Pending })
         }
-        // Wrong shapes and wrong types don't crash either.
-        assertTrue(blocks(fence("chart", """{"type":"radar","values":[1]}""")).any { it is Block.Plain })
-        assertTrue(blocks(fence("chart", "[1,2,3]")).any { it is Block.Plain })
-        assertTrue(blocks(fence("tool", """{"inputs":"nope","outputs":5}""")).any { it is Block.Plain })
-        assertTrue(blocks(fence("form", "null")).any { it is Block.Plain })
+        // Wrong shapes and wrong types don't crash either, and still aren't raw code.
+        assertFalse(rawCode(blocks(fence("chart", """{"type":"radar","values":[1]}"""))))
+        assertFalse(rawCode(blocks(fence("chart", "[1,2,3]"))))
+        assertFalse(rawCode(blocks(fence("tool", """{"inputs":"nope","outputs":5}"""))))
+        assertFalse(rawCode(blocks(fence("form", "null"))))
         // Lenient bits a model often gets wrong are accepted: trailing commas and smart quotes.
         assertNotNull(RichKit.chart("""{"labels":["a","b",],"series":[{"values":[1,2],}],}"""))
         assertNotNull(RichKit.choices("[\u201cYes\u201d, \u201cNo\u201d]"))
@@ -145,7 +148,7 @@ class RichKitTest {
         for (lang in listOf("chart", "form", "tool", "compare", "choices")) {
             val b = blocks("Look:\n\n```$lang\n$half")
             val p = b.filterIsInstance<Block.Pending>().single()
-            assertEquals(RichKit.LANGS[lang], p.kind); assertTrue(p.fallback is Block.Plain)
+            assertEquals(RichKit.LANGS[lang], p.kind); assertFalse(rawCode(listOf(p.fallback)))
             for (cut in 1 until half.length step 7) RichReplies.expand(AnswerCards.parse("```$lang\n" + half.take(cut)))   // never throws
         }
         // A whole JSON body before the closing fence already draws.

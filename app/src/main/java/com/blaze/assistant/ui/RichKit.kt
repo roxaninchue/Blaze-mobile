@@ -93,14 +93,18 @@ object RichKit {
             .map { clean(it?.toString() ?: "", 60) }.take(MAX_TABLE_COLS)
         val rows = o.optJSONArray("rows").list().mapNotNull { r ->
             when (r) {
-                is JSONArray -> r.list().map { clean(it?.toString() ?: "", 300) }
-                is JSONObject -> if (heads.isEmpty()) null else heads.map { h -> clean(r.opt(h)?.toString() ?: "", 300) }
+                is JSONArray -> r.list().map { cell(it) }
+                is JSONObject -> if (heads.isEmpty()) null else heads.map { h -> cell(r.opt(h)) }
                 else -> null
             }?.take(MAX_TABLE_COLS)?.takeIf { row -> row.any { it.isNotEmpty() } }
+                // 0.46.0: a row with a missing value (an app with no size) is kept and shows "—", never dropped.
+                ?.let { row -> val w = maxOf(heads.size, row.size); (row + List(w - row.size) { "" }).map { it.ifEmpty { "\u2014" } } }
         }.take(MAX_TABLE_ROWS)
         if (rows.isEmpty() || (heads.isEmpty() && rows.first().size < 2)) return null
         return TableCard(clean(o.str("title", "caption"), 80), heads, rows, o.optBoolean("sticky", true))
     }
+
+    private fun cell(v: Any?): String = if (v == null || v == JSONObject.NULL) "" else clean(v.toString(), 300)
 
     /** A Markdown pipe table (AnswerCards' rows: the first is the header) as a card. */
     fun tableFromMd(rows: List<List<String>>, title: String = ""): TableCard? {
@@ -132,17 +136,10 @@ object RichKit {
 
     /** Reads a JSON body leniently: tolerates a ```json-style wrapper, smart quotes and trailing commas. */
     fun json(body: String): Any? {
-        var t = body.trim()
+        // 0.46.0: single quotes, unquoted keys, a kind word in front and a cut-off tail are repaired too (RichJson).
+        val t = body.trim().let { b -> RichJson.kindPrefix(b)?.second ?: b }
         if (t.isEmpty()) return null
-        t = t.replace('\u201C', '"').replace('\u201D', '"')
-        t = t.replace(Regex(""",\s*([}\]])"""), "$1")
-        return try {
-            when (t.first()) {
-                '{' -> JSONObject(t)
-                '[' -> JSONArray(t)
-                else -> null
-            }
-        } catch (_: Exception) { null }
+        return RichJson.parse(t)
     }
 
     private fun JSONObject.str(vararg keys: String): String {

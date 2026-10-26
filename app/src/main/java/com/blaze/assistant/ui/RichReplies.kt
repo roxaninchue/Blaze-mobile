@@ -124,7 +124,7 @@ object RichReplies {
         val b = try {
             when (kind) {
                 "chart" -> RichKit.chart(s.code)?.let { Block.Chart(it) }
-                "choices" -> (if (open(s) && RichKit.json(s.code) == null) null else RichKit.choices(s.code))?.let { Block.Choices(it) }
+                "choices" -> RichKit.choices(s.code)?.let { Block.Choices(it) }
                 "form" -> RichKit.form(s.code)?.let { Block.Form(it) }
                 "tool" -> RichKit.tool(s.code)?.let { Block.Tool(it) }
                 "compare" -> RichKit.compare(s.code)?.let { Block.Compare(it) }
@@ -133,7 +133,18 @@ object RichReplies {
                 else -> null
             }
         } catch (_: Exception) { null } catch (_: StackOverflowError) { null }
-        return b ?: if (open(s)) Block.Pending(kind, s, Block.Plain(s)) else Block.Plain(s)
+        // 0.46.0: a closed block that still can't be drawn is never shown as raw JSON in a code box: its rows / words as text.
+        // 0.46.0: a block still streaming in shows the placeholder; if the reply ends without closing it (a cut-off reply), the
+        // repaired block (or its salvaged rows / words) shows. A closed block that can't be drawn is never raw JSON in a code box.
+        if (open(s)) return if (b != null && RichJson.complete(s.code)) b else Block.Pending(kind, s, b ?: salvaged(kind, s))
+        return b ?: salvaged(kind, s)
+    }
+
+    fun salvaged(kind: String, s: AnswerCards.Seg.Code): Block {
+        val md = RichJson.salvage(kind, s.code)
+        val t = RichKit.tableFromMd(AnswerCards.parse(md).filterIsInstance<AnswerCards.Seg.Table>().firstOrNull()?.rows ?: emptyList(),
+            Regex("""^\*\*(.+?)\*\*""").find(md)?.groupValues?.get(1).orEmpty())
+        return if (t != null && t.rows.isNotEmpty()) Block.Table(t, s.raw) else Block.Plain(AnswerCards.Seg.Text(md))
     }
 
     /** The placeholder line for a block still streaming in. */

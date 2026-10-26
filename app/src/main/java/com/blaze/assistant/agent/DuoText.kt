@@ -35,11 +35,13 @@ object DuoText {
     /** The plain line when even the retry came back as syntax. */
     fun fallback(who: String): String = "I can't check that from here, so I won't guess. Ask @blaze and it will look properly."
 
+    /** 0.46.0: a label in front of the call ("Tool call: memory_search {…}", "Calling: x()", "Action - y {…}"). */
+    private const val LEAD = """(?i:(?:\*\*)?(?:tool[ _]?calls?|function[ _]?calls?|calling(?: tool)?|call|action|using(?: tool)?)(?:\*\*)?[ \t]*[:\-][ \t]*(?:\*\*)?[ \t]*)?"""
     private const val ID = """[A-Za-z_][A-Za-z0-9_.]*"""
     // name(...) alone on a line, optional backticks / trailing semicolon.
-    private val pyLine = Regex("""(?m)^[ \t]*`{0,3}[ \t]*($ID)[ \t]*\(([^\n]*)\)[ \t]*;?[ \t]*`{0,3}[ \t]*$""")
+    private val pyLine = Regex("""(?m)^[ \t]*(?:[-*•][ \t]+)?`{0,3}[ \t]*$LEAD`{0,3}[ \t]*($ID)[ \t]*\(([^\n]*)\)[ \t]*;?[ \t]*`{0,3}[ \t]*$""")
     // name {json} alone on a line.
-    private val braceLine = Regex("""(?m)^[ \t]*`?($ID)[ \t]*(\{[^\n]*\})[ \t]*`?[ \t]*$""")
+    private val braceLine = Regex("""(?m)^[ \t]*(?:[-*•][ \t]+)?`?[ \t]*$LEAD`?($ID)[ \t]*(\{[^\n]*\})[ \t]*`?[ \t]*$""")
     private val kv = Regex("""([A-Za-z_][A-Za-z0-9_]*)\s*[=:]\s*("(?:[^"\\]|\\.)*"|'[^']*'|[^,)]+)""")
 
     /** A name that looks like a tool, not a word in a sentence: snake_case, or one of [known]. */
@@ -95,7 +97,7 @@ object DuoText {
     }
 
     // While streaming: a last line that is starting to look like `some_tool(` is held back until it's finished.
-    private val partialLine = Regex("""(?:^|\n)[ \t]*`{0,3}[ \t]*[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]*)+[ \t]*(?:\([^\n]*)?$""")
+    private val partialLine = Regex("""(?:^|\n)[ \t]*`{0,3}[ \t]*$LEAD[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]*)+[ \t]*(?:[({][^\n]*)?$|(?:^|\n)[ \t]*(?:\*\*)?(?:tool[ _]?calls?|function[ _]?calls?)(?:\*\*)?[ \t]*[:\-]?[^\n]*$""", RegexOption.IGNORE_CASE)
 
     /** [text] without any text-form call (while streaming, without one that's still being written at the end). */
     fun strip(text: String, final: Boolean = true, known: Collection<String> = emptyList()): String {

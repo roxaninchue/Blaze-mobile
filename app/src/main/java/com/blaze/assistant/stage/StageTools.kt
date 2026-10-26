@@ -167,25 +167,41 @@ object StageTools {
 
     // ---------------- codec (the Stage survives the app closing) ----------------
 
-    fun encode(s: StageState): String = JSONObject()
+    /** Saved-layout schema version (bump when the shape changes; an unknown version restores the default layout). */
+    const val SCHEMA = 1
+
+    fun encode(s: StageState, aspect: Float = 0f): String = JSONObject().put("v", SCHEMA).put("aspect", aspect.toDouble())
         .put("items", JSONArray(s.items.map { i -> JSONObject().put("id", i.id).put("kind", i.kind.id).put("props", JSONObject(i.props as Map<*, *>))
             .put("mode", i.mode.name).put("slot", i.slot.name).put("order", i.order).put("x", i.x.toDouble()).put("y", i.y.toDouble()).put("scale", i.scale.toDouble()).put("imm", i.immersive) }))
         .put("chat", chatJson(s.chat)).put("heroChat", chatJson(s.heroChat)).put("top", s.topBar).put("reply", s.reply.name).put("seq", s.seq).toString()
 
     private fun chatJson(c: ChatLayout) = JSONObject().put("mode", c.mode.name).put("count", c.count).put("slot", c.slot.name).put("scale", c.scale.toDouble())
-    private fun chatFrom(o: JSONObject?, d: ChatLayout) = if (o == null) d else ChatLayout(ChatMode.of(o.optString("mode")) ?: d.mode, o.optInt("count", d.count),
-        StageSlot.of(o.optString("slot")) ?: d.slot, o.optDouble("scale", d.scale.toDouble()).toFloat())
+    private fun chatFrom(o: JSONObject?, d: ChatLayout) = if (o == null) d else ChatLayout(ChatMode.of(o.optString("mode")) ?: d.mode, o.optInt("count", d.count).coerceIn(1, 20),
+        StageSlot.of(o.optString("slot")) ?: d.slot, o.optDouble("scale", d.scale.toDouble()).toFloat().let { if (it.isNaN()) 1f else it }.coerceIn(0.4f, 1f))
 
-    fun decode(json: String?): StageState = try {
+    /**
+     * The saved layout, made safe for this screen: an unknown schema or broken JSON is the default layout; positions and sizes
+     * are clamped on screen; when the screen turned (portrait <-> landscape) or changed shape a lot since it was saved
+     * ([aspectNow] = width / height, 0 = unknown), widgets dropped at free spots go back to their docks.
+     */
+    fun decode(json: String?, aspectNow: Float = 0f): StageState = try {
         val o = JSONObject(json ?: "")
+        if (o.optInt("v", SCHEMA) != SCHEMA) throw IllegalStateException("schema")
+        val saved = o.optDouble("aspect", 0.0).toFloat()
+        val turned = saved > 0f && aspectNow > 0f && ((saved < 1f) != (aspectNow < 1f) || maxOf(saved, aspectNow) / minOf(saved, aspectNow) > 1.5f)
         val arr = o.optJSONArray("items") ?: JSONArray()
         val items = (0 until arr.length()).mapNotNull { k -> arr.optJSONObject(k)?.let { i ->
             val kind = StageKind.of(i.optString("kind")) ?: return@let null
             val pr = i.optJSONObject("props"); val props = LinkedHashMap<String, String>()
             pr?.keys()?.forEach { key -> props[key] = pr.optString(key) }
-            StageItem(i.optString("id"), kind, props, if (i.optString("mode") == "HERO") StageMode.HERO else StageMode.WIDGET, StageSlot.of(i.optString("slot")) ?: StageReducer.defaultSlot(kind),
-                i.optLong("order"), i.optDouble("x", 0.7).toFloat(), i.optDouble("y", 0.2).toFloat(), i.optDouble("scale", 1.0).toFloat(), i.optBoolean("imm"))
-        } }
+            val id = i.optString("id").takeIf { it.isNotBlank() } ?: return@let null
+            var slot = StageSlot.of(i.optString("slot")) ?: StageReducer.defaultSlot(kind)
+            if (turned && slot == StageSlot.FLOAT && kind != StageKind.VIDEO) slot = StageReducer.defaultSlot(kind)
+            fun f(k: String, d: Double, lo: Float, hi: Float) = i.optDouble(k, d).toFloat().let { if (it.isNaN()) d.toFloat() else it }.coerceIn(lo, hi)
+            StageItem(id, kind, props, if (i.optString("mode") == "HERO") StageMode.HERO else StageMode.WIDGET, slot,
+                i.optLong("order"), f("x", 0.7, 0f, 0.85f), f("y", 0.2, 0f, 0.9f), f("scale", 1.0, 0.4f, 1f), i.optBoolean("imm"))
+        } }.distinctBy { it.id }.let { l -> val keep = StageReducer.cap(l.filter { it.mode == StageMode.WIDGET }).first.map { it.id }.toSet()
+            l.filter { it.mode == StageMode.HERO || it.id in keep } }
         // Never two heroes, and the reply bar is never gone (PILL at worst).
         val firstHero = items.firstOrNull { it.mode == StageMode.HERO }?.id
         StageState(items.map { if (it.mode == StageMode.HERO && it.id != firstHero) it.copy(mode = StageMode.WIDGET) else it },

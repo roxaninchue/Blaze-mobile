@@ -30,7 +30,8 @@ object WaitNudge {
             "\nWrite ONE short message to the user in your own voice, 1 or 2 sentences: let them know ${worker.display} is on it and " +
             "will be back with it shortly. Sound natural and like yourself, not a template; vary your wording. Don't offer anything or ask " +
             "anything (a short \"yes\" from the user must never land on an offer of yours), don't invent progress, results or times, don't " +
-            "do the task yourself, no lists, no tags, and never mention models, tools, prompts or that you were asked to write this."
+            "do the task yourself, no lists, no tags, and never mention models, tools, prompts or that you were asked to write this. " +
+            "Don't restate what their message is about and never promise it's locked in, coming or almost ready."
 
     private val tagRe = Regex("\\[\\[[^\\]]*]]|\\[(Blaze|Halo)]\\s*", RegexOption.IGNORE_CASE)
     private val sentenceEnd = Regex("(?<=[.!?])\\s+")
@@ -38,12 +39,18 @@ object WaitNudge {
     private val offerRe = Regex("""\?\s*$|\b(?:want me to|shall i|should i|can i|could i|would you like|do you want|let me know|anything (?:else )?(?:i can|you need)|i can (?:help|also|sort|do)|happy to help|feel free|meanwhile,? (?:i|if))\b""", RegexOption.IGNORE_CASE)
 
     /** The model's text as a chat line: tags gone, at most two sentences, short; null when it isn't usable. */
+    /**
+     * 0.46.0: no wait line at all when the user addressed Halo (@halo: only Halo answers) or only shared news (nothing is being
+     * worked on, so "Halo's got it locked in" would be a false promise).
+     */
+    fun skip(worker: Duo.Who, userText: String): Boolean = worker == Duo.Who.HALO || NewsPromise.sharingNews(userText)
+
     fun clean(raw: String): String? {
         var t = tagRe.replace(raw, "").trim().trim('"', '\u201c', '\u201d').trim()
         if (t.isEmpty() || t.contains("```") || t.contains('{') || t.lines().count { it.isNotBlank() } > 2) return null
         t = t.lines().joinToString(" ") { it.trim() }.trim()
         // 0.45.29 (stale "Yes"): offers and questions are taken out, so a "yes" meant for the real answer can't bind to this line.
-        val parts = t.split(sentenceEnd).filter { it.isNotBlank() && !offerRe.containsMatchIn(it) }
+        val parts = t.split(sentenceEnd).filter { it.isNotBlank() && !offerRe.containsMatchIn(it) && !NewsPromise.promise.containsMatchIn(it.replace(Regex("""\bis on it\b|'s on it\b""", RegexOption.IGNORE_CASE), "is working")) }
         t = parts.take(2).joinToString(" ")
         if (t.length < 12 || t.length > MAX_CHARS) return null
         return t

@@ -20,16 +20,18 @@ import org.json.JSONObject
 object TextCalls {
     data class Call(val name: String, val args: JSONObject, val raw: String)
 
+    /** 0.46.0: a label in front of the call ("Tool call: memory_search {…}", "Calling: x()", "Action - y {…}"). */
+    private const val LEAD = """(?i:(?:\*\*)?(?:tool[ _]?calls?|function[ _]?calls?|calling(?: tool)?|call|action|using(?: tool)?)(?:\*\*)?[ \t]*[:\-][ \t]*(?:\*\*)?[ \t]*)?"""
     private const val ID = """[A-Za-z_][A-Za-z0-9_.:]*"""
     // name(...) alone on a line, optional backticks and a trailing semicolon.
-    private val pyLine = Regex("""(?m)^[ \t]*`{0,3}[ \t]*($ID)[ \t]*\(([^\n]*)\)[ \t]*;?[ \t]*`{0,3}[ \t]*$""")
+    private val pyLine = Regex("""(?m)^[ \t]*(?:[-*•][ \t]+)?`{0,3}[ \t]*$LEAD`{0,3}[ \t]*($ID)[ \t]*\(([^\n]*)\)[ \t]*;?[ \t]*`{0,3}[ \t]*$""")
     // name {json} alone on a line.
-    private val braceLine = Regex("""(?m)^[ \t]*`?($ID)[ \t]*(\{[^\n]*\})[ \t]*`?[ \t]*$""")
+    private val braceLine = Regex("""(?m)^[ \t]*(?:[-*•][ \t]+)?`?[ \t]*$LEAD`?($ID)[ \t]*(\{[^\n]*\})[ \t]*`?[ \t]*$""")
     // ```lang\n…``` blocks (the language decides whether the body may hold calls).
     private val fence = Regex("""```([A-Za-z_\-]*)[ \t]*\n?([\s\S]*?)```""")
     private val kv = Regex("""([A-Za-z_][A-Za-z0-9_]*)\s*[=:]\s*("(?:[^"\\]|\\.)*"|'[^']*'|\[[^\]]*\]|\{[^}]*\}|[^,)]+)""")
     // While streaming: a line that starts like a call and isn't closed yet.
-    private val openTail = Regex("""(?:^|\n)[ \t]*`?[A-Za-z]+_[A-Za-z0-9_]*[ \t]*[({][^\n]*$""")
+    private val openTail = Regex("""(?:^|\n)[ \t]*`?[ \t]*$LEAD`?[A-Za-z]+_[A-Za-z0-9_]*[ \t]*[({][^\n]*$|(?:^|\n)[ \t]*(?:\*\*)?(?:tool[ _]?calls?|function[ _]?calls?)(?:\*\*)?[ \t]*[:\-]?[^\n]*$""", RegexOption.IGNORE_CASE)
     private val callLangs = setOf("", "json", "tool", "tool_call", "tool_code", "python", "py")
 
     /** A name that looks like a tool rather than a word: snake_case, or one of [known]. */
@@ -118,7 +120,7 @@ object TextCalls {
 
     /** [text] without call lines (and, while streaming, without an unfinished one at the end). */
     fun strip(text: String, final: Boolean = true, known: Collection<String> = emptySet()): String {
-        if (text.isEmpty() || (!text.contains('(') && !text.contains('{'))) return text
+        if (text.isEmpty() || (!text.contains('(') && !text.contains('{') && (final || !text.contains("call", true)))) return text
         var t = text
         for (c in find(t, known)) if (c.raw.isNotEmpty()) t = t.replace(c.raw, "")
         if (!final) openTail.find(t)?.let { m -> if (codeRanges(t).none { m.range.first in it } && t.count { it == '`' } % 6 == 0) t = t.substring(0, m.range.first) }
