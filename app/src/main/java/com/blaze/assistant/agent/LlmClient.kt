@@ -421,7 +421,8 @@ object LlmClient {
         // read returns at once and nothing more streams into the chat; the call ends as a CancellationException, never retried.
         cancellable(conn) {
         val code = try {
-            val bytes = body.toString().toByteArray()
+            // 0.46.6 wire guard: a saved secret's value never leaves in a model / gateway request (handles only).
+            val bytes = SecretVault.scrub(body.toString()).toByteArray()
             StartTrace.stage("body ${bytes.size / 1024} KB")   // v0.45.9: request JSON ready (size tells the tool-schema cost)
             // v0.45.8: "on the wire" = the connection is open and the first byte is being written.
             conn.outputStream.use { StartTrace.wire(); it.write(bytes) }

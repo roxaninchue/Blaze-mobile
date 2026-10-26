@@ -392,7 +392,7 @@ object CloudRuns {
                     c.setRequestProperty("Content-Type", "application/json")
                     // v0.45.8: a new run (POST /runs) is the chat request: time it from Send.
                     val chat = method == "POST" && path == "/runs"
-                    val bytes = body.toByteArray()
+                    val bytes = SecretVault.scrub(body).toByteArray()   // 0.46.6 wire guard: handles only
                     if (chat) StartTrace.stage("body ${bytes.size / 1024} KB (run)")   // v0.45.9
                     c.outputStream.use { if (chat) StartTrace.wire(); it.write(bytes) }
                 }

@@ -399,6 +399,7 @@ object Duo {
 
     /** v0.45.28: [who] = the free one answering on the side (Halo while Blaze works, Blaze while Halo works). */
     fun sideSystem(userName: String?, task: String, step: String, who: Who = Who.HALO): String = soul(who) + ASSISTANT_RULES + DUO_RULES +
+        "\n" + SecretRules.PROMPT +   // 0.46.6 Secure form
         (if (!userName.isNullOrBlank()) "\nThe user's name is $userName." else "") +
         "\nRIGHT NOW: ${who.other.display}, your partner, is busy working on the user's task: \"${task.take(600)}\"" +
         (if (step.isNotBlank()) " (current step: ${step.take(120)})" else "") + ". The two of you have split up: ${who.other.display} keeps " +

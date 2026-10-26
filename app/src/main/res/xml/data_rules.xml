@@ -6,12 +6,15 @@
     <cloud-backup>
         <include domain="sharedpref" path="." />
         <exclude domain="sharedpref" path="blaze.xml" />
+        <!-- 0.46.6: the Secure Form vault never leaves the phone. -->
+        <exclude domain="file" path="secret_vault.json" />
     </cloud-backup>
     <device-transfer>
         <include domain="sharedpref" path="." />
         <include domain="file" path="." />
         <!-- Saved logins are sealed with this phone's Keystore key; they can't be opened on another phone. -->
         <exclude domain="file" path="vault.json" />
+        <exclude domain="file" path="secret_vault.json" />
         <exclude domain="file" path="browser_logins.json" />
     </device-transfer>
 </data-extraction-rules>

@@ -75,7 +75,7 @@ object SecureInput {
     }
 
     // ---------- placeholders ----------
-    private val token = Regex("\\{\\{secret:([a-zA-Z0-9_]+)\\}\\}")
+    private val token = Regex("\\{\\{secret:([a-zA-Z0-9_]+(?:\\.[a-zA-Z0-9_]+)?)\\}\\}")  // 0.46.6: id.field handles from the Secure Form vault
     fun placeholder(name: String) = "{{secret:$name}}"
     fun hasPlaceholder(s: String) = token.containsMatchIn(s)
     fun names(s: String): List<String> = token.findAll(s).map { it.groupValues[1] }.toList()
@@ -94,7 +94,7 @@ object SecureInput {
      * Swaps placeholders for real values: this run's values first, then the vault for [host].
      * Returns null (and the missing names) when one isn't known, so nothing half-filled is typed.
      */
-    fun resolve(text: String, host: String, vault: (String, String) -> String? = { h, n -> Vault.get(h, n) }): Pair<String?, List<String>> {
+    fun resolve(text: String, host: String, vault: (String, String) -> String? = { h, n -> Vault.get(h, n) ?: com.blaze.assistant.agent.SecretUse.forBrowser(n, h) }): Pair<String?, List<String>> {
         val missing = ArrayList<String>()
         val out = token.replace(text) { m ->
             val n = m.groupValues[1]
@@ -105,11 +105,12 @@ object SecureInput {
 
     /** Replaces any secret value that slipped into text (page text, an echo) with its placeholder or bullets. */
     fun scrub(text: String): String {
-        if (seen.isEmpty() || text.isEmpty()) return text
+        if (text.isEmpty()) return text
+        if (seen.isEmpty()) return com.blaze.assistant.agent.SecretVault.scrub(text)
         var t = text
         val byValue = slots.entries.associate { it.value to it.key }
         for (v in seen.sortedByDescending { it.length }) if (t.contains(v)) t = t.replace(v, byValue[v]?.let { placeholder(it) } ?: "••••")
-        return t
+        return com.blaze.assistant.agent.SecretVault.scrub(t)   // 0.46.6: Secure Form vault values too
     }
 
     fun hostOf(url: String): String = try {

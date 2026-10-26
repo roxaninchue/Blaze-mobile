@@ -25,7 +25,9 @@ object ToolRouter {
         // Background agents: always on hand so long work can be handed off from any request.
         "start_agent", "list_agents", "check_agent", "message_agent", "cancel_agent",
         // 0.46.0 Blaze Stage: stage_show is always on hand, so a timer / music / quiz card is preferred over opening a view.
-        "stage_show"
+        "stage_show",
+        // 0.46.6 Secure form: never ask for a key, password, card or code in chat.
+        "request_secret"
     )
 
     data class Group(val id: String, val about: String, val match: Regex, val names: (String) -> Boolean)

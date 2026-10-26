@@ -244,7 +244,8 @@ fun UserBubble(text: String, quoted: String = "", pos: GroupPos = GroupPos.SINGL
         }
         // v0.28.1: your own message renders its markdown too (## App, 1. **Offline mode**), never raw symbols.
         val ink = BubblePalette.text(c, true)
-        val shown = remember(text, ink) { Md.render(text, ink, ink.copy(alpha = 0.10f)) }
+        // 0.46.6: a pasted secret saved securely shows as "🔒 GitLab token", never as a raw handle.
+        val shown = remember(text, ink) { Md.render(com.blaze.assistant.agent.SecretVault.displayHandles(text), ink, ink.copy(alpha = 0.10f)) }
         SelectionContainer {
             Text(shown, style = TextStyle(fontFamily = Type.sansFor(text), fontSize = 15.sp, lineHeight = 21.sp, color = ink))
         }

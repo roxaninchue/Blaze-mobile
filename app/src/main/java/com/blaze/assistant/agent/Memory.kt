@@ -56,7 +56,9 @@ object Memory {
 
     /** Saves [fact]. [replaces] (words from an older fact) removes the fact it supersedes first. */
     fun add(fact: String, replaces: String = ""): String {
-        val f = fact.trim().removeSuffix(".")
+        val f = SecretVault.scrub(fact).trim().removeSuffix(".")
+        // 0.46.6: a Secure Form handle is not a fact to keep.
+        if (SecretVault.hasHandle(f)) return "Not saved: saved secrets stay in Blaze's vault (Settings › Saved secrets), never in memory."
         if (f.isEmpty()) return "Nothing to remember."
         // Keys, passwords, codes and card/account numbers are never kept, even when asked (Desktop v0.7 rule).
         if (Learn.secret(f)) return "Not saved: that looks like a password, code or account number, which Blaze never keeps in memory."

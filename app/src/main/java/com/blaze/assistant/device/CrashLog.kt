@@ -19,6 +19,9 @@ object CrashLog {
     fun init(ctx: Context) {
         file = File(ctx.filesDir, "blaze_log.txt")
         dir = ctx.filesDir
+        // 0.46.6: the vault file is known before the crash handler and the last-exit check run (the Agent sets it later),
+        // so a crash at start and the next-launch crash report are scrubbed too.
+        try { if (com.blaze.assistant.agent.SecretVault.file == null) com.blaze.assistant.agent.SecretVault.file = File(ctx.filesDir, "secret_vault.json") } catch (_: Throwable) { }
         val prev = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { t, e ->
             try { writeNow("CRASH on ${t.name}: ${android.util.Log.getStackTraceString(e).take(6000)}"); markPending() } catch (_: Throwable) { }
@@ -37,6 +40,9 @@ object CrashLog {
     /** Remember a user-added source's name / id / host so every log line shows "a source" instead. Blank and very short values are ignored. */
     fun secret(vararg values: String?) { values.forEach { v -> v?.trim()?.takeIf { it.length >= 3 }?.let { secrets += it } } }
 
+    /** 0.46.6: saved secrets back to their handles (Secure form vault). Never throws. */
+    fun scrubSecrets(text: String): String = try { com.blaze.assistant.agent.SecretVault.scrub(text) } catch (_: Throwable) { text }
+
     /** Pure: [text] with each of [names] (case-insensitive, longest first) replaced by "a source". */
     fun redact(text: String, names: Collection<String>): String {
         var out = text
@@ -53,7 +59,7 @@ object CrashLog {
      */
     fun enter(label: String): Long {
         val id = inflightN.incrementAndGet()
-        try { inflight[id] = redact(label, secrets).take(160); saveInflight() } catch (_: Throwable) { }
+        try { inflight[id] = redact(scrubSecrets(label), secrets).take(160); saveInflight() } catch (_: Throwable) { }
         return id
     }
     fun leave(id: Long) { try { inflight.remove(id); saveInflight() } catch (_: Throwable) { } }
@@ -76,7 +82,7 @@ object CrashLog {
         if (!description.isNullOrBlank()) sb.append(": ").append(description.take(300))
         if (!during.isNullOrBlank()) sb.append(" | while running: ").append(during.take(300))
         if (!trace.isNullOrBlank()) sb.append("\n").append(trace.take(6000))
-        return redact(sb.toString(), names)
+        return redact(scrubSecrets(sb.toString()), names)
     }
 
     private fun head(i: java.io.InputStream, max: Int): String {
@@ -101,7 +107,7 @@ object CrashLog {
                 exitLine(x.reason, x.description, trace?.replace("\u0000", "")?.trim(), during, secrets)?.let { writeNow(it); wrote = true }
             }
         }
-        if (!wrote && during != null) { writeNow(redact("CRASH (previous run ended while running: $during)", secrets)); wrote = true }
+        if (!wrote && during != null) { writeNow(redact(scrubSecrets("CRASH (previous run ended while running: $during)"), secrets)); wrote = true }
         if (wrote) { markPending(); pendingChanged?.invoke() }
     }
 
@@ -156,14 +162,17 @@ object CrashLog {
         java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "blaze-log").apply { isDaemon = true; priority = Thread.MIN_PRIORITY } }
     }
 
-    fun write(line: String) {
+    fun write(line0: String) {
         if (!::file.isInitialized) return
+        val line = scrubSecrets(line0)   // 0.46.6: never a saved secret in a log
         val stamped = "${synchronized(fmt) { fmt.format(Date()) }}  $line\n"
         try { writer.execute { append(stamped) } } catch (_: Throwable) { append(stamped) }
     }
 
     /** Synchronous write, for the crash handler (the process is about to die). */
-    fun writeNow(line: String) { if (::file.isInitialized) append("${synchronized(fmt) { fmt.format(Date()) }}  $line\n") }
+    fun writeNow(line0: String) { if (!::file.isInitialized) return
+        val line = scrubSecrets(line0)
+        append("${synchronized(fmt) { fmt.format(Date()) }}  $line\n") }
 
     @Synchronized private fun append(stamped: String) {
         try {
@@ -195,7 +204,11 @@ object CrashLog {
     /** Pure: whether [quiet] would log [e] at all (unit-tested). */
     fun quietLogs(e: Throwable?): Boolean = !(e is kotlinx.coroutines.CancellationException || e is InterruptedException)
 
-    fun read(): String = try { if (::file.isInitialized && file.exists()) file.readText() else "" } catch (_: Exception) { "" }
+    /** The log as the user / model sees it: scrubbed again on the way out (lines written before a secret was saved). */
+    fun read(): String = try { if (::file.isInitialized && file.exists()) reportText(file.readText()) else "" } catch (_: Exception) { "" }
+
+    /** Pure (0.46.6): what leaves the log (Send crash report, share, the crash_log tool): saved secrets as handles (user sources were redacted on write). */
+    fun reportText(text: String): String = scrubSecrets(text)
     fun crashes(): Int = read().lines().count { it.contains("CRASH") }
     fun anrs(): Int = read().lines().count { it.contains("  ANR ") }
     fun clear() { try { file.delete() } catch (_: Exception) { } }
@@ -204,7 +217,7 @@ object CrashLog {
         if (!::file.isInitialized || !file.exists()) return null
         val out = File(ctx.cacheDir, "blaze-report.txt")
         val pi = try { ctx.packageManager.getPackageInfo(ctx.packageName, 0) } catch (_: Exception) { null }
-        out.writeText("Blaze ${pi?.versionName} (${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE})\n\n" + read().takeLast(150_000))
+        out.writeText(scrubSecrets("Blaze ${pi?.versionName} (${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE})\n\n" + read().takeLast(150_000)))
         val uri = FileProvider.getUriForFile(ctx, ctx.packageName + ".files", out)
         return Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_STREAM, uri)
             .putExtra(Intent.EXTRA_SUBJECT, "Blaze report").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "Send report")

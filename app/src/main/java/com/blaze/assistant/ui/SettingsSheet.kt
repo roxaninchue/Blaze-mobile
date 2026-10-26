@@ -99,6 +99,7 @@ val advancedPages = listOf(
     SettingsPage("feel", "Taps, sounds & panel", "Tap highlights, sounds, compact panel"),
     SettingsPage("privacy", "Privacy & safety", "App lock, approvals"),
     SettingsPage("watches", "Watches", "Values Magic Hand is watching for you"),
+    SettingsPage("secrets", "Saved secrets", "Keys, tokens, logins and cards from the Secure Form, only on this phone"),
     SettingsPage("logins", "Saved logins", "Sign-ins from Blaze's secure form, encrypted on this phone"),
     SettingsPage("phonebrowser", "Blaze Phone", "Blaze's own phone browser: sign out of sites, clear its data"),
     SettingsPage("proactive", "Proactive & triggers", "Speak up on its own, when-X-do-Y"),
@@ -200,6 +201,7 @@ fun SettingsScreen(start: String?, a11yOn: Boolean, onOpenAccessibility: () -> U
                 "logs" -> LifeLogsPage()
                 "replies" -> RepliesPage()
                 "logins" -> SavedLoginsPage()
+                "secrets" -> SavedSecretsPage()
                 "phonebrowser" -> PhoneBrowserSettingsPage()
                 "watches" -> com.blaze.assistant.phone.MagicHandWatchesPage()
             }

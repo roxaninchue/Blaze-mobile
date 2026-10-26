@@ -710,6 +710,9 @@ fun ChatScreen() {
             QuestionCard()
             FixCard()
             SecureFormCard()
+            // 0.46.6 Secure form: request_secret's card, and the "looks like a secret" hold before a message is sent.
+            SecretRequestCard()
+            SecretPasteCard()
             // 0.45.19: Blaze Phone's live tile (frame, site, step, Take control) while Blaze works on its own phone.
             PhoneLiveCard()
             // v0.24.6: "Open in Design?" instead of switching views on its own.

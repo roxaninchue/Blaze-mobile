@@ -202,8 +202,10 @@ data class Attachment(val name: String, val parts: List<JSONObject>, val thumb: 
         return if (confirm(title0, detail0, action, always = false, grants = r)) r.get() else CommandPolicy.Grant.NO
     }
 
-    suspend fun confirm(title0: String, detail0: String, action: String, always: Boolean = false,
+    suspend fun confirm(title1: String, detail1: String, action: String, always: Boolean = false,
                         grants: java.util.concurrent.atomic.AtomicReference<CommandPolicy.Grant>? = null): Boolean {
+        // 0.46.6: a card never shows a saved secret's value (a command with it swapped in shows the handle).
+        val title0 = SecretVault.scrub(title1); val detail0 = SecretVault.scrub(detail1)
         val tag = kotlin.coroutines.coroutineContext[BgAgents.Tag]
         val title = if (tag != null) "${tag.id} · $title0" else title0
         // v0.28.2 (ConfirmGate): [always] = outbound in the user's name (texts, calls, messages, email, posts, money,
@@ -382,6 +384,7 @@ data class Attachment(val name: String, val parts: List<JSONObject>, val thumb: 
         // v0.26.2: the built-in specialists' field playbooks ship in assets/specialists/<id>.md.
         Playbooks.loader = { id -> runCatching { app.assets.open("specialists/$id.md").bufferedReader().use { it.readText() } }.getOrNull() }
         com.blaze.assistant.browser.Vault.dir = app.filesDir
+        SecretVault.file = java.io.File(app.filesDir, "secret_vault.json")   // 0.46.6 Secure form vault (Keystore-sealed, never backed up)
         ChatStore.init(app)
         // v0.45.0 (#37): this phone's message-id prefix (made once, kept in prefs).
         Gid.init({ Settings.str(Gid.PREF) }, { Settings.setStr(Gid.PREF, it) })
@@ -564,6 +567,8 @@ data class Attachment(val name: String, val parts: List<JSONObject>, val thumb: 
 
     /** [untrusted]: where outside content in [text] came from (Magic Hand's screen text), see ConfirmGate. */
     fun send(text: String, byVoice: Boolean = false, attachments: List<Attachment> = emptyList(), untrusted: String? = null) {
+        // 0.46.6 paste safety: a message that looks like a secret is held for "Save it securely instead?" (Blaze and the Halo side lane).
+        if (untrusted == null && SecretDesk.hold(text, byVoice) { t -> send(t, byVoice, attachments, untrusted) }) { com.blaze.assistant.device.Haptics.tick(app); return }
         // v0.45.8: the reply's start is timed from here (the chat screen's Send already marked it; voice and others mark now).
         StartTrace.tap()
         // "Shut down", "stop", "be quiet"… are handled on-device, even mid-task.
@@ -1171,7 +1176,7 @@ data class Attachment(val name: String, val parts: List<JSONObject>, val thumb: 
             s("ask", "\nIf you're unsure what the user wants, or there are several options (accounts, contacts, items, times), don't guess and don't end your turn: call ask_user with short options, then carry on with the answer. ")
             if (control) {
                 s("control", """
-BACKGROUND FIRST: never take over the user's screen when a background tool can do it. Web questions → web_search/fetch_page; sites you must click, fill or log in to → browser_open/browser_click/browser_type (Blaze's own background browser; browser_show only when the user must see or take over). When a page needs the user's email, phone, username + password, API key or a one-time code, call browser_secure_input (a secure form in the chat; you get {{secret:name}} placeholders, never the values) instead of asking in chat or showing the browser. If a page says the account can't sign in with a password, don't loop on the password: offer Continue with Google, a passkey or the live browser with ask_user. Browser tools never need phone control. Messaging someone → message_contact (never open WhatsApp on screen yourself); a picture Blaze makes → generate_image, then message_contact with image="last"; several contacts match → ask_user with the exact names; only a result starting "Sent to" means it was sent. Email → gmail_search/gmail_read. Calendar → gcal_events or calendar tools. Texts, calls, contacts → the SMS/call/contact tools. Notifications → recent_notifications. Music → spotify tools. ${PromptProfile.filesLine(prof.simple)} Only if no background tool exists or it isn't connected, use the screen; when a background tool isn't connected, offer to connect it (blaze_self open "settings connections") instead of silently driving the app.
+BACKGROUND FIRST: never take over the user's screen when a background tool can do it. Web questions → web_search/fetch_page; sites you must click, fill or log in to → browser_open/browser_click/browser_type (Blaze's own background browser; browser_show only when the user must see or take over). When a page needs the user's email, phone, username + password, API key or a one-time code, call browser_secure_input (a secure form in the chat; you get {{secret:name}} placeholders, never the values) instead of asking in chat or showing the browser. ${SecretRules.PROMPT} If a page says the account can't sign in with a password, don't loop on the password: offer Continue with Google, a passkey or the live browser with ask_user. Browser tools never need phone control. Messaging someone → message_contact (never open WhatsApp on screen yourself); a picture Blaze makes → generate_image, then message_contact with image="last"; several contacts match → ask_user with the exact names; only a result starting "Sent to" means it was sent. Email → gmail_search/gmail_read. Calendar → gcal_events or calendar tools. Texts, calls, contacts → the SMS/call/contact tools. Notifications → recent_notifications. Music → spotify tools. ${PromptProfile.filesLine(prof.simple)} Only if no background tool exists or it isn't connected, use the screen; when a background tool isn't connected, offer to connect it (blaze_self open "settings connections") instead of silently driving the app.
 You can control the phone. SPEED MATTERS: the user is watching.
 ${Orient.RULE}
 - For anything in an app (not Settings: use open_settings), call run_plan ONCE with the whole script, using the visible words on buttons and fields as targets (e.g. open_app YouTube → tap "Search" → type "lofi hip hop" submit → tap the first result's title). You know how common apps look; you don't need to read the screen first. Add optional:true for popups you might need to dismiss, and expect:"..." when a step must lead somewhere.
@@ -1301,6 +1306,7 @@ When you finish, say what you did in one short sentence.
         t.put(com.blaze.assistant.phone.Ussd.tool())
         t.put(com.blaze.assistant.phone.Messaging.tool())
         com.blaze.assistant.browser.BrowserTools.definitions().forEach { t.put(it) }
+        t.put(SecretDesk.toolDef())   // 0.46.6 Secure form
         com.blaze.assistant.appstore.StoreTools.definitions().forEach { t.put(it) }   // 0.45.19 App Store
         com.blaze.assistant.browser.phone.PhoneBrowserTools.definitions().forEach { t.put(it) }   // 0.45.19 Blaze Phone browser
         if (Settings.bool("terminal_tools", true)) com.blaze.assistant.terminal.Terminal.tools(app).forEach { t.put(it) }
@@ -1729,7 +1735,8 @@ When you finish, say what you did in one short sentence.
         /** 0.46.3: this turn's searches (duplicate / off-topic guard). */
         val searches = SearchGuard()
 
-        fun add(role: Role, text0: String, files: List<String> = emptyList()): Long {
+        fun add(role: Role, text1: String, files: List<String> = emptyList()): Long {
+            val text0 = SecretVault.scrub(text1)   // 0.46.6: no saved secret's value ever lands in the chat
             // v0.32.0: the model sometimes copies the history's [Blaze] / [Halo] tags into its narration; never shown.
             val text = if (role == Role.STEP || role == Role.BLAZE) Duo.clean(text0).ifEmpty { text0 } else text0
             if (role == Role.STEP && autoStepId >= 0 && msgs.lastOrNull()?.id == autoStepId) {
@@ -3504,6 +3511,16 @@ When you finish, say what you did in one short sentence.
                             }
                         }
                     } catch (e: CancellationException) { throw e } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("CredAsk", e) }
+                    // 0.46.6 (Secure form): a reply asking for a key, token, password, card or code in the chat becomes the Secure Form card(s).
+                    if (!routine && !credGuarded && (reply.optJSONArray("tool_calls")?.length() ?: 0) == 0) try {
+                        val said = ReplyParts.split((reply.opt("content") as? String).orEmpty(), final = true).text
+                        SecretAsk.decide(said, lastUserText(), credGuarded, ToolCalls.names(allTools))?.let { calls ->
+                            credGuarded = true
+                            if (liveId >= 0) { msgs = msgs.filterNot { it.id == liveId }; liveId = -1L }
+                            reply.put("content", JSONObject.NULL).put("tool_calls", calls)
+                            CallState.current().errors.add("chat secret ask replaced by the Secure Form")
+                        }
+                    } catch (e: CancellationException) { throw e } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("SecretAsk", e) }
                     kotlinx.coroutines.yield()
                     history.put(reply)
 
@@ -4324,9 +4341,16 @@ When you finish, say what you did in one short sentence.
                 try { recSvc?.labelOf(args.optInt("element")).orEmpty() } catch (_: Throwable) { "" } else ""
             recSvc?.lastToggle = null
             val undoBefore = UndoCenter.snapshot(name)
-            val r0 = try { runToolRaw(name, args, shots) }
+            // 0.46.6 Secure form: {{secret:…}} handles become values here, on the phone, only for the hosts they were saved for;
+            // the result is scrubbed back to handles before it reaches the chat or the model.
+            val runArgs = when (val prep = SecretUse.prepare(name, args)) {
+                is SecretUse.Prep.None -> args
+                is SecretUse.Prep.Ok -> prep.args
+                is SecretUse.Prep.Denied -> { add(Role.STEP, "Kept a saved secret on the phone"); return prep.reason }
+            }
+            val r0 = SecretVault.scrub(try { runToolRaw(name, runArgs, shots) }
                 catch (e: CancellationException) { throw e }
-                catch (e: Throwable) { com.blaze.assistant.device.CrashLog.error("tool $name", e); ToolGuide.crash(name, e) }
+                catch (e: Throwable) { com.blaze.assistant.device.CrashLog.error("tool $name", e); ToolGuide.crash(name, e) })
             // v0.39.0: a finished undoable action under Autopilot gets the 10-second Undo bar; a missing access gets a fix card.
             if (agentId == null && this === cur) try { UndoCenter.afterTool(name, args, r0, Modes.autopilot || ackGate?.tracked == true, undoBefore) } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("Agent: UndoCenter.afterToolname args r0 Modes.a", e) }
             val fix = if (agentId == null) FixCards.kindOf(r0) else null
@@ -4398,8 +4422,9 @@ When you finish, say what you did in one short sentence.
          * v0.45.3: may this command run? Autopilot keeps its old rule exactly ([legacy]). Normal (Auto): safe commands run,
          * risky ones always ask, the rest ask with "Allow for this chat" / "Always allow this command" (CommandPolicy).
          */
-        suspend fun cmdOk(kind: CommandPolicy.Kind, text: String, title: String, detail: String, action: String, risky: Boolean,
+        suspend fun cmdOk(kind: CommandPolicy.Kind, text0: String, title: String, detail: String, action: String, risky: Boolean,
                           legacy: suspend () -> Boolean): Boolean {
+            val text = SecretVault.scrub(text0)   // 0.46.6: grants are kept by the command with handles, never values
             if (Modes.autopilot) return legacy()
             val level = CommandPolicy.level(kind, text, risky, cmdRoots())
             val key = CommandPolicy.key(kind, text)
@@ -4858,6 +4883,12 @@ When you finish, say what you did in one short sentence.
                 "recent_notifications" -> { add(Role.STEP, "Checking notifications"); com.blaze.assistant.notify.NotificationBrain.list(args.optString("app").ifBlank { null }, args.optDouble("hours", 6.0)) }
                 com.blaze.assistant.phone.Messaging.NAME -> { add(Role.STEP, "Messaging ${args.optString("to")}"); com.blaze.assistant.phone.Messaging.run(app, args) }
                 com.blaze.assistant.browser.BrowserTools.SECURE -> secureInput(args)
+                SecretDesk.TOOL -> {
+                    mood = Mood.IDLE
+                    val r = SecretDesk.run(args, { add(Role.STEP, it) }) { label -> if (!inForeground) Notifier.actionRequired(label, "Secure form") }
+                    mood = Mood.ACTING
+                    r
+                }
                 in com.blaze.assistant.appstore.StoreTools.names -> {
                     com.blaze.assistant.appstore.AppStore.init(app); com.blaze.assistant.appstore.AppStore.refresh()
                     add(Role.STEP, com.blaze.assistant.appstore.StoreTools.describe(name, args))
