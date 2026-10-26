@@ -937,7 +937,7 @@ private fun PlayerTab(a: VideoActivity) {
             if (others.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
                 MText("More from your library \u00b7 ${others.size}", 15.sp, c.ink, FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp))
             }
-            items(others, key = { "more-" + it.key }) { v ->
+            items(VideoKeys.unique(others) { "more-" + it.key }, key = { "more-" + it.key }) { v ->
                 Column(Modifier.clip(BlazeShapes.small).clickable(onClickLabel = "Play ${v.title}") { a.play(v) }) {
                     Box {
                         Art(v, Modifier.fillMaxWidth().aspectRatio(16f / 9f), target = 320)
@@ -1309,7 +1309,7 @@ private fun VideoLibrary(a: VideoActivity) {
             item(span = { GridItemSpan(maxLineSpan) }) { MText("Continue watching", 15.sp, c.ink, FontWeight.SemiBold) }
             item(span = { GridItemSpan(maxLineSpan) }) {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(cont, key = { "c" + it.key }) { t ->
+                    items(VideoKeys.unique(cont) { "c|" + it.key }, key = { "c|" + it.key }) { t ->
                         Column(Modifier.width(200.dp).clip(BlazeShapes.small).clickable { a.play(t) }) {
                             Box {
                                 Art(t, Modifier.fillMaxWidth().aspectRatio(16f / 9f), target = 400)
@@ -1328,7 +1328,7 @@ private fun VideoLibrary(a: VideoActivity) {
         }
         // v0.34.0 episode grouping: series (two or more episodes) in order, with what's next to watch.
         val series = if (q.isBlank()) VideoSmart.series(videos) else emptyList()
-        series.forEach { (name, eps) ->
+        VideoKeys.unique(series) { it.first }.forEach { (name, eps) ->
             item(span = { GridItemSpan(maxLineSpan) }, key = "series-$name") {
                 Column {
                     val upto = eps.indexOfLast { MediaLib.position(it.key) > 0 || it.key in recent }.coerceAtLeast(0)
@@ -1338,7 +1338,7 @@ private fun VideoLibrary(a: VideoActivity) {
                     }
                     Spacer(Modifier.height(6.dp))
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        items(eps, key = { "s" + it.key }) { t ->
+                        items(VideoKeys.unique(eps) { "s|" + it.key }, key = { "s|" + it.key }) { t ->
                             Column(Modifier.width(150.dp).clip(BlazeShapes.small).clickable { a.play(t) }) {
                                 Art(t, Modifier.fillMaxWidth().aspectRatio(16f / 9f), target = 300)
                                 val e = VideoSmart.episode(t.title)
@@ -1354,7 +1354,7 @@ private fun VideoLibrary(a: VideoActivity) {
             EmptyState(if (q.isBlank()) "No videos yet" else "No match",
                 if (q.isBlank()) "Films you download in the Store, and videos in Blaze's Gallery, show up here and play offline." else "Nothing matches \u201c$q\u201d.")
         }
-        items(shown, key = { it.key }) { t ->
+        items(VideoKeys.unique(shown) { it.key }, key = { "v|" + it.key }) { t ->
             var menu by remember { mutableStateOf(false) }
             val picked = selecting && t.key in sel
             Column(Modifier.clip(BlazeShapes.small).background(if (picked) c.faint else Color.Transparent).combinedClickable(

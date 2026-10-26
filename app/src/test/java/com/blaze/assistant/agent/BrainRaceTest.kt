@@ -45,7 +45,7 @@ class BrainRaceTest {
 
     @Test fun limits() {
         val c = BrainRace.limits(BrainRace.Kind.CHAT, hot = false); val t = BrainRace.limits(BrainRace.Kind.TASK, hot = false)
-        assertEquals(8_000L, c.firstMs); assertEquals(3_000L, c.hedgeMs); assertEquals(30_000L, c.stallMs); assertEquals(8_000L, c.thinkMs)
+        assertEquals(8_000L, c.firstMs); assertEquals(3_000L, c.hedgeMs); assertEquals(30_000L, c.stallMs); assertEquals(60_000L, c.thinkMs); assertEquals(60_000L, c.wholeMs); assertEquals(90_000L, t.wholeMs)
         assertEquals(20_000L, t.firstMs); assertEquals(6_000L, t.hedgeMs); assertEquals(30_000L, t.stallMs)
         assertEquals(0L, BrainRace.limits(BrainRace.Kind.CHAT, hot = true).hedgeMs)
         assertTrue(BrainRace.cloudRunFor(lite = false, longWork = true)); assertFalse(BrainRace.cloudRunFor(false, false)); assertFalse(BrainRace.cloudRunFor(true, true))
@@ -79,7 +79,14 @@ class BrainRaceTest {
     @Test fun wiring() {
         val llm = src("LlmClient.kt"); val agent = src("Agent.kt"); val bb = src("BackupBrain.kt")
         assertTrue(llm.contains("HedgeRace.run(steps, lim, onText != null,"))
-        assertTrue(llm.contains("BrainRace.order(kind, warm, token.isNotBlank())"))
+        assertTrue(llm.contains("BrainRace.order(kind, warm, token.isNotBlank(), { BrainLedger.app.ttft(it) }, { BrainLedger.app.reliability(it) })"))
+        // 0.46.5: our own deadline is not a brain failure; the calm final line; one retry with the long cap; Cloud fails fast in the race
+        assertTrue(llm.contains("if (e !is HedgeRace.TooSlow) BrainLedger.app.fail(step, e.message.orEmpty())"))
+        assertTrue(llm.contains("allFailed = { last, fatal -> BrainRace.finalError(steps, fatal, cloudErr, last) }"))
+        assertTrue(llm.contains("retryMs = if (cold) 0L else BrainRace.RETRY_MS"))
+        assertTrue(llm.contains("withContext(Cloud.FastFail) { viaGatewayWith(\"skip\", gText, gThink) }"))
+        assertTrue(src("Cloud.kt").contains("coroutineContext[FastFail] != null"))
+        assertEquals(45_000L, BackupBrain.FIRST_CHUNK_MS)
         assertFalse("dead first-chunk watcher removed", llm.contains("private suspend fun watchFirstChunk"))
         assertTrue(agent.contains("BrainRace.cloudRunFor(lite, longWork) && CloudRuns.eligible("))
         assertTrue(agent.contains("HedgeRace.watch(BrainRace.TASK_LIMITS.firstMs, BrainRace.TASK_LIMITS.stallMs,"))
@@ -87,5 +94,38 @@ class BrainRaceTest {
         assertTrue(agent.contains("BrainRace.haloReply(BrainRace.HALO_HOLD_MS,"))
         assertTrue(bb.contains("fun warm(now: Long = System.currentTimeMillis()): Boolean"))
         assertTrue(src("CloudRuns.kt").contains("!(try { BackupBrain.warm() } catch (_: Throwable) { false }) &&"))
+    }
+
+    // ---- 0.46.5: reliability-weighted ranking, final error ----
+    @Test fun slowButReliableIsNeverRankedBelowAFastOneThatFails() {
+        val ttft = { s: BackupRoute.Step -> if (s == C) 900L else if (s == R) 15_000L else 25_000L }
+        // Cloud is fast but keeps failing (busy), Nous is slow but answers: Nous first on chat
+        assertEquals(listOf(R, C), BrainRace.order(BrainRace.Kind.CHAT, false, true, ttft) { if (it == C) 0.2 else 0.95 })
+        assertEquals(listOf(R, P, C), BrainRace.order(BrainRace.Kind.CHAT, true, true, ttft) { if (it == C) 0.2 else 0.95 })
+        // both reliable: fastest first as before
+        assertEquals(listOf(C, R), BrainRace.order(BrainRace.Kind.CHAT, false, true, ttft) { 0.9 })
+        // tasks keep the policy order unless a brain is mostly failing
+        assertEquals(listOf(P, R, C), BrainRace.order(BrainRace.Kind.TASK, true, true, ttft) { 0.9 })
+        assertEquals(listOf(R, C, P), BrainRace.order(BrainRace.Kind.TASK, true, true, ttft) { if (it == P) 0.1 else null })
+        // the ledger: successes and real failures move the rate; nothing else does
+        val l = BrainLedger { 0L }
+        assertEquals(null, l.reliability(C))
+        repeat(3) { l.fail(C, "busy") }; repeat(3) { l.ok(R, 20_000) }
+        assertTrue(l.reliability(C)!! < 0.5); assertTrue(l.reliability(R)!! >= 0.8)
+        assertEquals(listOf(R, C), BrainRace.order(BrainRace.Kind.CHAT, false, true, { if (it == C) 900L else 15_000L }, { l.reliability(it) }))
+        val l2 = BrainLedger(); l2.load(l.toJson()); assertEquals(l.reliability(R)!!, l2.reliability(R)!!, 1e-9)
+        // retry pick: most reliable, ties keep the order
+        assertEquals(R, BrainRace.retryPick(listOf(P, R, C)) { if (it == R) 0.9 else 0.3 })
+        assertEquals(P, BrainRace.retryPick(listOf(P, R, C)) { null })
+    }
+
+    @Test fun finalErrorIsCalmUnlessCloudWasTheOnlyPath() {
+        val busy = LlmClient.LlmException(Cloud.BUSY, 503)
+        assertEquals(BrainRace.TOO_LONG, BrainRace.finalError(listOf(P, R, C), null, busy, busy).message)
+        assertEquals(BrainRace.TOO_LONG, BrainRace.finalError(listOf(R, C), null, busy, HedgeRace.TooSlow("x")).message)
+        assertEquals(Cloud.BUSY, BrainRace.finalError(listOf(C), null, busy, busy).message)
+        val signIn = LlmClient.LlmException(Cloud.EXPIRED, 401)
+        assertEquals(Cloud.EXPIRED, BrainRace.finalError(listOf(P, R, C), signIn, busy, busy).message)
+        assertEquals("That took too long. Tap Retry.", BrainRace.TOO_LONG)
     }
 }

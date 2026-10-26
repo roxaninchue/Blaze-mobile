@@ -96,7 +96,7 @@ internal fun VideoHomeContent(sources: List<MovieSource>, rows: Map<String, Resu
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 150.dp)) {
         if (hero.isNotEmpty()) item {
             LazyRow(contentPadding = PaddingValues(horizontal = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(hero, key = { "hero-" + (it.post?.link ?: it.resume?.play?.key ?: it.title) }) { h ->
+                items(VideoKeys.unique(hero) { heroKey(it) }, key = { heroKey(it) }) { h ->
                     HeroCard(h, saved = h.post?.let(saved) == true,
                         onPlay = { h.resume?.let(onResume) ?: h.post?.let { p -> byId[p.source]?.let { open(it, p) } } },
                         onWatchlist = { h.post?.let { Movies.toggleWatchlist(it) } })
@@ -106,13 +106,13 @@ internal fun VideoHomeContent(sources: List<MovieSource>, rows: Map<String, Resu
         if (cont.isNotEmpty()) item {
             SectionTitle("Continue watching")
             LazyRow(contentPadding = PaddingValues(horizontal = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(cont, key = { "cw-" + it.play.key }) { pr -> Poster(pr.play.title, pr.play.image, pr.fraction) { onResume(pr) } }
+                items(VideoKeys.unique(cont) { "cw-" + it.play.key }, key = { "cw-" + it.play.key }) { pr -> Poster(pr.play.title, pr.play.image, pr.fraction) { onResume(pr) } }
             }
         }
         if (watch.isNotEmpty()) item {
             SectionTitle("Watchlist")
             LazyRow(contentPadding = PaddingValues(horizontal = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(watch, key = { "wl-" + it.source + it.link }) { p -> Poster(p.title, p.image) { byId[p.source]?.let { open(it, p) } } }
+                items(VideoKeys.posts(watch), key = { "wl-" + VideoKeys.post(it) }) { p -> Poster(p.title, p.image) { byId[p.source]?.let { open(it, p) } } }
             }
         }
         if (note.isNotBlank()) item(key = "note") { Text(note, color = c.sub, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) }
@@ -126,7 +126,7 @@ internal fun VideoHomeContent(sources: List<MovieSource>, rows: Map<String, Resu
                     item(key = "row-$id-$i") {
                         SectionTitle(VideoHome.rowTitle(id, s.name, title))
                         LazyRow(contentPadding = PaddingValues(horizontal = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            items(posts, key = { "p-" + it.link }) { p -> Poster(p.title, p.image) { open(s, p) } }
+                            items(VideoKeys.posts(posts), key = { "p-" + VideoKeys.post(it) }) { p -> Poster(p.title, p.image) { open(s, p) } }
                         }
                     }
                 }
@@ -255,7 +255,7 @@ internal fun VideoSourcesPage(onPickFile: () -> Unit, incoming: String?, onIncom
         }
         if (note.isNotBlank()) item { Text(note, color = c.sub, fontSize = 12.sp) }
         item { SectionTitle("On now", Modifier.offset(x = (-16).dp)) }
-        items(sources, key = { "src-" + it.id }) { s ->
+        items(VideoKeys.unique(sources) { it.id }, key = { "src-" + it.id }) { s ->
             Row(Modifier.fillMaxWidth().clip(BlazeShapes.small).glass(BlazeShapes.small, GlassIntensity.Low, shadow = false).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(if (s.official) Icons.Rounded.Verified else Icons.Rounded.Extension, contentDescription = null, tint = c.sub, modifier = Modifier.size(20.dp))
                 Text(VideoHome.rowTitle(s.id, s.name, ""), color = c.ink, fontSize = 14.sp, modifier = Modifier.padding(start = 10.dp))
@@ -279,3 +279,5 @@ internal suspend fun resumePlay(ctx: android.content.Context, pr: Progress): Mov
     if (pr.play.url.isNotBlank()) pr.play else withContext(Dispatchers.IO) {
         MovieHub.refresh(Movies.source(pr.play.source) ?: error("That source is gone"), pr.play, Movies.maxHeight(ctx))
     }
+
+private fun heroKey(h: VideoHome.Hero): String = "hero-" + (h.post?.let { VideoKeys.post(it) } ?: h.resume?.play?.key?.let { "r|$it" } ?: "t|" + h.title)

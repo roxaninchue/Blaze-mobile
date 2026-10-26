@@ -54,6 +54,16 @@ class MainActivity : FragmentActivity(), com.blaze.assistant.ui.BackRule.Shelled
                     if (locked.value) com.blaze.assistant.ui.LockScreen { unlock() } else ChatScreen()
                 }
                 if (pip.value && !locked.value) { if (videoPip.value) com.blaze.assistant.ui.StageVideoPip() else com.blaze.assistant.browser.phone.PhonePipView() }
+                // 0.46.5: after a crash (also a native one, read on the next start), offer the local report once; the user chooses
+                val crash = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(com.blaze.assistant.device.CrashLog.pendingReport()) }
+                androidx.compose.runtime.DisposableEffect(Unit) {
+                    com.blaze.assistant.device.CrashLog.pendingChanged = { runOnUiThread { crash.value = com.blaze.assistant.device.CrashLog.pendingReport() } }
+                    onDispose { com.blaze.assistant.device.CrashLog.pendingChanged = null }
+                }
+                if (crash.value && !locked.value && !pip.value) com.blaze.assistant.ui.BlazeDialog(CRASH_TITLE, CRASH_BODY, confirm = "Send crash report",
+                    onConfirm = { com.blaze.assistant.device.CrashLog.dismissReport(); crash.value = false
+                        try { com.blaze.assistant.device.CrashLog.shareIntent(this@MainActivity)?.let { startActivity(it) } } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("crash report share", e) } },
+                    dismiss = "Not now", onDismiss = { com.blaze.assistant.device.CrashLog.dismissReport(); crash.value = false })
             }
         } }
         // Picture-in-picture follows the user out only while Blaze works on Blaze Phone (auto-enter on API 31+).
@@ -233,3 +243,7 @@ class MainActivity : FragmentActivity(), com.blaze.assistant.ui.BackRule.Shelled
         super.onPause()
     }
 }
+
+/** 0.46.5: the one-time prompt after a crash (local report; nothing is sent unless the user picks where). */
+internal const val CRASH_TITLE = "Blaze closed unexpectedly"
+internal const val CRASH_BODY = "Send a crash report so it can be fixed? It stays on this phone until you choose where to send it."

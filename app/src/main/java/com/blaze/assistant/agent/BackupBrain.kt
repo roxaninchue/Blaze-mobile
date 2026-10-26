@@ -47,7 +47,9 @@ object BackupBrain {
     val PUBLIC_LISTS = listOf("https://opencode.ai/zen/v1/models", "https://opencode.ai/inference/v1/models")
     const val IDLE_MS = 5 * 60_000L   // 0.46.4 heat audit: 15 → 5 min (a running Bun server under proot costs heat)
     const val START_WAIT_MS = 20_000L   // 0.46.3 (A4): start + first model fit in about 45 s
-    const val FIRST_CHUNK_MS = BrainOrder.FIRST_TOKEN_MS   // 0.46.3: ~20 s first-token cap per model, then the next one
+    // 0.46.3: ~20 s first-token cap per model. 0.46.5: 45 s: the brain race (HedgeRace) already starts the next brain in
+    // parallel at its deadline, so a slow but working on-phone model (25 s to its first word) is no longer cut here.
+    const val FIRST_CHUNK_MS = 45_000L
     const val GAP_MS = 30_000L
     const val TOTAL_MS = 100_000L
     const val MAX_MODELS = 4

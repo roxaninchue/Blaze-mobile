@@ -10,6 +10,22 @@ object SandboxPrelude {
     val JS: String = """
 "use strict";
 (function(G){
+  // 0.46.5 memory guard: the big allocators check the host's soft cap (__mem) and throw a plain error instead of letting
+  // the engine reach its hard limit (its out-of-memory paths can crash natively).
+  var nAlloc = 0;
+  function memChk(){ if (__mem() > 0) throw new RangeError('The source used too much memory'); }
+  G.__memChk = memChk;
+  var aPush = Array.prototype.push, aJoin = Array.prototype.join, aConcat = Array.prototype.concat, sRep = String.prototype.repeat, sPad = String.prototype.padEnd, sPadS = String.prototype.padStart, jParse = JSON.parse, jStr = JSON.stringify;
+  Array.prototype.push = function(){ if ((++nAlloc & 127) === 0) memChk(); return aPush.apply(this, arguments); };
+  Array.prototype.join = function(){ if ((++nAlloc & 15) === 0 || this.length > 1000) memChk(); return aJoin.apply(this, arguments); };
+  Array.prototype.concat = function(){ if ((++nAlloc & 15) === 0) memChk(); return aConcat.apply(this, arguments); };
+  String.prototype.repeat = function(c){ if (+c * this.length > 4096 || (++nAlloc & 15) === 0) memChk(); return sRep.call(this, c); };
+  String.prototype.padEnd = function(n){ if (+n > 4096) memChk(); return sPad.apply(this, arguments); };
+  String.prototype.padStart = function(n){ if (+n > 4096) memChk(); return sPadS.apply(this, arguments); };
+  JSON.parse = function(){ memChk(); return jParse.apply(JSON, arguments); };
+  JSON.stringify = function(){ memChk(); return jStr.apply(JSON, arguments); };
+  ['push', 'join', 'concat'].forEach(function(k){ Object.defineProperty(Array.prototype, k, { enumerable: false }); });
+  ['repeat', 'padEnd', 'padStart'].forEach(function(k){ Object.defineProperty(String.prototype, k, { enumerable: false }); });
   var logs = [];
   G.__logs = logs;
   var con = { log: function(){ if (logs.length < 40) logs.push(Array.prototype.map.call(arguments, function(a){ try { return typeof a === 'string' ? a : JSON.stringify(a); } catch(e) { return String(a); } }).join(' ').slice(0, 300)); } };

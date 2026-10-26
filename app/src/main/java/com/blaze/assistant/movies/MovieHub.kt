@@ -24,8 +24,9 @@ object MovieHub {
     suspend fun search(sources: List<MovieSource>, query: String, parallel: Int = PARALLEL, timeoutMs: Long = SOURCE_TIMEOUT_MS): Search = coroutineScope {
         val gate = Semaphore(parallel.coerceAtLeast(1))
         Search(sources.map { s -> async { gate.withPermit {
-            try { withTimeoutOrNull(timeoutMs) { SourceResult(s, s.search(query)) } ?: SourceResult(s, emptyList(), "took too long") }
-            catch (e: Exception) { SourceResult(s, emptyList(), (e.message ?: "error").take(160)) }
+            try { withTimeoutOrNull(timeoutMs) { SourceResult(s, com.blaze.assistant.mediaapps.BrowseState.clean(s.search(query))) } ?: SourceResult(s, emptyList(), "took too long") }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Throwable) { SourceResult(s, emptyList(), (e.message ?: "error").take(160)) }   // 0.46.5: Errors too (engine OOM / stack)
         } } }.awaitAll())
     }
 

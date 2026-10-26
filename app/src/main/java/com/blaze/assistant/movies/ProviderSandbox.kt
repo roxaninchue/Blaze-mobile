@@ -62,6 +62,12 @@ class ProviderSandbox(private val http: SandboxHttp = DefaultSandboxHttp, privat
                 q = QuickJs.create(dispatcher)
                 q.memoryLimit = limits.memoryBytes
                 q.maxStackSize = limits.stackBytes
+                // 0.46.5: QuickJS's own out-of-memory paths can crash the whole app natively (SIGSEGV in JS_DefineProperty,
+                // CI run 40381571120; the likely "sudden crash while browsing Video" on 0.46.4). The prelude checks this soft
+                // cap (half the hard one) from the allocating builtins and throws a normal JS error long before the hard cap.
+                val qq = q
+                val soft = limits.memoryBytes / 2
+                q.function("__mem") { _ -> if (runCatching { qq.memoryUsage.mallocSize }.getOrDefault(0L) > soft) 1 else 0 }
                 val dom = Dom()
                 val requests = AtomicInteger(0)
                 var out: String? = null; var fail: String? = null
@@ -104,8 +110,15 @@ class ProviderSandbox(private val http: SandboxHttp = DefaultSandboxHttp, privat
                 runCatching { q?.close() }
             }
         }
-        val r = withTimeoutOrNull(limits.timeoutMs) { done.await() }
-        if (r != null) { exec.shutdown(); return r }
+        // 0.46.5: the caller's own timeout / cancel (Video browse) must never leave the engine thread's executor open, and
+        // never cancel the job from here (see below); the in-flight marker tells the next start if the process died in here.
+        val mark = com.blaze.assistant.device.CrashLog.enter("provider call ${exportName ?: "catalog"}")
+        val r = try { withTimeoutOrNull(limits.timeoutMs) { done.await() } } catch (e: Throwable) {
+            scope.launch { runCatching { done.await() }; com.blaze.assistant.device.CrashLog.leave(mark) }
+            exec.shutdown(); throw e
+        }
+        if (r != null) { exec.shutdown(); com.blaze.assistant.device.CrashLog.leave(mark); return r }
+        scope.launch { runCatching { done.await() }; com.blaze.assistant.device.CrashLog.leave(mark) }
         // Timed out: the call is abandoned on its own daemon thread and closes its engine there when (if) it ends. Never cancel
         // the job from here: quickjs-kt's cancellation touches the native runtime from this thread while evaluate() is still
         // running on the JS thread, which crashed the process (SIGSEGV in JS_DefineProperty, CI run 40341276397).

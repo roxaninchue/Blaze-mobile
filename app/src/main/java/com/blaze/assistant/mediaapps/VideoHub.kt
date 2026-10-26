@@ -33,7 +33,8 @@ object VideoHome {
     /** Built-in source ids in Home order; the user's Jellyfin and installed providers follow, in the order they were added. */
     private val builtIn = listOf("archive", "blender", "local")
 
-    fun order(ids: List<String>): List<String> {
+    fun order(ids0: List<String>): List<String> {
+        val ids = ids0.distinct()   // 0.46.5: a source listed twice must not give two rows with the same key
         val known = builtIn.filter { it in ids }
         val jelly = ids.filter { it == "jellyfin" || it.startsWith("jellyfin") }
         return known + jelly + ids.filter { it !in known && it !in jelly }
@@ -107,8 +108,26 @@ typealias BrowseRows = List<Pair<String, List<MoviePost>>>
 object BrowseState {
     const val SOURCE_TIMEOUT_MS = 20_000L
 
-    /** Untitled items out, duplicates out. */
-    fun clean(posts: List<MoviePost>): List<MoviePost> = posts.filter { it.title.isNotBlank() }.distinctBy { it.source + "|" + it.link }
+    /**
+     * Untitled items out, duplicates out. 0.46.5 (crash hardening): items without a link out, odd fields trimmed (a provider
+     * can send anything: a 1 MB "image", a title full of newlines), never more than 200 per row.
+     */
+    fun clean(posts: List<MoviePost>?): List<MoviePost> = (posts ?: emptyList()).asSequence()
+        .mapNotNull { p -> try { sane(p) } catch (_: Throwable) { null } }
+        .distinctBy { VideoKeys.post(it) }.take(200).toList()
+
+    /** One item made safe to show, or null when it can't be (no title / no link). */
+    fun sane(p: MoviePost?): MoviePost? {
+        p ?: return null
+        @Suppress("SENSELESS_COMPARISON", "UNNECESSARY_SAFE_CALL")
+        val title = (p.title ?: "").replace(Regex("\\s+"), " ").trim().take(200)
+        @Suppress("SENSELESS_COMPARISON", "UNNECESSARY_SAFE_CALL")
+        val link = (p.link ?: "").trim()
+        if (title.isEmpty() || link.isEmpty() || link.length > 4000) return null
+        @Suppress("SENSELESS_COMPARISON", "UNNECESSARY_SAFE_CALL")
+        val image = (p.image ?: "").trim().takeIf { it.length <= 2048 && !it.startsWith("data:", true) }.orEmpty()
+        return MoviePost(title, link, image, (p.source ?: "").take(200), (p.tag ?: "").take(40))
+    }
     fun cleanRows(rows: BrowseRows): BrowseRows = rows.map { (t, p) -> t to clean(p) }.filter { it.second.isNotEmpty() }
 
     /** A new answer replaces what's shown only when it has something; a failure / empty answer keeps the rows already there. */
@@ -135,4 +154,16 @@ object BrowseState {
         saved == 0 && ids.isNotEmpty() && ids.all { results[it] != null } && ids.none { loaded(results[it]) }
 
     fun isUserAdded(id: String): Boolean = id.startsWith("p:")
+}
+
+/**
+ * 0.46.5 crash hardening: Compose throws (and closes the app) when two items in one LazyColumn / LazyRow share a key. Every
+ * list on the Video screens is keyed through here (source + link, deduped) so a provider that sends the same item twice, or
+ * the same link from two sources, can't crash Blaze.
+ */
+object VideoKeys {
+    fun post(p: MoviePost): String = p.source + "|" + p.link
+    /** Items with a unique key each (first one kept). */
+    fun <T> unique(items: List<T>, key: (T) -> String): List<T> { val seen = HashSet<String>(); return items.filter { seen.add(key(it)) } }
+    fun posts(items: List<MoviePost>): List<MoviePost> = unique(items) { post(it) }
 }

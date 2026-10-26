@@ -35,8 +35,16 @@ object BrainRace {
     /** The one status line when another brain is asked (plain, factual). */
     const val SWITCHING = "Switching to a faster brain"
 
-    val CHAT_LIMITS = HedgeRace.Limits(firstMs = 8_000L, hedgeMs = 3_000L, stallMs = 30_000L, thinkMs = 8_000L, wholeMs = 30_000L)
-    val TASK_LIMITS = HedgeRace.Limits(firstMs = 20_000L, hedgeMs = 6_000L, stallMs = 30_000L, thinkMs = 45_000L, wholeMs = 60_000L)
+    // 0.46.5: firstMs / hedgeMs only start the next brain in parallel (never cancel one); wholeMs is the outer cap for a
+    // brain that shows nothing at all, thinkMs while it is still sending thinking (HedgeRace).
+    val CHAT_LIMITS = HedgeRace.Limits(firstMs = 8_000L, hedgeMs = 3_000L, stallMs = 30_000L, thinkMs = 60_000L, wholeMs = 60_000L)
+    val TASK_LIMITS = HedgeRace.Limits(firstMs = 20_000L, hedgeMs = 6_000L, stallMs = 30_000L, thinkMs = 120_000L, wholeMs = 90_000L)
+
+    /** 0.46.5: every brain hard-failed → the most reliable one is asked once more with the long-task cap. */
+    const val RETRY_MS = 90_000L
+
+    /** 0.46.5: the one calm line when every brain (and the retry) failed. Never "Blaze Cloud is busy" unless Cloud was the only path. */
+    const val TOO_LONG = "That took too long. Tap Retry."
 
     /** [hot] (phone warm or Battery Saver, [com.blaze.assistant.device.Thermal]): no hedged second request, deadlines stay. */
     fun limits(k: Kind, hot: Boolean = !com.blaze.assistant.device.Thermal.now().hedge): HedgeRace.Limits =
@@ -64,14 +72,34 @@ object BrainRace {
      * The brains for one call, in order. [warm] = the on-phone brain can answer right now (never "will be ready").
      * [ttft] = the measured first-token time per brain (null = not measured yet).
      */
-    fun order(kind: Kind, warm: Boolean, signedIn: Boolean, ttft: (BackupRoute.Step) -> Long? = { null }): List<BackupRoute.Step> {
+    fun order(kind: Kind, warm: Boolean, signedIn: Boolean, ttft: (BackupRoute.Step) -> Long? = { null },
+              reliability: (BackupRoute.Step) -> Double? = { null }): List<BackupRoute.Step> {
         val list = buildList {
             if (warm) add(BackupRoute.Step.BACKUP)
             if (signedIn) { add(BackupRoute.Step.RESERVE); add(BackupRoute.Step.CLOUD) }
         }
-        if (kind != Kind.CHAT) return list
-        // chat: the fastest first (stable, so ties keep the free-first order)
-        return list.sortedBy { ttft(it) ?: DEFAULT_TTFT[it] ?: 10_000L }
+        // 0.46.5: success rate first: a slow but reliable brain is never put behind a fast one that keeps failing.
+        // Tasks keep the policy order inside a reliability band (stable sort); chat is fastest first inside a band.
+        if (kind != Kind.CHAT) return list.sortedByDescending { band(reliability(it)) }
+        return list.sortedWith(compareByDescending<BackupRoute.Step> { band(reliability(it)) }.thenBy { ttft(it) ?: DEFAULT_TTFT[it] ?: 10_000L })
+    }
+
+    /** Reliability band: 2 = answers (>= 80 % or not measured yet), 1 = shaky (>= 50 %), 0 = mostly failing. */
+    fun band(rel: Double?): Int = when { rel == null || rel >= 0.8 -> 2; rel >= 0.5 -> 1; else -> 0 }
+
+    /** The brain to ask once more when all failed: the most reliable (unmeasured = 0.5), ties keep [steps]' order. */
+    fun retryPick(steps: List<BackupRoute.Step>, reliability: (BackupRoute.Step) -> Double?): BackupRoute.Step? =
+        steps.withIndex().maxWithOrNull(compareBy<IndexedValue<BackupRoute.Step>> { reliability(it.value) ?: 0.5 }.thenByDescending { it.index })?.value
+
+    /**
+     * 0.46.5: the error after every brain (and the retry) failed. A fatal error (sign-in, allowance, refused shape) keeps its
+     * own line; Cloud's error only when Cloud was the only brain; otherwise the calm [TOO_LONG] (code 504, so no screen
+     * reads it as "Blaze Cloud is busy").
+     */
+    fun finalError(steps: List<BackupRoute.Step>, fatal: Throwable?, cloudErr: Throwable?, last: Throwable?): Throwable {
+        (fatal as? LlmClient.LlmException)?.let { return it }
+        if (steps == listOf(BackupRoute.Step.CLOUD)) (cloudErr as? LlmClient.LlmException)?.takeIf { it !is LlmClient.TooSlow }?.let { return it }
+        return LlmClient.LlmException(TOO_LONG, 504)
     }
 
     /** How long the last user message is (characters), for [kind]. */

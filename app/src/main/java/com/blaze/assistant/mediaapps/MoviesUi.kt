@@ -371,7 +371,7 @@ internal fun MovieDetails(info: MovieInfo, sourceName: String, saved: Boolean, m
             }
         }
         // Episodes: number, readable title, thumbnail, progress.
-        if (eps.size > 1) items(eps, key = { "ep-" + it.link.link }) { e ->
+        if (eps.size > 1) items(VideoKeys.unique(eps) { "ep-" + it.link.link }, key = { "ep-" + it.link.link }) { e ->   // 0.46.5: unique keys
             val pr = progressOf(e.link)
             Row(Modifier.fillMaxWidth().clickable(role = Role.Button, onClickLabel = "Play ${e.title}") { onPick(e.link) }.padding(horizontal = 16.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically) {

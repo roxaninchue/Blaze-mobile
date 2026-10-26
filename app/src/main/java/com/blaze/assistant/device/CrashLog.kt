@@ -14,13 +14,95 @@ object CrashLog {
     private lateinit var file: File
     private val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
 
+    private lateinit var dir: File
+
     fun init(ctx: Context) {
         file = File(ctx.filesDir, "blaze_log.txt")
+        dir = ctx.filesDir
         val prev = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { t, e ->
-            try { writeNow("CRASH on ${t.name}: ${android.util.Log.getStackTraceString(e).take(6000)}") } catch (_: Throwable) { }
+            try { writeNow("CRASH on ${t.name}: ${android.util.Log.getStackTraceString(e).take(6000)}"); markPending() } catch (_: Throwable) { }
             prev?.uncaughtException(t, e)
         }
+        // 0.46.5: a crash with no Java stack (native: the provider engine) leaves no CRASH line. On the next start, read
+        // Android's exit record (API 30+) and the in-flight marker, write what happened, and offer "Send crash report".
+        Thread({ try { checkLastExit(ctx) } catch (_: Throwable) { } }, "blaze-crash-check").start()
+    }
+
+    // ---------------- 0.46.5: redaction, in-flight markers, last-exit check, "Send crash report" ----------------
+
+    /** Names, ids and hosts of sources the user added: never written to the log as such (see [redact]). */
+    private val secrets = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /** Remember a user-added source's name / id / host so every log line shows "a source" instead. Blank and very short values are ignored. */
+    fun secret(vararg values: String?) { values.forEach { v -> v?.trim()?.takeIf { it.length >= 3 }?.let { secrets += it } } }
+
+    /** Pure: [text] with each of [names] (case-insensitive, longest first) replaced by "a source". */
+    fun redact(text: String, names: Collection<String>): String {
+        var out = text
+        names.filter { it.length >= 3 }.sortedByDescending { it.length }.forEach { n -> out = out.replace(n, "a source", ignoreCase = true) }
+        return out
+    }
+
+    private val inflight = java.util.concurrent.ConcurrentHashMap<Long, String>()
+    private val inflightN = java.util.concurrent.atomic.AtomicLong()
+
+    /**
+     * Mark a risky native call (a provider in the JS engine) as running: if the process dies inside it, the next start
+     * says so in the log. Returns a token for [leave]. Never throws; the label is redacted.
+     */
+    fun enter(label: String): Long {
+        val id = inflightN.incrementAndGet()
+        try { inflight[id] = redact(label, secrets).take(160); saveInflight() } catch (_: Throwable) { }
+        return id
+    }
+    fun leave(id: Long) { try { inflight.remove(id); saveInflight() } catch (_: Throwable) { } }
+    @Synchronized private fun saveInflight() {
+        if (!::dir.isInitialized) return
+        val f = File(dir, "blaze_inflight.txt")
+        if (inflight.isEmpty()) f.delete() else f.writeText(inflight.values.joinToString("\n"))
+    }
+
+    private fun markPending() { try { if (::dir.isInitialized) File(dir, "blaze_crash_pending").writeText(System.currentTimeMillis().toString()) } catch (_: Throwable) { } }
+    /** A crash was recorded since the user last chose: show "Send crash report" once. */
+    fun pendingReport(): Boolean = try { ::dir.isInitialized && File(dir, "blaze_crash_pending").exists() } catch (_: Throwable) { false }
+    fun dismissReport() { try { if (::dir.isInitialized) File(dir, "blaze_crash_pending").delete() } catch (_: Throwable) { } }
+    @Volatile var pendingChanged: (() -> Unit)? = null
+
+    /** Pure: the log line for a previous run's exit record, or null when it wasn't a crash / ANR. */
+    fun exitLine(reason: Int, description: String?, trace: String?, during: String?, names: Collection<String>): String? {
+        val kind = when (reason) { 4 -> "native crash"; 5 -> "crash"; 6 -> "ANR"; else -> return null }   // ApplicationExitInfo.REASON_CRASH_NATIVE / CRASH / ANR
+        val sb = StringBuilder("CRASH (previous run, $kind)")
+        if (!description.isNullOrBlank()) sb.append(": ").append(description.take(300))
+        if (!during.isNullOrBlank()) sb.append(" | while running: ").append(during.take(300))
+        if (!trace.isNullOrBlank()) sb.append("\n").append(trace.take(6000))
+        return redact(sb.toString(), names)
+    }
+
+    private fun head(i: java.io.InputStream, max: Int): String {
+        val buf = ByteArray(max); var n = 0
+        while (n < max) { val r = i.read(buf, n, max - n); if (r <= 0) break; n += r }
+        return String(buf, 0, n, Charsets.UTF_8)
+    }
+
+    private fun checkLastExit(ctx: Context) {
+        val mark = File(ctx.filesDir, "blaze_inflight.txt")
+        val during = if (mark.exists()) mark.readText().lines().filter { it.isNotBlank() }.joinToString("; ") else null
+        mark.delete()
+        val seenF = File(ctx.filesDir, "blaze_exit_seen")
+        val seen = seenF.takeIf { it.exists() }?.readText()?.trim()?.toLongOrNull() ?: 0L
+        var wrote = false
+        if (Build.VERSION.SDK_INT >= 30) {
+            val am = ctx.getSystemService(android.app.ActivityManager::class.java)
+            val list = am?.getHistoricalProcessExitReasons(ctx.packageName, 0, 5).orEmpty().filter { it.timestamp > seen }
+            list.maxOfOrNull { it.timestamp }?.let { seenF.writeText(it.toString()) }
+            list.sortedBy { it.timestamp }.forEach { x ->
+                val trace = if (x.reason == 4 || x.reason == 6) try { x.traceInputStream?.use { head(it, 12_000) } } catch (_: Throwable) { null } else null
+                exitLine(x.reason, x.description, trace?.replace("\u0000", "")?.trim(), during, secrets)?.let { writeNow(it); wrote = true }
+            }
+        }
+        if (!wrote && during != null) { writeNow(redact("CRASH (previous run ended while running: $during)", secrets)); wrote = true }
+        if (wrote) { markPending(); pendingChanged?.invoke() }
     }
 
     /**
@@ -86,7 +168,7 @@ object CrashLog {
     @Synchronized private fun append(stamped: String) {
         try {
             if (file.length() > 400_000) file.writeText(file.readText().takeLast(200_000))
-            file.appendText(stamped)
+            file.appendText(if (secrets.isEmpty()) stamped else redact(stamped, secrets))
         } catch (_: Exception) { }
     }
 

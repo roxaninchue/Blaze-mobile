@@ -210,8 +210,12 @@ class JsProviderSource(val entry: ProviderRepo.Entry, private val modules: (Stri
     override val id = "p:" + entry.value
     override val name = entry.name
     private suspend fun call(file: String, export: String?, args: JSONObject): Any? {
+        // 0.46.5: the crash log never names a source the user added (CrashLog.redact)
+        com.blaze.assistant.device.CrashLog.secret(entry.name, entry.value, env.settings["baseUrl"]?.let { u -> runCatching { java.net.URI(u.trim()).host }.getOrNull() })
         val code = modules(file) ?: throw IllegalStateException("${entry.name} is missing $file.js; update it in Providers")
-        val r = sandbox.invoke(code, export, args, env)
+        // 0.46.5: whatever the engine throws (an Error included) comes back as a normal failure of this source; never off to the UI
+        val r = try { sandbox.invoke(code, export, args, env) } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Throwable) { throw IllegalStateException("${entry.name} failed: ${e.javaClass.simpleName}") }
         if (!r.ok) throw IllegalStateException(r.error)
         return r.value
     }

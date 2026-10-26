@@ -155,7 +155,7 @@ object LlmClient {
         if (backupReady && !warm) try { BackupBrain.prewarm() } catch (_: Throwable) { }
         // signed out with only the on-phone brain: it may still have to start (the one case that waits for it)
         val cold = token.isBlank() && backupReady && !warm
-        val steps = if (cold) listOf(BackupRoute.Step.BACKUP) else BrainRace.order(kind, warm, token.isNotBlank()) { BrainLedger.app.ttft(it) }
+        val steps = if (cold) listOf(BackupRoute.Step.BACKUP) else BrainRace.order(kind, warm, token.isNotBlank(), { BrainLedger.app.ttft(it) }, { BrainLedger.app.reliability(it) })
         val chatThink = if (lane == Lane.MAIN && kind != BrainRace.Kind.CHAT) onThink else null   // chat: thinking stays hidden
         var cloudErr: Throwable? = null
         val out = try {
@@ -177,7 +177,8 @@ object LlmClient {
                         // Nous (the gateway's reserve, free models only)
                         BackupRoute.Step.RESERVE -> viaGatewayWith(BackupRoute.reserveHeader(BackupRoute.Step.RESERVE, true), gText, gThink).also { lastRoute = "Nous reserve" }
                         // Blaze Cloud; its own reserve is asked separately, so the gateway skips it
-                        BackupRoute.Step.CLOUD -> viaGatewayWith("skip", gText, gThink)
+                        // 0.46.5: inside the race a busy / CPU-killed / 5xx Cloud fails at once (no backoff tries) so the race moves on
+                        BackupRoute.Step.CLOUD -> withContext(Cloud.FastFail) { viaGatewayWith("skip", gText, gThink) }
                     } }
                     BrainLedger.app.ok(a.step, System.currentTimeMillis() - t0)
                     if (a.visibleAt > 0) BrainLedger.app.ttft(a.step, a.visibleAt - a.startedAt)
@@ -185,7 +186,8 @@ object LlmClient {
                 },
                 onStatus = { line -> try { switchListener?.invoke(line) } catch (_: Throwable) { } },
                 onFail = { step, e ->
-                    BrainLedger.app.fail(step, e.message.orEmpty())
+                    // 0.46.5: cut by our own deadline is not the brain's failure (the reliability ranking never learns it)
+                    if (e !is HedgeRace.TooSlow) BrainLedger.app.fail(step, e.message.orEmpty())
                     // a brain dropped for slowness counts as at least that slow next time (the router puts it later)
                     if (e is HedgeRace.TooSlow && onText != null) BrainLedger.app.ttft(step, BrainRace.limits(kind).firstMs)
                     if (step == BackupRoute.Step.CLOUD) cloudErr = e
@@ -197,11 +199,11 @@ object LlmClient {
                 onLose = { step, ms -> if (onText != null) BrainLedger.app.ttft(step, ms) },
                 // what no other brain fixes (sign-in, allowance, a refused request shape) ends it once nobody else is running
                 fatal = { step, e -> step == BackupRoute.Step.CLOUD && (!Failover.fixable(e) || (e is LlmException && ToolCalls.isShapeError(e))) },
-                allFailed = { last, fatal ->
-                    val err = fatal ?: cloudErr ?: last
-                    if (err is LlmException && err !is TooSlow) err else LlmException(Cloud.BUSY, 503)
-                },
-                switching = BrainRace.SWITCHING)
+                // 0.46.5: one calm line; Cloud's own error only when Cloud was the only path; sign-in / allowance keep theirs
+                allFailed = { last, fatal -> BrainRace.finalError(steps, fatal, cloudErr, last) },
+                switching = BrainRace.SWITCHING,
+                retryPick = { s -> BrainRace.retryPick(s) { BrainLedger.app.reliability(it) } },
+                retryMs = if (cold) 0L else BrainRace.RETRY_MS)
         } catch (e: LlmException) {
             // A4: every final failure leaves a line on whether the on-device brain could run
             try { com.blaze.assistant.device.CrashLog.write("All brains failed (${e.code}): " + BackupBrain.diag()) } catch (_: Throwable) { }

@@ -15,20 +15,26 @@ import java.util.concurrent.atomic.AtomicReference
 
 /**
  * 0.46.4 hotfix (report on 0.46.3, 26 Oct 2026 19:07–19:11 CAT: a short chat message sat at "Sent. Waiting for Blaze…"
- * for over 4 minutes, Halo silent too). One model call asked of several brains with hard deadlines and a hedge.
+ * for over 4 minutes, Halo silent too). One model call asked of several brains with deadlines and a hedge.
  *
- * Rules (all times per attempt, from when that brain was asked):
- *  - [Limits.firstMs]: no visible output (reply text or a tool call) in time → that brain is dropped and the next one asked
- *    at once. Hidden thinking is NOT visible output: on chat it never counts; on tasks it may stretch the wait to
- *    [Limits.thinkMs] (a reasoning model that streams thinking forever is cut there).
- *  - [Limits.hedgeMs]: while nobody has shown anything, the next brain is started in parallel; whichever shows output first
- *    wins and the others are cancelled (their text never reaches the screen: callbacks are gated by [Attempt.visible]).
- *  - [Limits.stallMs]: the winner went silent (no text, tool or thinking chunk) that long → dropped, next brain asked.
- *  - A call that does not stream ([streaming] false) has no progress to watch: it gets [Limits.wholeMs] to finish, no hedge.
- *  - An error (rate limit, busy, 5xx, network) moves on at once. [fatal] errors (sign-in, allowance) end the race once no
- *    other brain is still running.
- * No polling: the race sleeps until the next deadline or until a brain reports progress / finishes (0.46.4 heat audit:
- * no busy-wait timers). Losers are cancelled the moment a winner shows output (their sockets close: LlmClient.cancellable).
+ * 0.46.5 fix (Rocky, 26 Oct 21:00, on 0.46.4: a task turn ended in "Blaze Cloud is busy right now" after ~3 min while the
+ * on-phone brain and Nous were working, only slowly): in 0.46.4 the first-token deadline DROPPED (cancelled) a slow brain,
+ * so the slow-but-working brains were killed one by one and the turn fell through to Blaze Cloud, which was failing.
+ * Now a deadline never cancels a brain that may still answer:
+ *  - [Limits.hedgeMs] / [Limits.firstMs]: nobody has shown output yet → the NEXT brain is started in parallel (the earlier
+ *    ones keep running). Every started brain races until one shows real output (reply text or a tool call); only then
+ *    are the others cancelled (their text never reaches the screen: callbacks are gated by [Attempt.visible]).
+ *  - A brain is dropped only on a hard error, or on [Limits.stallMs] without progress AFTER it started streaming (a text,
+ *    tool or thinking chunk). Hidden thinking counts as alive, never as an answer.
+ *  - [Limits.wholeMs]: the outer cap for a brain that shows nothing at all (and [Limits.thinkMs] while it is still sending
+ *    thinking), so a turn can't wait forever. Being cut by our own deadline is [TooSlow], not a brain failure.
+ *  - An error (busy, 5xx, CPU-killed, rate limit, network) moves on at once to the brains not yet started; [fatal] errors
+ *    (sign-in, allowance, refused shape) are remembered but never stop the brains that don't depend on them.
+ *  - Every brain failed (hard errors) and none was fatal: [retryPick] chooses one (the most reliable) and it is asked once
+ *    more with [retryMs] as its cap, before [allFailed] builds the one calm error.
+ *  - A call that does not stream ([streaming] false) has no progress to watch: the first finished answer wins; parallel
+ *    starts happen only at [Limits.firstMs] (no early hedge).
+ * No polling: the race sleeps until the next deadline or until a brain reports progress / finishes (0.46.4 heat audit).
  * Pure coroutines with an injectable clock (HedgeRaceTest runs it in virtual time).
  */
 object HedgeRace {
@@ -38,7 +44,7 @@ object HedgeRace {
 
     /** One brain being asked. The call reports progress through [visible] / [think] (cheap, any thread). */
     class Attempt<S>(val step: S, val index: Int, val startedAt: Long, private val now: () -> Long, private val winner: AtomicReference<Attempt<S>?>,
-                     private val wake: () -> Unit = {}) {
+                     private val wake: () -> Unit = {}, val capMs: Long = 0L, val retry: Boolean = false) {
         @Volatile var visibleAt = 0L; private set
         @Volatile var thinkAt = 0L; private set
         @Volatile var lastAt = 0L; private set
@@ -51,14 +57,16 @@ object HedgeRace {
             if (won || first) wake()
             return won || winner.get() === this
         }
-        /** A thinking chunk arrived (keeps a winner alive, never wins a race). */
+        /** A thinking chunk (or any other sign of life) arrived: keeps the attempt alive, never wins a race. */
         fun think() { val t = now(); if (thinkAt == 0L) { thinkAt = t; wake() }; lastAt = t }
         /** May this attempt's output reach the screen right now? */
         fun shows(): Boolean = !dropped && winner.get() === this
+        /** Started streaming (any chunk). */
+        val streamed: Boolean get() = lastAt > 0L
         internal var job: Deferred<Result<Any?>>? = null
     }
 
-    class Outcome<S, T>(val value: T, val step: S, val index: Int, val firstVisibleMs: Long, val hedged: Boolean)
+    class Outcome<S, T>(val value: T, val step: S, val index: Int, val firstVisibleMs: Long, val hedged: Boolean, val retried: Boolean = false)
 
     suspend fun <S, T> run(
         steps: List<S>,
@@ -72,6 +80,9 @@ object HedgeRace {
         allFailed: (last: Throwable?, fatal: Throwable?) -> Throwable = { l, f -> f ?: l ?: IllegalStateException("no brain answered") },
         now: () -> Long = { System.currentTimeMillis() },
         switching: String = "Switching to a faster brain",
+        retryPick: (List<S>) -> S? = { null },
+        retryMs: Long = 0L,
+        onCancelLoser: (S) -> Unit = {},
     ): Outcome<S, T> {
         require(steps.isNotEmpty())
         // The brains run in their own scope: returning the winner never waits for a loser's socket to close, and a Stop
@@ -83,17 +94,23 @@ object HedgeRace {
             val all = ArrayList<Attempt<S>>()
             var next = 0
             var last: Throwable? = null
+            var lastHard: Throwable? = null
             var fatalErr: Throwable? = null
             var said = false
             var hedged = false
+            var retried = false
             val wake = Channel<Unit>(Channel.CONFLATED)
 
             fun live() = all.filter { !it.dropped }
+            fun cap(a: Attempt<S>) = if (a.capMs > 0) a.capMs else limits.wholeMs
+            /** When this attempt (showing nothing yet) is cut by our own outer cap. */
+            fun outerDue(a: Attempt<S>): Long {
+                val c = cap(a)
+                return if (a.thinkAt > 0 && streaming) a.startedAt + maxOf(c, limits.thinkMs) else a.startedAt + c
+            }
 
-            fun launch(why: String) {
-                if (next >= steps.size || fatalErr != null) return
-                val a = Attempt(steps[next], next, now(), now, winner) { wake.trySend(Unit) }
-                next++
+            fun start(step: S, index: Int, why: String, capMs: Long = 0L) {
+                val a = Attempt(step, index, now(), now, winner, { wake.trySend(Unit) }, capMs, why == "retry")
                 @Suppress("UNCHECKED_CAST")
                 a.job = scope.async(start = CoroutineStart.DEFAULT) {
                     try { Result.success(call(a) as Any?) } catch (e: CancellationException) { throw e } catch (e: Throwable) { Result.failure(e) }
@@ -102,6 +119,9 @@ object HedgeRace {
                 if (why == "hedge") hedged = true
                 all += a
             }
+            fun launch(why: String) { if (next >= steps.size) return; start(steps[next], next, why); next++ }
+
+            fun cancelLoser(a: Attempt<S>, t: Long) { if (!a.dropped) { a.dropped = true; a.job?.cancel(); onCancelLoser(a.step); onLose(a.step, t - a.startedAt) } }
 
             fun drop(a: Attempt<S>, e: Throwable?) {
                 if (a.dropped) return
@@ -110,6 +130,7 @@ object HedgeRace {
                 winner.compareAndSet(a, null)
                 if (e != null) {
                     onFail(a.step, e); last = e
+                    if (e !is TooSlow) lastHard = e
                     if (fatal(a.step, e)) fatalErr = fatalErr ?: e
                 }
             }
@@ -125,49 +146,53 @@ object HedgeRace {
                         val w = winner.get()
                         if (w == null || w === a) {
                             winner.set(a)
-                            all.filter { it !== a }.forEach { if (!it.dropped) { it.dropped = true; it.job?.cancel(); onLose(it.step, now() - it.startedAt) } }
+                            val t = now()
+                            all.filter { it !== a }.forEach { cancelLoser(it, t) }
                             @Suppress("UNCHECKED_CAST")
                             val v = r.getOrNull() as T
-                            val first = (if (a.visibleAt > 0) a.visibleAt else now()) - start
-                            return Outcome(v, a.step, a.index, first, hedged)
+                            val first = (if (a.visibleAt > 0) a.visibleAt else t) - start
+                            return Outcome(v, a.step, a.index, first, hedged, a.retry)
                         }
                         drop(a, null)
                     } else drop(a, r.exceptionOrNull())
                 }
                 val t = now()
-                // deadlines
+                // deadlines: only the winner can stall out; the rest race on until someone shows output (or their outer cap)
+                val w0 = winner.get()
                 for (a in live()) {
-                    val w = winner.get()
                     when {
-                        w === a -> if (t - maxOf(a.lastAt, a.startedAt) > limits.stallMs) drop(a, TooSlow("stalled ${limits.stallMs / 1000}s"))
-                        w != null -> { a.dropped = true; a.job?.cancel(); onLose(a.step, t - a.startedAt) }   // lost the race
-                        !streaming -> if (t - a.startedAt > limits.wholeMs) drop(a, TooSlow("no answer in ${limits.wholeMs / 1000}s"))
-                        else -> {
-                            val cap = if (a.thinkAt > 0 && limits.thinkMs > limits.firstMs) limits.thinkMs else limits.firstMs
-                            if (t - a.startedAt > cap) drop(a, TooSlow("no first token in ${cap / 1000}s"))
-                            else if (a.thinkAt > 0 && t - a.lastAt > limits.stallMs) drop(a, TooSlow("thinking stalled"))
-                        }
+                        w0 === a -> if (t - maxOf(a.lastAt, a.startedAt) > limits.stallMs) drop(a, TooSlow("stalled ${limits.stallMs / 1000}s"))
+                        w0 != null -> cancelLoser(a, t)   // lost the race: someone showed real output
+                        a.streamed && a.thinkAt > 0 && t - a.lastAt > limits.stallMs -> drop(a, TooSlow("thinking stalled ${limits.stallMs / 1000}s"))
+                        t > outerDue(a) -> drop(a, TooSlow("no answer in ${(outerDue(a) - a.startedAt) / 1000}s"))
                     }
                 }
                 val running = live()
                 if (running.isEmpty()) {
-                    if (next >= steps.size || fatalErr != null) throw allFailed(last, fatalErr)
-                    launch("failover"); continue
+                    if (next < steps.size) { launch("failover"); continue }
+                    // every brain failed: the most reliable one gets one more go with the long cap (never after a fatal error)
+                    if (!retried && fatalErr == null && retryMs > 0) {
+                        retried = true
+                        val pick = retryPick(steps)
+                        if (pick != null) { start(pick, steps.indexOf(pick).coerceAtLeast(0), "retry", retryMs); continue }
+                    }
+                    throw allFailed(lastHard ?: last, fatalErr)
                 }
-                // hedge: nobody has shown anything and the newest brain has had its head start
-                val canHedge = streaming && limits.hedgeMs > 0 && winner.get() == null && next < steps.size
-                if (canHedge && t - running.maxOf { it.startedAt } >= limits.hedgeMs) { launch("hedge"); continue }
+                // parallel start: nobody has shown anything and the newest brain has had its head start (hedge) or hit its
+                // first-token deadline. Earlier brains keep running.
+                val nobody = winner.get() == null && next < steps.size
+                val newest = running.maxOf { it.startedAt }
+                val headStart = if (streaming && limits.hedgeMs > 0) minOf(limits.hedgeMs, limits.firstMs) else limits.firstMs
+                if (nobody && t - newest >= headStart) { launch(if (streaming && limits.hedgeMs > 0 && headStart == limits.hedgeMs) "hedge" else "deadline"); continue }
                 // sleep until the next deadline (or a brain's progress / end wakes us)
                 var due = Long.MAX_VALUE
                 val w = winner.get()
                 for (a in live()) due = minOf(due, when {
                     w === a -> maxOf(a.lastAt, a.startedAt) + limits.stallMs
                     w != null -> t
-                    !streaming -> a.startedAt + limits.wholeMs
-                    else -> minOf(a.startedAt + (if (a.thinkAt > 0 && limits.thinkMs > limits.firstMs) limits.thinkMs else limits.firstMs),
-                        if (a.thinkAt > 0) a.lastAt + limits.stallMs else Long.MAX_VALUE)
+                    else -> minOf(outerDue(a), if (a.streamed && a.thinkAt > 0) a.lastAt + limits.stallMs else Long.MAX_VALUE)
                 }.let { if (it == Long.MAX_VALUE || it == t) it else it + 1 })   // drops fire just past their deadline (">")
-                if (canHedge) due = minOf(due, running.maxOf { it.startedAt } + limits.hedgeMs)   // the hedge fires at it (">=")
+                if (nobody) due = minOf(due, newest + headStart)   // the parallel start fires at it (">=")
                 val wait = (due - t).coerceIn(1L, 60_000L)
                 withTimeoutOrNull(wait) { wake.receive() }
             }

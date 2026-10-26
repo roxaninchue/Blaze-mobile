@@ -37,6 +37,20 @@ object HomeImages {
     /** Inexact-power-of-two sample size so the decoded width is about [target] px. */
     fun sample(width: Int, target: Int = 360): Int { var s = 1; while (width / (s * 2) >= target) s *= 2; return s }
 
+    /**
+     * 0.46.5 (crash hardening for posters from user-added sources): the sample size for a [w] x [h] picture so neither side
+     * is much over a thumbnail (width ~[target], height <= 3 x target) and it stays under ~1.5 MP; -1 = don't decode at
+     * all (unknown size, or a strip more than 8:1 that would only draw as a sliver).
+     */
+    fun safeSample(w: Int, h: Int, target: Int = 360): Int {
+        if (w <= 0 || h <= 0) return -1
+        if (w.toLong() > h.toLong() * 8 || h.toLong() > w.toLong() * 8) return -1
+        var s = sample(w, target)
+        while (h / s > target * 3 || (w.toLong() / s) * (h.toLong() / s) > 1_500_000L) s *= 2
+        return s
+    }
+    const val MAX_BYTES = 4_000_000L
+
     suspend fun load(ctx: Context, url: String): ImageBitmap? {
         if (!url.startsWith("https://")) return null
         mem.get(url)?.let { return it }
@@ -52,15 +66,23 @@ object HomeImages {
                             c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 12) Blaze")
                             if (c.responseCode !in 200..299) return@withContext null
                             val tmp = File(f.path + ".part")
-                            c.inputStream.use { i -> tmp.outputStream().use { o -> i.copyTo(o) } }
-                            if (tmp.length() > 4_000_000) { tmp.delete(); return@withContext null }
+                            // 0.46.5: stop reading past the cap (a huge "poster" never fills the disk or memory)
+                            if (c.contentLengthLong > MAX_BYTES) { c.disconnect(); return@withContext null }
+                            var big = false
+                            c.inputStream.use { i -> tmp.outputStream().use { o ->
+                                val buf = ByteArray(16 * 1024); var total = 0L
+                                while (true) { val n = i.read(buf); if (n < 0) break; total += n; if (total > MAX_BYTES) { big = true; break }; o.write(buf, 0, n) }
+                            } }
+                            if (big || tmp.length() > MAX_BYTES) { tmp.delete(); return@withContext null }
                             tmp.renameTo(f)
                         } finally { gate.release() }
                     }
                     val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                     BitmapFactory.decodeFile(f.path, o)
-                    if (o.outWidth <= 0) { f.delete(); return@withContext null }
-                    val bmp = BitmapFactory.decodeFile(f.path, BitmapFactory.Options().apply { inSampleSize = sample(o.outWidth) }) ?: return@withContext null
+                    val ss = safeSample(o.outWidth, o.outHeight)
+                    if (ss <= 0) { f.delete(); return@withContext null }
+                    val bmp = try { BitmapFactory.decodeFile(f.path, BitmapFactory.Options().apply { inSampleSize = ss }) }
+                        catch (_: OutOfMemoryError) { null } ?: return@withContext null
                     trim(dir(ctx))
                     bmp.asImageBitmap().also { mem.put(url, it) }
                 } catch (_: Throwable) { null }
