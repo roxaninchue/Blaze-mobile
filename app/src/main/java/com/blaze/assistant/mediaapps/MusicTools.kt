@@ -44,8 +44,26 @@ object MusicTools {
 
     private suspend fun play(ctx: Context, keys: List<String>, shuffle: Boolean): Boolean = withContext(Dispatchers.Main) {
         val svc = MusicService.current
-        if (svc != null) svc.playKeys(keys, shuffle) > 0
-        else { MusicService.pendingPlay = keys to shuffle; MusicActivity.open(ctx, "player"); true }
+        if (svc != null) (svc.playKeys(keys, shuffle) > 0).also { if (it) onStage() }
+        else { MusicService.pendingPlay = keys to shuffle; openPlayer(ctx); true }
+    }
+
+    /**
+     * 0.46.0 Blaze Stage: music starts IN PLACE (the service in the background + the music card on the chat), not on the Music
+     * screen. With the Stage off it opens Blaze Music as before. Main thread.
+     */
+    fun openPlayer(ctx: Context) {
+        if (!com.blaze.assistant.stage.StageStore.enabled) { MusicActivity.open(ctx, "player"); return }
+        StageMusic.startQuiet(ctx); onStage()
+    }
+
+    /** The music card on the Stage: big when nothing else is, else a mini player that doesn't disturb the hero. */
+    fun onStage() {
+        if (!com.blaze.assistant.stage.StageStore.enabled) return
+        val st = com.blaze.assistant.stage.StageStore.state.value
+        if (st.items.any { it.kind == com.blaze.assistant.stage.StageKind.MUSIC }) return
+        com.blaze.assistant.stage.StageStore.dispatch(com.blaze.assistant.stage.StageAction.Show(com.blaze.assistant.stage.StageKind.MUSIC,
+            mode = if (st.hero == null) com.blaze.assistant.stage.StageMode.HERO else com.blaze.assistant.stage.StageMode.WIDGET))
     }
 
     /** v0.45.6: the player's state for [MusicCtl]. Main thread for the service fields. */
@@ -62,8 +80,8 @@ object MusicTools {
     suspend fun transport(ctx: Context, action: String): String {
         withContext(Dispatchers.IO) { MediaLib.ensure(ctx) }
         return when (val d = MusicCtl.decide(action, state(ctx))) {
-            is MusicCtl.Decision.Player -> { withContext(Dispatchers.Main) { MusicService.current?.transport(d.op) }; d.say }
-            is MusicCtl.Decision.ResumeSaved -> { withContext(Dispatchers.Main) { MusicService.pendingResume = true; MusicActivity.open(ctx, "player") }; d.say }
+            is MusicCtl.Decision.Player -> { withContext(Dispatchers.Main) { MusicService.current?.transport(d.op); if (d.op == "play") onStage() }; d.say }
+            is MusicCtl.Decision.ResumeSaved -> { withContext(Dispatchers.Main) { MusicService.pendingResume = true; openPlayer(ctx) }; d.say }
             is MusicCtl.Decision.Say -> d.say
         }
     }
@@ -81,7 +99,7 @@ object MusicTools {
                     if (svc != null) svc.startDj(true) else {
                         MediaPrefs.setBool(ctx, MediaPrefs.DJ, true)
                         MusicService.pendingPlay = MusicSmart.djPicks(MediaLib.songs.value, MediaLib.plays.value, MediaLib.liked.value.toSet(), MediaLib.recent.value, 10, System.nanoTime()).map { it.key } to false
-                        MusicActivity.open(ctx, "player")
+                        openPlayer(ctx)
                     }
                 }
                 "Blaze DJ is on: it plays songs the user loves and keeps adding more when the queue runs out."

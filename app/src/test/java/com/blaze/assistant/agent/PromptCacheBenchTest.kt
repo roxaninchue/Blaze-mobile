@@ -67,6 +67,7 @@ class PromptCacheBenchTest {
             s("leak", "\n" + ToolLeak.PROMPT_RULE); s("verify", lit("s", "verify")); s("docs", BlazeDocs.PROMPT_LINE); s("ids", lit("s", "ids"))
             turn("core_skills", core(prof.core))
             turn("views", if (prof.views) ViewRouter.PROMPT else PromptProfile.viewsShort(ViewRouter.specs.map { it.name }))
+            s("stage", com.blaze.assistant.stage.StageTools.RULE)   // 0.46.0
             s("tool_verify", ToolVerify.PROMPT_RULE)
             s("rich", com.blaze.assistant.ui.RichReplies.PROMPT)
             live("time", "\n\nCURRENT LOCAL TIME: Tuesday 20 October 2026, 08:${10 + live.t} (Africa/Lusaka). This is exact: answer any time, date or day question straight from it, never say you can't see the time. ")

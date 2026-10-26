@@ -13,8 +13,8 @@ android {
         applicationId = "com.blaze.assistant"
         minSdk = 26
         targetSdk = 34
-        versionCode = 176
-        versionName = "0.45.29"
+        versionCode = 177
+        versionName = "0.46.0"
         // v0.30.1 Music Store: Jamendo client_id, from the environment or -Pjamendo.clientId at build time. Never hard-coded;
         // empty = "not configured" (the user can paste one in the Music Store instead).
         buildConfigField("String", "JAMENDO_CLIENT_ID", "\"" + (System.getenv("JAMENDO_CLIENT_ID") ?: (project.findProperty("jamendo.clientId") as String?) ?: "").replace("\"", "") + "\"")

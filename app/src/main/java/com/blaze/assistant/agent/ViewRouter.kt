@@ -32,7 +32,16 @@ object ViewRouter {
     private fun r(p: String) = Regex(p, RegexOption.IGNORE_CASE)
 
     /** In priority order: the first that matches is the required view. */
+    /** 0.46.0 Blaze Stage cue: a timer / study or focus time / pomodoro, or "let's play some music" (done in place on the chat). */
+    const val STAGE_CUE = """\b(pomodoro|countdown|stopwatch|study timer|focus (?:session|timer|mode)|""" +
+        """\d+(?:\.\d+)?\s*-?\s*(?:min|mins|minute|minutes|hr|hrs|hour|hours)\b.{0,24}\b(?:timer|study|studying|focus|work|session|revision|reading)|""" +
+        """timer (?:for|of) (?:\d|an? |half)|""" +
+        """(?:study|studying|focus|revise|revising|read|reading)\s+(?:for\s+)?(?:\d+(?:\.\d+)?|an?|half an?)\s*(?:min|mins|minute|minutes|hr|hrs|hour|hours)\b|""" +
+        """(?:play|put on) (?:some |me some |a little )?(?:music|songs|tunes)|play (?:my|some) (?:mix|playlist|songs))"""
+
     val specs = listOf(
+        Spec("stage", "Stage", "live cards right on the chat (no screen change): timers and pomodoros, music playing, a video, a quiz or flashcards to go through, a plan or checklist",
+            listOf("stage_show", "stage_update"), listOf("stage", "media"), r(STAGE_CUE)),
         Spec("learn", "Learn", "flashcards, decks, quizzes and anything to study or memorise (spaced repetition)",
             listOf("flashcards", "open_view"), listOf("study"),
             r("""\b(flash ?cards?|quiz(?:zes)?|test me|(?<!case )study|studying|revise|revision|memori[sz]e|spaced repetition|exam prep|cards? (?:on|about|for)|(?<!slide )(?<!pitch )deck)\b""")),
@@ -74,7 +83,7 @@ object ViewRouter {
     fun route(text: String, followOn: Boolean = false): Spec? {
         val t = text.trim()
         if (t.isEmpty() || t.startsWith("/") || t.startsWith("[Scheduled routine")) return null
-        var first = specs.firstOrNull { it.cue.containsMatchIn(t) }
+        var first = specs.firstOrNull { (it.id != "stage" || com.blaze.assistant.stage.StageStore.enabled) && it.cue.containsMatchIn(t) }
         // v0.26.1: a diagram / chart asked for in chat is drawn inline in the reply (VisualRoute), not in Design,
         // unless something else in the ask is clearly Design work (a page, a poster, 3D…) or it asks for a file.
         if (first?.id == "design" && VisualRoute.inChat(t) && !designStrong.containsMatchIn(VisualRoute.withoutVisualWords(t))) first = null
@@ -121,13 +130,19 @@ object ViewRouter {
             "Follow-ons (\"show the engine\", \"make it taller\", \"add fins\") change the CURRENT design with design action=update, never a new one or a text answer.\n")
         append("- Never say you created, updated or opened something in a view (\"I've updated the design\", \"view it in the design section\") unless that view's tool succeeded this turn; Blaze checks.\n")
         append("- \"Remind me\" or anything repeating → Schedule (create_routine / schedule_command / create_trigger). Pictures and beats → Gallery. A method or multi-step task to reuse → Skills (save_workflow with trigger, steps, checks).\n")
+        append("- STAGE FIRST (0.46): when the chat Stage can host it (timer, music, video, quiz, flashcards, plan, note), show it in place with stage_show instead of opening a view; " +
+            "the view still holds the data (a deck is still made with flashcards add). Open a view only when the user asks for it or the Stage can't host it.\n")
         append("- Other views (Jobs, Accounts, Agents, Usage, Settings…): open with open_view ask=true unless the user asked for that view.")
     }
 
     /** The per-turn required-view hint, injected before the first model call. */
     fun hint(s: Spec): String = when (s.id) {
+        "stage" -> "\nREQUIRED VIEW THIS TURN: Stage (in place on the chat, no screen change). A timer, study or focus time -> stage_show kind=timer minutes=N title=… " +
+            "(pomodoro=true for a pomodoro; autostart only if they said start / go): a timer card with a Start button. Don't make a reminder, an alarm or set_timer for it, and don't answer with just a sentence. " +
+            "Music -> stage_show kind=music query=<what to play, or empty> (it plays in place; never open the Music screen unless they ask). Then reply in one short line."
         "learn" -> "\nREQUIRED VIEW THIS TURN: Learn. Put the cards in a Learn deck with flashcards action=add (deck = topic or course code + topic, " +
-            "cards = [{front, back}], 10-25 cards, one fact each), then open_view view=learn, then reply in one or two lines (deck name, card count). " +
+            "cards = [{front, back}], 10-25 cards, one fact each), then go through them on the chat Stage with stage_show kind=flashcards deck=<that deck> " +
+            "(or kind=quiz questions=[…] for a multiple-choice quiz); open_view view=learn only when the user asks for the Learn view or the Stage is off. Then reply in one or two lines (deck name, card count). " +
             "Do NOT write the questions and answers in chat. To quiz from an existing deck: flashcards action=due and ask one card at a time."
         "design" -> "\nREQUIRED VIEW THIS TURN: Design. Make it for real with the design tool: 3D (a rocket, car, building, product…) → design action=create kind=3d " +
             "title=… parts=[…] (8-40 parts, real proportions, y up, parts that should touch do); pages, UI mockups, posters, slides, charts, diagrams, floor plans, games → " +

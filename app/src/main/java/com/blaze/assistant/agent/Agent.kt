@@ -1191,6 +1191,8 @@ When you finish, say what you did in one short sentence.
             turn("core_skills", CoreSkills.promptBlock(prof.core))
             // v0.23.0: the VIEWS block. v0.45.0 (#16): in full only when a view is routed this turn; else one line.
             turn("views", if (prof.views) ViewRouter.PROMPT else PromptProfile.viewsShort(ViewRouter.specs.map { it.name }))
+            // 0.46.0 Blaze Stage: in place first; plain Q&A stays chat; "study 30 min" is a timer card with Start.
+            if (com.blaze.assistant.stage.StageStore.enabled) s("stage", com.blaze.assistant.stage.StageTools.RULE)
             // v0.44.0: every tool result carries [verified=…]; success may only be claimed on verified=true (ToolVerify).
             s("tool_verify", ToolVerify.PROMPT_RULE)
             // v0.24.9 rich replies / v0.26.1 visual answers (diagrams, charts, compare, tools, choices, forms; picked
@@ -1295,6 +1297,8 @@ When you finish, say what you did in one short sentence.
         Learning.tools().forEach { t.put(it) }
         t.put(com.blaze.assistant.update.Updater.tool())
         t.put(com.blaze.assistant.ui.Views.tool())
+        // 0.46.0 Blaze Stage: heroes / widgets / layout on the chat itself (Stage first; open_view only when asked or the Stage can't host it).
+        if (com.blaze.assistant.stage.StageStore.enabled) com.blaze.assistant.stage.StageTools.definitions().forEach { t.put(it) }
         t.put(SelfKnowledge.tool())
         t.put(Awareness.tool())
         t.put(com.blaze.assistant.proactive.Jarvis.tool())
@@ -2946,6 +2950,8 @@ When you finish, say what you did in one short sentence.
                     if (!bulk && agentId == null && !isPrivate) addAll(kotlinx.coroutines.withContext(Dispatchers.Default) { LearnedRoutes.predict(lu, g0) })
                     // v0.45.0 (#20): a request in another language that no English cue matched still gets the core action groups.
                     if (!bulk) addAll(ToolRouter.fallback(lu, this))
+                    // 0.46.0: while cards are on the Stage, the Stage tools stay on hand ("pause it", "make the music small").
+                    if (com.blaze.assistant.stage.StageStore.state.value.items.isNotEmpty()) add("stage")
                     // v0.45.9: a calendar / meetings / schedule question always gets the calendar and reminder tools.
                     if (!bulk && TurnContext.scheduleAsk(lu)) add("schedule")
                     // v0.45.9: "@halo Yes" to "I can check your Google Calendar, want me to?" gets them too.
@@ -4767,6 +4773,8 @@ When you finish, say what you did in one short sentence.
                         com.blaze.assistant.device.CameraMathTool.run(args) }
                     name == com.blaze.assistant.media.GalleryOps.TOOL -> { add(Role.STEP, com.blaze.assistant.media.GalleryOps.describe(args))
                         com.blaze.assistant.media.GalleryOps.run(app, args) }
+                    name in com.blaze.assistant.stage.StageTools.NAMES -> { add(Role.STEP, com.blaze.assistant.stage.StageTools.step(name, args))
+                        com.blaze.assistant.stage.StageStore.run(app, name, args) }
                     name == com.blaze.assistant.mediaapps.MusicTools.TOOL -> { add(Role.STEP, com.blaze.assistant.mediaapps.MusicTools.describe(args))
                         com.blaze.assistant.mediaapps.MusicTools.run(app, args) }
                     name == com.blaze.assistant.mediaapps.VideoTools.TOOL -> { add(Role.STEP, com.blaze.assistant.mediaapps.VideoTools.describe(args))

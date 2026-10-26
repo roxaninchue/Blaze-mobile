@@ -284,6 +284,12 @@ class MusicService : MediaLibraryService() {
     fun isPlayingNow(): Boolean = player.isPlaying
     fun queueSize(): Int = player.mediaItemCount
     fun nowTitle(): String = player.currentMediaItem?.mediaMetadata?.title?.toString().orEmpty()
+    /** 0.46.0 Stage music hero / mini player (main thread; read once a second, never per frame). */
+    fun nowArtist(): String = player.currentMediaItem?.mediaMetadata?.artist?.toString().orEmpty()
+    fun nowArt(): String = player.currentMediaItem?.mediaMetadata?.artworkUri?.toString().orEmpty()
+    fun positionMs(): Long = player.currentPosition.coerceAtLeast(0L)
+    fun durationMs(): Long = player.duration.let { if (it == androidx.media3.common.C.TIME_UNSET) 0L else it.coerceAtLeast(0L) }
+    fun seekTo(ms: Long) { player.seekTo(ms.coerceAtLeast(0L)) }
     fun transport(op: String) {
         when (op) {
             "play" -> { if (player.playbackState == Player.STATE_IDLE) player.prepare(); player.play() }

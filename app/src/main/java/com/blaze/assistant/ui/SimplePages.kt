@@ -194,6 +194,12 @@ fun LookPage() {
     Spacer(Modifier.height(14.dp))
     ToggleRow("Move with music", "Pulses gently with what's playing in Blaze Music", music) { Look.setMusic(!music) }
     ToggleRow("Save battery: keep it still", "Also pauses by itself on low battery or in power saver", still) { Look.setStill(!still) }
+    // 0.46.0 Blaze Stage: timers, music, quizzes and other live cards right on the chat (off = Blaze answers in chat / opens views).
+    var stageOn by remember { mutableStateOf(com.blaze.assistant.stage.StageStore.enabled) }
+    ToggleRow("Blaze Stage", "Live cards right on the chat: timers, music, quizzes. Drag to move; back or Reset layout restores the chat", stageOn) {
+        stageOn = !stageOn; com.blaze.assistant.agent.Settings.setBool("stage_on", stageOn)
+        if (!stageOn) com.blaze.assistant.stage.StageStore.dispatch(com.blaze.assistant.stage.StageAction.Reset)
+    }
 }
 
 /** A still preview of a background for its card. */

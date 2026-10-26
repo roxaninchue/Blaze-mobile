@@ -488,6 +488,11 @@ fun ChatScreen() {
     var confirmLeavePrivate by remember { mutableStateOf(false) }
     // v0.28.3: the thread + composer show on main Chat and on a project chat screen; views (Design…) belong to main Chat.
     val chatBody = nav.tab == ChatNav.CHAT || nav.inProjectChat
+    // 0.46.0 Blaze Stage: the main chat is one playground (heroes, widgets, a movable chat, top / reply bars that can hide).
+    val stage by com.blaze.assistant.stage.StageStore.state.collectAsState()
+    val stageActive = com.blaze.assistant.stage.StageStore.enabled && nav.tab == ChatNav.CHAT && !nav.inProjectChat && showing.isEmpty()
+    val stageLast by remember { Agent.messages.map { l -> l.lastOrNull { it.role == Role.BLAZE || it.role == Role.USER }?.text.orEmpty().take(140) }.distinctUntilChanged() }
+        .collectAsState("")
     val viewShowing = if (nav.inProjectChat) "" else showing
     // ---- v0.39.0 Swipe navigation (Settings › Navigation, independent of Simple / Advanced): Home underneath, Chat slides up over it (SwipeNav). ----
     val density = LocalDensity.current.density
@@ -566,7 +571,7 @@ fun ChatScreen() {
                 .semantics { contentDescription = "Pull down for Home" }, contentAlignment = Alignment.Center) {
                 Box(Modifier.size(width = 36.dp, height = 4.dp).clip(RoundedCornerShape(2.dp)).background(c.hair))
             }
-            if (!designFull) Box(if (swipeMode) Modifier.draggable(sheetDrag, Orientation.Vertical, onDragStarted = onSheetStart, onDragStopped = onSheetStop) else Modifier) {
+            if (!designFull && (stage.topBar || !stageActive)) Box(if (swipeMode) Modifier.draggable(sheetDrag, Orientation.Vertical, onDragStarted = onSheetStart, onDragStopped = onSheetStop) else Modifier) {
             ShellTopBar(mode = shellMode, homeTab = !swipeMode,
                 // v0.24.0: the toggle only switches tabs; there is no conversation list behind it.
                 // v0.28.3: switching tabs keeps your place in Projects; Chat is always the main thread.
@@ -648,14 +653,18 @@ fun ChatScreen() {
                         home = try { com.blaze.assistant.terminal.Terminal.home() } catch (_: Exception) { null },
                         onBack = { Views.showing.value = DesignNav.back(Views.showing.value) })
                     BackHandler { Views.showing.value = DesignNav.back(Views.showing.value) }
-                } else if (!hasMessages) {
+                } else if (!hasMessages && !(stageActive && stage.items.isNotEmpty())) {
                     if (simpleMode && Settings.ready) SimpleWelcome(me?.name.orEmpty().ifBlank { Settings.userName }) { send(it) }
                     else Welcome(needsSetup = !Settings.ready, onSetup = { setupPage = 0; onboard = true }) { Agent.send(it) }
                 } else {
                     val dens = LocalDensity.current
                     CompositionLocalProvider(LocalTextToolbar provides toolbar, LocalClipboardManager provides capClip, LocalOpenLink provides openLink,
                         LocalDensity provides androidx.compose.ui.unit.Density(dens.density, dens.fontScale * Settings.textScale)) {
-                        MessageList(mood,
+                        if (stageActive && !stage.isEmpty) {
+                            // 0.46.0: back steps toward the normal chat (hero -> widget, then the bars and chat come back).
+                            if (!stage.isNormal) BackHandler { com.blaze.assistant.stage.StageStore.back() }
+                            StageHost(stageLast) { m -> Box(m) { if (hasMessages) MessageList(mood, onQuote = { quote = it }, onFollowup = { send(it) }) } }
+                        } else MessageList(mood,
                             onQuote = { quote = it },
                             onFollowup = { send(it) })
                     }
@@ -744,7 +753,11 @@ fun ChatScreen() {
                 AnimatedVisibility(arcOpen, enter = MotionTokens.expand(), exit = MotionTokens.collapse()) {
                     TalkArc(talkTo, alignEnd = !bigMic && voiceState == Voice.State.LISTENING) { talkTo = it; arcOpen = false }
                 }
-                if (bigMic) HoldToTalkBar(listening = voiceState == Voice.State.LISTENING, busy = mood != Mood.IDLE,
+                // 0.46.0: the reply bar folded into a floating pill by the Stage (never gone): tap for the full bar.
+                if (stageActive && stage.reply == com.blaze.assistant.stage.ReplyBar.PILL) Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                    StageReplyPill { com.blaze.assistant.stage.StageStore.dispatch(com.blaze.assistant.stage.StageAction.SetChrome(reply = com.blaze.assistant.stage.ReplyBar.FULL)) }
+                }
+                else if (bigMic) HoldToTalkBar(listening = voiceState == Voice.State.LISTENING, busy = mood != Mood.IDLE,
                     onHold = { if (voiceState != Voice.State.LISTENING) onMic() }, onRelease = { Voice.stopListening() },
                     onType = { typing = true }, onPhoto = { plusOpen = true }, onStop = { Agent.stop() })
                 else AcceptImages(onImage = { uri, mime -> addUris(listOf(uri), mime) }) {
@@ -787,6 +800,8 @@ fun ChatScreen() {
                 add(MenuItem("control", "Phone control", if (Settings.phoneControl && a11yOn) "ON" else "OFF"))
                 // v0.45.2: "Themes" opens the theme picker; light / dark moved to a long-press on the profile icon (and Settings › Look & feel).
                 add(MenuItem("themes", "Themes", themeName))
+                // 0.46.0: one tap back to the plain chat layout (cards stay as small widgets).
+                if (!stage.isNormal) add(MenuItem("stage_reset", "Reset layout", "STAGE"))
                 add(MenuItem("update", "Check for updates", "v" + runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrDefault("")))
                 if (me != null) add(MenuItem("signout", "Sign out"))
             }
@@ -800,6 +815,7 @@ fun ChatScreen() {
                         "views" -> showViews = true
                         "control" -> settingsPage = "control"
                         "themes" -> ThemePickerState.open.value = true
+                        "stage_reset" -> com.blaze.assistant.stage.StageStore.dispatch(com.blaze.assistant.stage.StageAction.Reset)
                         "update" -> com.blaze.assistant.update.Updater.start(ctx)
                         "signout" -> scope.launch { com.blaze.assistant.connect.BlazeAccount.signOut() }
                     }

@@ -23,7 +23,9 @@ object ToolRouter {
         // Calls: "loudspeaker", "mute", "hang up" must work mid-call without guessing a group.
         "call_control",
         // Background agents: always on hand so long work can be handed off from any request.
-        "start_agent", "list_agents", "check_agent", "message_agent", "cancel_agent"
+        "start_agent", "list_agents", "check_agent", "message_agent", "cancel_agent",
+        // 0.46.0 Blaze Stage: stage_show is always on hand, so a timer / music / quiz card is preferred over opening a view.
+        "stage_show"
     )
 
     data class Group(val id: String, val about: String, val match: Regex, val names: (String) -> Boolean)
@@ -112,6 +114,10 @@ object ToolRouter {
         Group("home", "the Home board: add, change, remove and list widgets (weather, news, creators, sports scores, prices, calendar, routines, deadlines, GitHub, most-used apps, custom cards)",
             r("""\b(widgets?|home ?board|home tab|on (?:my )?home|board|dashboard|track(?:ing)?|follow(?:ing)?|keep an eye|scores?|fixtures|new videos|uploads|crypto|bitcoin|exchange rate|stock price)\b"""),
             { it.startsWith("home_widget_") }),
+        // 0.46.0 Blaze Stage: change, move, close and arrange cards and the chat / top bar / reply bar on the chat Stage.
+        Group("stage", "the chat Stage: update / move / close cards (timer, music, video, quiz, flashcards, plan), hide or dock the chat, top bar, reply bar, layouts",
+            r("""\b(stage|hero|widgets?|mini ?player|timer|pomodoro|countdown|stopwatch|focus (?:mode|session|timer)|study (?:for )?\d+|\d+ ?(?:min|mins|minutes|hours?) (?:of )?(?:study|focus|work)|pause (?:it|the timer|the music)|make (?:it|the \w+) (?:big|bigger|small|smaller)|hide (?:the )?(?:chat|top bar|reply bar)|show (?:the )?(?:chat|top bar)|reset (?:the )?layout|move (?:the )?\w+ (?:to|up|down))\b"""),
+            { it.startsWith("stage_") }),
         Group("more", "everything else: watchers, triggers, goals, standing permissions, skill packs and other rarely used tools",
             Regex("(?!)"), { false }),
         Group("extras", "learned skills, helpers working in parallel, screen memory",
