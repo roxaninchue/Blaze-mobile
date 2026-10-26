@@ -75,4 +75,18 @@ class MoviesShotsTest {
         val bmp = capture("movies-details-pills-dark")
         assertTrue("movies frame is blank", distinct(bmp) > 12)
     }
+
+    /** 0.46.3: the install sheet with 25 providers: the bottom bar (Cancel, Install (N)) is drawn on screen. */
+    @Test fun installSheetWith25Providers() {
+        val entries = (1..25).map { com.blaze.assistant.movies.ProviderRepo.Entry("provider$it", "Provider $it", "1.0") }
+        rule.setContent {
+            CompositionLocalProvider {
+                androidx.compose.foundation.layout.Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color(0xFF0B0D12)), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                    com.blaze.assistant.mediaapps.InstallSheet(entries, emptySet(), entries.take(4).map { it.value }, mapOf("provider1" to "Installed"), false, {}, {}, {}, {})
+                }
+            }
+        }
+        rule.onNode(androidx.compose.ui.test.hasContentDescription("Install (4)")).assertExists()
+        assertTrue(distinct(capture("install-sheet-25")) > 20)
+    }
 }

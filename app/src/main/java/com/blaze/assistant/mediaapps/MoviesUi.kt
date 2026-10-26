@@ -17,6 +17,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -372,8 +375,9 @@ private fun ProvidersScreen(onBack: () -> Unit) {
         dismiss = "Cancel", onDismiss = { notice = false })
     if (adding) AddSourceDialog(onCancel = { adding = false }, onAdd = { url -> adding = false
         run("add") { val r = withContext(Dispatchers.IO) { store.addRepo(url) }; offer = r; "Found ${r.second.size} provider${if (r.second.size == 1) "" else "s"}." } })
-    offer?.let { (base, entries) -> InstallDialog(entries, st.installed.map { it.value }.toSet(), onCancel = { offer = null }, onInstall = { picked -> offer = null
-        run("install") { withContext(Dispatchers.IO) { picked.forEach { store.install(base, it) } }; "Installed ${picked.size}." } }) }
+    offer?.let { (base, entries) -> InstallDialog(entries, st.installed.map { it.value }.toSet(), onCancel = { offer = null },
+        install = { e -> withContext(Dispatchers.IO) { store.install(base, e) }; refreshState() },
+        onDone = { m -> offer = null; refreshState(); msg = m }) }
     settingsFor?.let { inst -> ProviderSettingsDialog(inst, onDone = { set, on -> store.setSettings(inst.value, set); store.setEnabled(inst.value, on); refreshState(); settingsFor = null }, onCancel = { settingsFor = null }) }
 }
 
@@ -466,17 +470,102 @@ internal fun LinkInstallCard(url: String, entries: List<ProviderRepo.Entry>?, er
     }
 }
 
+/**
+ * 0.46.3 (report: the "Install providers" list had no visible Install button: a long list pushed it off screen). The pure
+ * rules of the install sheet (InstallSheetTest).
+ */
+internal object InstallPick {
+    /** What the sheet lists (disabled entries never). */
+    fun listed(entries: List<ProviderRepo.Entry>): List<ProviderRepo.Entry> = entries.filter { !it.disabled }
+    fun label(n: Int) = "Install ($n)"
+    fun canInstall(n: Int, installing: Boolean) = n > 0 && !installing
+    fun allPicked(listed: List<ProviderRepo.Entry>, picked: Collection<String>) = listed.isNotEmpty() && listed.all { it.value in picked }
+    /** The header toggle: everything when not all are picked, else nothing. */
+    fun toggleAll(listed: List<ProviderRepo.Entry>, picked: Collection<String>): List<String> = if (allPicked(listed, picked)) emptyList() else listed.map { it.value }
+    const val INSTALLING = "Installing\u2026"
+    const val DONE = "Installed"
+}
+
+/**
+ * The install sheet (stateless; screenshot-tested): a header with a select all / none toggle, the providers in a list that
+ * scrolls, and a bottom bar that always stays on screen: Cancel and the primary "Install (N)" (disabled at 0). While it
+ * installs, each provider shows its own progress.
+ */
 @Composable
-private fun InstallDialog(entries: List<ProviderRepo.Entry>, have: Set<String>, onCancel: () -> Unit, onInstall: (List<ProviderRepo.Entry>) -> Unit) {
-    val picked = remember { mutableStateListOf<String>() }
-    BlazeDialog("Install providers", "Pick the ones you want.", confirm = "Install", onConfirm = { onInstall(entries.filter { it.value in picked }) }, dismiss = "Cancel", onDismiss = onCancel) {
-        entries.filter { !it.disabled }.take(40).forEach { e ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                StageIconButton(if (e.value in picked) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked, (if (e.value in picked) "Don't install " else "Install ") + e.name, on = e.value in picked, size = 36.dp) {
-                    if (!picked.remove(e.value)) picked += e.value }
-                Text(e.name + " \u00b7 v" + e.version + if (e.value in have) " (installed)" else "", color = LocalBlaze.current.ink, fontSize = 14.sp, maxLines = 1)
+internal fun InstallSheet(entries: List<ProviderRepo.Entry>, have: Set<String>, picked: List<String>, progress: Map<String, String>, installing: Boolean,
+                          onToggle: (String) -> Unit, onAll: () -> Unit, onInstall: () -> Unit, onCancel: () -> Unit) {
+    val c = LocalBlaze.current
+    val listed = InstallPick.listed(entries)
+    val maxH = (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * 0.86f).dp
+    val shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp)
+    Column(Modifier.widthIn(max = 380.dp).fillMaxWidth().heightIn(max = maxH)
+        .background(com.blaze.assistant.ui.DialogColors.surface, shape).padding(start = 18.dp, end = 12.dp, top = 16.dp, bottom = 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Install providers", color = c.ink, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                Text("Pick the ones you want.", color = c.sub, fontSize = 13.sp)
+            }
+            val all = InstallPick.allPicked(listed, picked)
+            StageIconButton(if (all) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked, if (all) "Select none" else "Select all",
+                on = all, size = 40.dp, enabled = !installing) { onAll() }
+        }
+        LazyColumn(Modifier.weight(1f, fill = false).padding(vertical = 8.dp).semantics { contentDescription = "Providers to install" }) {
+            items(listed, key = { it.value }) { e ->
+                val on = e.value in picked
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    StageIconButton(if (on) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked, (if (on) "Don't install " else "Install ") + e.name,
+                        on = on, size = 36.dp, enabled = !installing) { onToggle(e.value) }
+                    Text(e.name + " \u00b7 v" + e.version + if (e.value in have) " (installed)" else "", color = c.ink, fontSize = 14.sp, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    progress[e.value]?.let { Text(it, color = c.sub, fontSize = 12.sp, maxLines = 1, modifier = Modifier.padding(end = 6.dp)) }
+                }
             }
         }
+        // the bottom bar: never scrolls away
+        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically) {
+            com.blaze.assistant.ui.PillButton("Cancel", primary = false, onClick = onCancel)
+            val n = picked.count { v -> listed.any { it.value == v } }
+            val ok = InstallPick.canInstall(n, installing)
+            Row(Modifier.height(40.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(50))
+                .background(if (ok) c.accent else c.accent.copy(alpha = 0.3f))
+                .clickable(enabled = ok, onClick = onInstall).padding(horizontal = 16.dp)
+                .semantics { contentDescription = if (installing) InstallPick.INSTALLING else InstallPick.label(n) },
+                verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.Download, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(if (installing) InstallPick.INSTALLING else InstallPick.label(n), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+            }
+        }
+    }
+}
+
+@Composable
+private fun InstallDialog(entries: List<ProviderRepo.Entry>, have: Set<String>, onCancel: () -> Unit, install: suspend (ProviderRepo.Entry) -> Unit, onDone: (String) -> Unit) {
+    val picked = remember { mutableStateListOf<String>() }
+    val progress = remember { androidx.compose.runtime.mutableStateMapOf<String, String>() }
+    var installing by remember { mutableStateOf(false) }
+    var work by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    val scope = rememberCoroutineScope()
+    val listed = InstallPick.listed(entries)
+    // back (and a tap outside) cancels; while installing it stops after the provider in progress
+    androidx.compose.ui.window.Dialog(onDismissRequest = { work?.cancel(); onCancel() }) {
+        InstallSheet(entries, have, picked, progress, installing,
+            onToggle = { v -> if (!picked.remove(v)) picked += v },
+            onAll = { val next = InstallPick.toggleAll(listed, picked); picked.clear(); picked.addAll(next) },
+            onCancel = { work?.cancel(); onCancel() },
+            onInstall = {
+                if (InstallPick.canInstall(picked.size, installing)) work = scope.launch {
+                    installing = true
+                    var ok = 0
+                    for (e in listed.filter { it.value in picked }) {
+                        progress[e.value] = InstallPick.INSTALLING
+                        progress[e.value] = try { install(e); ok++; InstallPick.DONE } catch (x: kotlinx.coroutines.CancellationException) { throw x } catch (x: Exception) { "Failed" }
+                    }
+                    kotlinx.coroutines.delay(500)
+                    installing = false
+                    onDone("Installed $ok of ${picked.size}.")
+                }
+            })
     }
 }
 

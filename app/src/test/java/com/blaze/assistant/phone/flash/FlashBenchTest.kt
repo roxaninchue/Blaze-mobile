@@ -13,7 +13,8 @@ class FlashBenchTest {
         assertEquals(o1, o2); assertEquals(n1, n2)
         assertTrue(FlashBench.tasks.size in 15..20)
         assertEquals(0, n1.count { it.saidDone && !it.success })   // the new engine never claims a task it didn't do
-        val md = FlashBench.report(o1, n1)
+        val (lo, ln) = com.blaze.assistant.agent.LookupBench.runAll()
+        val md = FlashBench.report(o1, n1) + "\n" + com.blaze.assistant.agent.LookupBench.report(lo, ln)
         println(md)
         val dir = listOf(File("build"), File("app/build")).firstOrNull { it.isDirectory } ?: File("build").also { it.mkdirs() }
         File(dir, "flash-bench.md").writeText(md)

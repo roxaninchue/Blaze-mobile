@@ -1725,7 +1725,9 @@ When you finish, say what you did in one short sentence.
         @Volatile var turnAt = 0L
         @Volatile private var turnStamped = true
 
-        fun beginTurn(at: Long = System.currentTimeMillis()) { turnAt = at; turnStamped = false }
+        fun beginTurn(at: Long = System.currentTimeMillis()) { turnAt = at; turnStamped = false; pendingSources.begin(); searches.begin() }
+        /** 0.46.3: this turn's searches (duplicate / off-topic guard). */
+        val searches = SearchGuard()
 
         fun add(role: Role, text0: String, files: List<String> = emptyList()): Long {
             // v0.32.0: the model sometimes copies the history's [Blaze] / [Halo] tags into its narration; never shown.
@@ -1780,7 +1782,7 @@ When you finish, say what you did in one short sentence.
 
         fun addReply(liveId: Long, raw: String, thinking: String, fu: List<String> = emptyList(), meta: String = "", receipt: String = "", how: String = "") {
             val media = synchronized(pendingMedia) { pendingMedia.toList().also { pendingMedia.clear() } }
-            val found = pendingSources.take()
+            val found = pendingSources.take(raw)
             val p = ReplyParts.split(raw, final = true).let { if (it.followups.isEmpty() && fu.isNotEmpty()) it.copy(followups = fu) else it }
             val think = listOf(thinking, p.thinking).filter { it.isNotBlank() }.joinToString("\n\n")
             val tms = if (think.isNotBlank()) thinkClock.ms() else 0L
@@ -1964,6 +1966,14 @@ When you finish, say what you did in one short sentence.
             if (text.isBlank() && attachments.isEmpty()) return
             val shown = text.trim().ifEmpty { "Take a look at this." }
             val busyNow = job?.isActive == true
+            // 0.46.3: a message during a running task is never queued behind the loop (BusyRoute): stop, steer, or Halo on the side.
+            if (busyNow && attachments.isEmpty() && notificationContext.isNullOrBlank() && agentId == null && specialistId == null) {
+                when (BusyRoute.route(shown, ToolTruth.toolShaped(shown) && !ToolTruth.chatOnly(shown))) {
+                    BusyRoute.Kind.STOP -> { val id = post(shown, emptyList()); markSent(id); stop(); sideLine(BusyRoute.STOPPED); persist(); return }
+                    BusyRoute.Kind.STEER -> { steer(shown); return }
+                    BusyRoute.Kind.SIDE -> if (Settings.bool("duo_on", true) && SelfControl.match(shown) == null) { sideSend(shown, Duo.route(shown, false).text); return }
+                }
+            }
             // v0.32.0 split: Blaze is busy with a task, so Halo takes this one (unless it's "@blaze …": that steers Blaze).
             // v0.45.28: and the other way round: while Halo works on a task, Blaze takes your messages ("@halo …" steers Halo).
             if (busyNow && soloRunning && attachments.isEmpty() && notificationContext.isNullOrBlank() && agentId == null && specialistId == null &&
@@ -2003,6 +2013,89 @@ When you finish, say what you did in one short sentence.
                     }
                 }
             }
+        }
+
+        /** 0.46.3: the bubble is marked sent at once (the message is with Blaze, not waiting on the network or the loop). */
+        private fun markSent(id: Long) {
+            try { msgs.firstOrNull { it.id == id }?.gid?.let { Delivery.tracker().apply(listOf(it), Delivery.Ev.LOCAL_PICKUP) } } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("Agent: markSent", e) }
+        }
+
+        /**
+         * 0.46.3: the lookup lane for this turn. True = answered (the answer is in the chat with its source pills and a
+         * Go deeper chip; a bounded background check may update it in place). False = escalated: the normal loop (with the
+         * browser) takes the turn, told why.
+         */
+        private suspend fun runLookup(q: String): Boolean {
+            mood = Mood.ACTING
+            val cfg = LookupLane.Config()
+            val t0 = System.currentTimeMillis()
+            var escalated = ""
+            val state = try {
+                LookupLane.first(q, LookupRoutes.net, LookupRoutes.brain, cfg, { System.currentTimeMillis() }) { ev ->
+                    when (ev) {
+                        is LookupLane.Event.Progress -> { val l = LookupLane.line(ev); scope.launch { status = l }; if (ev.step <= 2) add(Role.STEP, ev.line) }
+                        is LookupLane.Event.Escalate -> escalated = ev.reason
+                        is LookupLane.Event.First -> { }
+                    }
+                }
+            } catch (e: CancellationException) { throw e } catch (e: Exception) { escalated = "lookup failed: ${e.message.orEmpty().take(80)}"; null }
+            if (state == null) {
+                history.put(JSONObject().put("role", "user").put("content", "[Quick lookup didn't settle it: $escalated. Use web_search / fetch_page, or the browser if a sign-in or a click is needed.]"))
+                return false
+            }
+            val found = LookupRoutes.sources(state.pages, state.answer.supporting)
+            val text = ReplySources.stripInline(state.answer.text, found)
+            history.put(JSONObject().put("role", "assistant").put("content", text + "\n[Answered from ${state.pages.size} pages: " + state.pages.joinToString(", ") { it.url } +
+                ". If the user says Go deeper: do a full browse with the browser tools.]"))
+            val id = ids.getAndIncrement()
+            val ms = System.currentTimeMillis() - t0
+            msgs = msgs + ChatMessage(id, Role.BLAZE, text, followups = listOf(LookupLane.GO_DEEPER), meta = "\u26A1 quick lookup \u00b7 %.1f s".format(ms / 1000.0),
+                speaker = speakerOf(voice), sources = ReplySources.encode(found))
+            // the background check: off the turn (it never holds the chat busy), bounded, edits the same bubble when it changes
+            scope.launch {
+                val u = try { LookupLane.verify(state, LookupRoutes.net, LookupRoutes.brain, cfg) } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
+                if (u != null && u.changed && u.answer.text.isNotBlank()) {
+                    val f2 = LookupRoutes.sources(u.pages, u.answer.supporting)
+                    val t2 = ReplySources.stripInline(u.answer.text, f2)
+                    msgs = msgs.map { if (it.id == id) it.copy(text = t2, sources = ReplySources.encode(f2), meta = LookupLane.UPDATED + " \u00b7 checked ${u.pages.size} sources") else it }
+                    history.put(JSONObject().put("role", "assistant").put("content", "[Updated after checking more pages:] $t2"))
+                    persist()
+                }
+            }
+            return true
+        }
+
+        /** 0.46.3: the two user messages before this turn (a follow-up's subject is still the current one) and Blaze's last reply. */
+        private fun recentAsks(): String = msgs.filter { it.role == Role.USER && it.id < turnFrom }.takeLast(2).joinToString(" ") { it.text.take(300) } + " " +
+            msgs.lastOrNull { it.role == Role.BLAZE && it.id < turnFrom }?.text.orEmpty().take(600)
+
+        /** 0.46.3: earlier subjects of this chat (older user messages) and saved memories, for the search guard's bleed check. */
+        private fun olderSubjects(): String = try {
+            msgs.filter { it.role == Role.USER && it.id < turnFrom }.takeLast(20).joinToString(" ") { it.text.take(300) } + " " +
+                Memory.facts.value.takeLast(80).joinToString(" ") { it.toString().take(200) }
+        } catch (_: Throwable) { "" }
+
+        /** 0.46.3: what the running task was asked (its first message), for Halo's read-only status and the steer line. */
+        private fun runningTask(): String = msgs.firstOrNull { it.id == turnFrom && it.role == Role.USER }?.text.orEmpty()
+
+        /** 0.46.3: one plain line from Halo beside the running task (not part of its history until it ends). */
+        private fun sideLine(text: String) {
+            val live = LiveMsg(Duo.Who.HALO, -1L, side = true)
+            live.end(text)
+            synchronized(sideHist) { sideHist.add(JSONObject().put("role", "assistant").put("content", Duo.tag(Duo.Who.HALO) + text)) }
+        }
+
+        /** 0.46.3: a correction or addition joins the running task at its next step; sent at once, confirmed in one line. */
+        private fun steer(shown: String) {
+            val id = post(shown, emptyList())
+            inbox.add(Inbound(id, Duo.route(shown, false).text, emptyList(), false, null))
+            focus = focus + id
+            markSent(id)
+            com.blaze.assistant.device.Haptics.tick(app)
+            sideLine(BusyRoute.steered(runningTask()))
+            persist()
+            // the turn reads it at its next step; if it ends first, the next turn starts with it
+            scope.launch { job?.join(); drain() }
         }
 
         /** v0.30.6: the user's bubble, shown at once. Files with a thumbnail first, so the bubble pairs thumbnails with their names (v0.24.6). */
@@ -2177,6 +2270,11 @@ When you finish, say what you did in one short sentence.
                         scope.launch { kotlinx.coroutines.delay(5 * 60_000 + 5_000); FastLane.trimIfIdle() }
                         return@launch
                     }
+                }
+                // 0.46.3 lookup fast lane: search → the top pages in parallel → the answer first, checked in the background (LookupLane).
+                if (!offline && single && attachments.isEmpty() && !routine && !Modes.plan && !agentPlan && agentId == null && specialistId == null &&
+                    notificationContext.isNullOrBlank() && voice == Duo.Who.BLAZE && Settings.bool("lookup_lane", true) && LookupLane.isLookup(shown)) {
+                    if (runLookup(shown)) { mood = Mood.IDLE; persist(); announce(); return@launch }
                 }
                 if (offline && !Settings.customBase.contains("127.0.0.1") && !Settings.customBase.contains("localhost")) {
                     add(Role.ERROR, "You're offline. I can still do direct commands like \u201copen WhatsApp\u201d, \u201cflashlight on\u201d or \u201cset a timer for 5 minutes\u201d.")
@@ -2441,7 +2539,7 @@ When you finish, say what you did in one short sentence.
             val user = JSONObject().put("role", "user").put("content", text)
             synchronized(sideHist) { sideHist.add(user) }
             val req = JSONArray().put(JSONObject().put("role", "system").put("content",
-                Duo.sideSystem(Settings.greetName(), lastUserText(), status, who) + TurnContext.RULE + "\n" + TurnContextSource.block(text)))
+                Duo.sideSystem(Settings.greetName(), lastUserText(), status, who) + "\n" + BusyRoute.status(runningTask(), status, currentStep) + TurnContext.RULE + "\n" + TurnContextSource.block(text)))
             try { val c = duoContext(who, 12); for (i in 0 until c.length()) req.put(c.get(i)) } catch (e: Exception) { com.blaze.assistant.device.CrashLog.quiet("Agent: val c duoContextDuo.Who.HALO 12 for i in", e) }
             synchronized(sideHist) { sideHist.forEach { req.put(it) } }
             val live = LiveMsg(who, -1L, side = true)
@@ -2457,6 +2555,8 @@ When you finish, say what you did in one short sentence.
                 sideIds -= mid
                 inbox.add(Inbound(mid, text, emptyList(), false, null))
                 focus = focus + mid
+                markSent(mid)
+                if (job?.isActive == true) sideLine(BusyRoute.steered(runningTask()))
                 scope.launch { job?.join(); drain() }
                 persist()
                 return
@@ -4470,14 +4570,16 @@ When you finish, say what you did in one short sentence.
                     L.askPc(args.optString("task"), args.optBoolean("new_conversation")) { line -> add(Role.STEP, "${L.pcName}: ${line.take(90)}") }
                 }
                 // v0.33.1 content-hash cache (identical lookups reused, private chats never) + speculative fetch of the top results on Wi-Fi.
-                "web_search" -> { add(Role.STEP, "Searching the web for \u201c${args.optString("query").take(50)}\u201d")
+                "web_search" -> searches.check(args.optString("query"), GoalPin.of(lastUserText()).request + " " + runningTask() + " " + recentAsks(), olderSubjects()) ?: run {
+                    add(Role.STEP, "Searching the web for \u201c${args.optString("query").take(50)}\u201d")
                     val r = ToolCache.cached(name, args, lastUserText(), isPrivate) { Web.search(args.optString("query")) }
                     if (!r.startsWith("[Cached")) ToolCache.prefetch(r, unmetered(), Settings.lowData, isPrivate) { u -> Web.fetch(u) }
-                    pendingSources.addSearch(r.removePrefix("[Cached]").trimStart())
+                    if (sideFlag.get() != true) pendingSources.addSearch(r.removePrefix("[Cached]").trimStart())
+                    searches.saw(r)
                     r }
                 "fetch_page" -> { add(Role.STEP, "Reading ${args.optString("url").removePrefix("https://").take(50)}")
                     val a = JSONObject(args.toString()).put("url", ToolLeak.fixBlazeUrl(args.optString("url")))
-                    ToolCache.cached(name, a, lastUserText(), isPrivate) { Web.fetch(a.optString("url")) }.also { pendingSources.addFetch(a.optString("url"), it) } }
+                    ToolCache.cached(name, a, lastUserText(), isPrivate) { Web.fetch(a.optString("url")) }.also { if (sideFlag.get() != true) pendingSources.addFetch(a.optString("url"), it); searches.saw(it) } }
                 "blazerouter" -> { add(Role.STEP, "BlazeRouter: " + args.optString("action")); BlazeRouter.run(app, args) }
                 CommandRegistry.TOOL -> {
                     val cn = args.optString("command").trim().removePrefix("/").substringBefore(' ').lowercase()

@@ -90,6 +90,37 @@ object ReplySources {
             ims.forEach { i -> img.putIfAbsent(norm(i.url), i) }
         }
         @Synchronized fun take(): Found { val r = Found(src.values.take(MAX_PILLS), img.values.take(MAX_IMAGES)); src.clear(); img.clear(); return r }
+        /**
+         * 0.46.3 (report: pills for unrelated pages from an earlier task): a new turn starts empty. A turn that ended without
+         * a reply (an error, Stop, a hand-off) used to leave its sources for the next reply.
+         */
+        @Synchronized fun begin() { src.clear(); img.clear() }
+        /** 0.46.3: only the sources [reply] actually used ([relevant]); the rest are dropped. */
+        @Synchronized fun take(reply: String): Found = relevant(take(), reply)
+    }
+
+    private val stopWords = setOf("the", "and", "for", "with", "from", "that", "this", "your", "you", "are", "was", "how", "what", "www", "com", "org",
+        "net", "html", "page", "home", "official", "site", "online", "app", "about", "into", "can", "has", "have", "will", "not", "but")
+    private fun words(s: String): Set<String> = s.lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter { it.length >= 3 && it !in stopWords }.toSet()
+
+    /**
+     * 0.46.3: a source stays only when the reply used it: its link or domain is cited, or the reply shares words with its
+     * title or domain name (two words, or one distinctive word of 5+ letters). Pictures stay only from kept pages.
+     */
+    fun relevant(found: Found, reply: String): Found {
+        if (found.isEmpty) return found
+        val text = reply.lowercase()
+        val rw = words(reply)
+        fun used(s: Source): Boolean {
+            val d = domain(s.url)
+            if (text.contains(norm(s.url).lowercase()) || (d.isNotEmpty() && text.contains(d))) return true
+            val sw = words(s.title) + words(d.substringBeforeLast('.').replace('.', ' '))
+            val hit = sw.intersect(rw)
+            return hit.size >= 2 || hit.any { it.length >= 5 }
+        }
+        val keep = found.sources.filter { used(it) }
+        val doms = keep.map { domain(it.url) }.toSet()
+        return Found(keep, found.images.filter { domain(it.from.ifBlank { it.url }) in doms })
     }
 
     // ---------------- dedupe with the reply text ----------------
