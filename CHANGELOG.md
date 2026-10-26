@@ -6,7 +6,7 @@
 - Browser card: "pull up the browser" or "browser card" puts Blaze's browser on the chat as a card: an address / search bar, back, forward, reload, a loading line and open in full view. It shows the same page Blaze works on with its browser tools, so you can watch and take over in place. The full Browser screen opens only when you ask for full screen / full view. The page is only drawn while the card is big; small, it's a title row and the page sleeps when Blaze is idle.
 - Blaze no longer says a card is open when it isn't ("Browser's open…" with nothing on screen): it shows the card for real, or says plainly that it didn't.
 - Timer: presets (5, 15, 25, 45 min) and a shorter / longer stepper before it starts, take off or add a minute while it runs, reset, the alert sound (ring, vibrate only or silent), the progress ring and, for a pomodoro, which cycle you're on.
-- Video: speed (0.5x to 2x), full screen on the Stage, captions when the video has them, and open in Blaze Video.
+- Video: speed (0.5x to 2x), full screen on the Stage, captions when the video has them, picture-in-picture when you leave Blaze while it plays, and open in Blaze Video.
 - Quiz: back and next, a hint (the question's own hint or one wrong option taken away), the score as you go, and at the end a review of the ones you missed with a button to retry only those.
 - Flashcards: flip, know / don't know, shuffle and progress (card n of total, how many you knew).
 - Plan and note cards can be edited on the card: tick items, change, delete or add lines, and edit the note text.

@@ -106,7 +106,8 @@ class PhoneUiFixesTest {
         val main = src("MainActivity.kt")
         assertTrue(main.contains("override fun onUserLeaveHint()") && main.contains("PhonePipHost.enterOnLeave(this"))
         assertTrue(main.contains("override fun onPictureInPictureModeChanged"))
-        assertTrue("only the live view in PiP", main.contains("if (pip.value && !locked.value) com.blaze.assistant.browser.phone.PhonePipView()"))
+        // 0.46.1: or a Stage video's picture, when that is what followed the user out.
+        assertTrue("only the live view in PiP", main.contains("if (pip.value && !locked.value) { if (videoPip.value) com.blaze.assistant.ui.StageVideoPip() else com.blaze.assistant.browser.phone.PhonePipView() }"))
         assertTrue("the chat is not drawn in PiP", main.contains("if (!pip.value) p.place(0, 0)"))
         assertTrue(main.contains("FLAG_ACTIVITY_NO_USER_ACTION"))
         val screen = src("browser/phone/PhoneBrowserActivity.kt")

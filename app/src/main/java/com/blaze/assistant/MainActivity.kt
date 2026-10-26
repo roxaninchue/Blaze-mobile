@@ -25,6 +25,8 @@ class MainActivity : FragmentActivity(), com.blaze.assistant.ui.BackRule.Shelled
     private var leftAt = 0L
     /** 0.45.19 fix 4: in picture-in-picture (only Blaze Phone's live view is drawn). */
     private val pip = mutableStateOf(false)
+    /** 0.46.1: the picture-in-picture window shows a Stage video (not Blaze Phone). */
+    private val videoPip = mutableStateOf(false)
     /** When Blaze last opened one of its own screens (that is not "leaving Blaze"). */
     private var ownLaunchAt = 0L
 
@@ -51,7 +53,7 @@ class MainActivity : FragmentActivity(), com.blaze.assistant.ui.BackRule.Shelled
                 }) {
                     if (locked.value) com.blaze.assistant.ui.LockScreen { unlock() } else ChatScreen()
                 }
-                if (pip.value && !locked.value) com.blaze.assistant.browser.phone.PhonePipView()
+                if (pip.value && !locked.value) { if (videoPip.value) com.blaze.assistant.ui.StageVideoPip() else com.blaze.assistant.browser.phone.PhonePipView() }
             }
         } }
         // Picture-in-picture follows the user out only while Blaze works on Blaze Phone (auto-enter on API 31+).
@@ -178,12 +180,22 @@ class MainActivity : FragmentActivity(), com.blaze.assistant.ui.BackRule.Shelled
     /** Below API 31 Blaze enters picture-in-picture itself when the user leaves while Blaze Phone works. */
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        com.blaze.assistant.browser.phone.PhonePipHost.enterOnLeave(this, locked.value, android.os.SystemClock.uptimeMillis() - ownLaunchAt < 1500)
+        val own = android.os.SystemClock.uptimeMillis() - ownLaunchAt < 1500
+        val phone = com.blaze.assistant.browser.phone.PhonePipHost.enterOnLeave(this, locked.value, own)
+        // 0.46.1: a Stage video playing follows the user out in picture-in-picture (not while Blaze Phone has the window).
+        if (!phone && !own && !locked.value && !isInPictureInPictureMode && com.blaze.assistant.ui.StageVideo.playing() &&
+            !com.blaze.assistant.browser.phone.PhonePipHost.working() && com.blaze.assistant.browser.phone.PhonePipHost.supported(this)) {
+            videoPip.value = true
+            val ok = try { enterPictureInPictureMode(android.app.PictureInPictureParams.Builder().setAspectRatio(android.util.Rational(16, 9)).build()) }
+                catch (t: Throwable) { com.blaze.assistant.device.CrashLog.quiet("MainActivity.videoPip", t); false }
+            if (!ok) videoPip.value = false
+        }
     }
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: android.content.res.Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         pip.value = isInPictureInPictureMode
+        if (!isInPictureInPictureMode) videoPip.value = false
     }
 
     /**

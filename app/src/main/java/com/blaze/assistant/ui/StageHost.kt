@@ -132,6 +132,11 @@ object StageVideo {
         return if (n == n.toInt().toFloat()) n.toInt().toString() else n.toString()
     }
     fun pause() { try { player?.pause() } catch (_: Exception) { } }
+    /** A Stage video is playing now (MainActivity takes it into picture-in-picture when the user leaves Blaze). */
+    fun playing(): Boolean = try { player?.isPlaying == true } catch (_: Exception) { false }
+    /** Bumped when the picture-in-picture window gives the player back, so the card's view takes the video surface again. */
+    val gen = androidx.compose.runtime.mutableIntStateOf(0)
+    fun current(): androidx.media3.exoplayer.ExoPlayer? = player
     fun release() { try { player?.release() } catch (_: Exception) { }; player = null; url = "" }
 }
 
@@ -273,9 +278,9 @@ fun StageHost(lastMessage: String, chat: @Composable (Modifier) -> Unit) {
     }
 
     val videoSlot: @Composable (StageItem) -> (@Composable (Modifier) -> Unit) = { i ->
-        { m -> AndroidView(factory = { c -> androidx.media3.ui.PlayerView(c).apply { useController = true; setShowSubtitleButton(true)
+        { m -> key(StageVideo.gen.intValue) { AndroidView(factory = { c -> androidx.media3.ui.PlayerView(c).apply { useController = true; setShowSubtitleButton(true)
                 player = StageVideo.player(c, i.props["url"].orEmpty()) } },
-            modifier = m, onRelease = { it.player = null }) }
+            modifier = m, onRelease = { it.player = null }) } }
     }
     // The browser card's WebView (hero only: a collapsed card draws a title row, no WebView).
     val webSlot: @Composable (Modifier) -> Unit = { m ->
@@ -464,3 +469,15 @@ private fun exitOf(m: MotionSpec) = if (m.exitMs <= 0) androidx.compose.animatio
 
 private fun Modifier.onWindowPos(f: (Offset) -> Unit): Modifier =
     this.onGloballyPositioned { f(it.positionInWindow()) }
+
+/**
+ * 0.46.1 picture-in-picture for a Stage video: when the user leaves Blaze while a Stage video plays, MainActivity enters
+ * picture-in-picture and draws only this (the shared player, no controls); back in the app the card takes the video again.
+ */
+@Composable
+fun StageVideoPip() {
+    val p = StageVideo.current() ?: return
+    AndroidView(factory = { c -> androidx.media3.ui.PlayerView(c).apply { useController = false; player = p } },
+        modifier = Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black),
+        onRelease = { it.player = null; StageVideo.gen.intValue++ })
+}
