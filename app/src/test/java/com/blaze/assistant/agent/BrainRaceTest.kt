@@ -39,7 +39,7 @@ class BrainRaceTest {
         assertEquals(listOf(R, C, P), BrainRace.order(BrainRace.Kind.CHAT, true, true))
         assertEquals(listOf(R, C), BrainRace.order(BrainRace.Kind.CHAT, false, true))
         // measured: Cloud faster than Nous -> Cloud first
-        assertEquals(listOf(C, R), BrainRace.order(BrainRace.Kind.CHAT, false, true) { if (it == C) 900L else if (it == R) 4_000L else null })
+        assertEquals(listOf(C, R), BrainRace.order(BrainRace.Kind.CHAT, false, true, ttft = { if (it == C) 900L else if (it == R) 4_000L else null }))
         assertEquals(listOf(P), BrainRace.order(BrainRace.Kind.CHAT, true, signedIn = false))
     }
 
@@ -85,7 +85,7 @@ class BrainRaceTest {
         assertTrue(llm.contains("allFailed = { last, fatal -> BrainRace.finalError(steps, fatal, cloudErr, last) }"))
         assertTrue(llm.contains("retryMs = if (cold) 0L else BrainRace.RETRY_MS"))
         assertTrue(llm.contains("withContext(Cloud.FastFail) { viaGatewayWith(\"skip\", gText, gThink) }"))
-        assertTrue(src("Cloud.kt").contains("coroutineContext[FastFail] != null"))
+        assertTrue(src("Cloud.kt").contains("coroutineContext[FastFailKey] != null"))
         assertEquals(45_000L, BackupBrain.FIRST_CHUNK_MS)
         assertFalse("dead first-chunk watcher removed", llm.contains("private suspend fun watchFirstChunk"))
         assertTrue(agent.contains("BrainRace.cloudRunFor(lite, longWork) && CloudRuns.eligible("))
@@ -127,5 +127,17 @@ class BrainRaceTest {
         val signIn = LlmClient.LlmException(Cloud.EXPIRED, 401)
         assertEquals(Cloud.EXPIRED, BrainRace.finalError(listOf(P, R, C), signIn, busy, busy).message)
         assertEquals("That took too long. Tap Retry.", BrainRace.TOO_LONG)
+    }
+
+    @Test fun cloudInTheRaceFailsAtOnceInsteadOfRetrying() = runTest {
+        var tries = 0
+        val busy = runCatching { kotlinx.coroutines.withContext(Cloud.FastFail) {
+            Cloud.drive(true, call = { _ -> tries++; throw LlmClient.LlmException("Blaze Cloud is busy (503)", 503) }, served = { "" }, sleep = { })
+        } }
+        assertTrue(busy.isFailure); assertEquals(1, tries)
+        // outside the race the old quiet retries still apply
+        tries = 0
+        runCatching { Cloud.drive(true, call = { _ -> tries++; throw LlmClient.LlmException("Blaze Cloud is busy (503)", 503) }, served = { "" }, sleep = { }) }
+        assertTrue(tries > 1)
     }
 }

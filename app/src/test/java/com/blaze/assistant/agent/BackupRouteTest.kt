@@ -83,6 +83,6 @@ class BackupRouteTest {
         assertFalse(src.contains("if (e is TooSlow && !backupReady) throw"))
         // 0.46.4: every call of the loop runs through the hedged race (BrainRace order: Nous / Blaze Cloud always, phone when warm)
         assertTrue(src.contains("HedgeRace.run("))
-        assertTrue(src.contains("BrainRace.order(kind, warm, token.isNotBlank())"))
+        assertTrue(src.contains("BrainRace.order(kind, warm, token.isNotBlank(), "))
     }
 }
