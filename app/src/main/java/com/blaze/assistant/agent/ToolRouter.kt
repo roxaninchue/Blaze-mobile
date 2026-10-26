@@ -19,7 +19,7 @@ object ToolRouter {
         // Long chats (v0.15.0): always on hand so nothing older is ever out of reach.
         "search_chat", "read_turn", "read_artifact", "update_brief", "project_docs_search", "project_docs_read",
         // Basic phone control stays in core: it's the most common thing people ask for.
-        "run_plan", "open_app", "search_in_app", "read_screen",
+        "run_plan", "open_app", "search_in_app", "read_screen", "phone_task",
         // Calls: "loudspeaker", "mute", "hang up" must work mid-call without guessing a group.
         "call_control",
         // Background agents: always on hand so long work can be handed off from any request.

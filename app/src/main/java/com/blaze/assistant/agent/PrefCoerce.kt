@@ -21,7 +21,7 @@ object PrefCoerce {
     const val MIGRATED = "pref_types_v0455"
 
     /** Every pref the app reads as a boolean. */
-    val BOOL_KEYS = setOf("a11y_seen", "adaptive_think", "app_lock", "auto_hide_panel", "auto_learn", "auto_titles", "backup_brain", "backup_brain_mobile_data", "bg_agents", "call_bye",
+    val BOOL_KEYS = setOf("a11y_explainer_seen", "a11y_seen", "adaptive_think", "app_lock", "auto_hide_panel", "auto_learn", "auto_titles", "backup_brain", "backup_brain_mobile_data", "bg_agents", "call_bye",
         "call_earpiece", "call_greet", "chat_lane", "classroom_on", "compact_panel", "confirm_risky", "dash_auto", "dash_lan", "digest_mode", "duo_on",
         "duo_split", "duo_team", "evening_brief", "fast_lane", "fastest_first", "fold_answers", "followups", "habit_offers", "haptics", "home_headsups",
         "home_look_glass_v31", "home_onboarded", "home_wifi_only", "jarvis_camera", "jarvis_screen", "key_catch_armed", "key_catcher", "learn_approval",

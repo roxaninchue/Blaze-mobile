@@ -124,6 +124,7 @@ jobs:
           path: |
             test.log
             units.txt
+            app/build/flash-bench.md
             app/build/test-results/testDebugUnitTest/*.xml
 
   shots:

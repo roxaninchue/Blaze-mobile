@@ -690,6 +690,13 @@ fun ChatScreen() {
                         try { ctx.startActivity(com.blaze.assistant.phone.PhoneControl.fixIntent(ctx)) }
                         catch (_: Exception) { ctx.startActivity(Intent(AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
                     }
+                // 0.46.3: the one-time phone control explainer (a phone task needed control and it was off).
+                val explain by com.blaze.assistant.phone.flash.PhoneExplainer.requested.collectAsState()
+                if (explain) PhoneExplainerDialog(onOpenSettings = {
+                    ComeBack.watch(ctx) { BlazeAccessibilityService.instance != null }
+                    try { ctx.startActivity(com.blaze.assistant.phone.PhoneControl.fixIntent(ctx)) }
+                    catch (_: Exception) { ctx.startActivity(Intent(AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                }, onClose = { com.blaze.assistant.phone.flash.PhoneExplainer.requested.value = false; Settings.setBool("a11y_seen", true) })
                 // v0.45.4: "Blaze X.Y.Z is available" (once a day on app open, dismissible, silent offline).
                 UpdateBanner()
             }

@@ -1391,6 +1391,8 @@ When you finish, say what you did in one short sentence.
         com.blaze.assistant.routine.Routines.tools().forEach { t.put(it) }
         com.blaze.assistant.phone.Skills.definitions().forEach { t.put(it) }
         if (Settings.phoneControl) { val p = PhoneTools.definitions(); for (i in 0 until p.length()) t.put(p.get(i)) }
+        // 0.46.3: the flash engine (compact indexed tree, one model call per step, verify, loop guard, coordinate fallback).
+        if (Settings.phoneControl) t.put(com.blaze.assistant.phone.flash.FlashRunner.tool())
         // v0.30.4: straight to a settings page by intent (in no tool group, so it's always on hand).
         if (Settings.phoneControl) t.put(com.blaze.assistant.phone.SettingsJump.tool())
         // v0.45.9: one schema per name, valid names and object parameters (gateway 0.8.2 checks calls against this list).
@@ -4828,6 +4830,8 @@ When you finish, say what you did in one short sentence.
                         Marketplace.run(app, args) }
                     name == DuoWorkspace.TOOL -> { add(Role.STEP, "Workspace: ${args.optString("action")}")
                         kotlinx.coroutines.withContext(Dispatchers.IO) { DuoWorkspace.run(app, args) } }
+                    name == com.blaze.assistant.phone.flash.FlashRunner.TOOL -> { add(Role.STEP, "Working on the screen: ${args.optString("goal").take(50)}")
+                        com.blaze.assistant.phone.flash.FlashRunner.run(app, args) }
                     name == com.blaze.assistant.phone.CallCopilot.TOOL -> { add(Role.STEP, "Call Copilot"); com.blaze.assistant.phone.CallCopilot.run(app, args) }
                     name == HaloStudio.TOOL -> { add(Role.STEP, "Tuning Halo"); HaloStudio.run(args) }
                     name == com.blaze.assistant.notify.GroupBrain.TOOL -> { add(Role.STEP, "Reading ${args.optString("group").take(40)}")

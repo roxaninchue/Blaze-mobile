@@ -848,6 +848,95 @@ class BlazeAccessibilityService : AccessibilityService() {
         return if (performGlobalAction(action)) "Pressed $button." else "Couldn't press $button."
     }
 
+    // ---------- 0.46.3 flash engine (phone/flash): compact indexed tree, act on nodes, coordinate fallback ----------
+
+    private object FlashAccess : com.blaze.assistant.phone.flash.NodeAccess<AccessibilityNodeInfo>, ScreenTree.Access<AccessibilityNodeInfo> by NodeAccess {
+        override fun bounds(n: AccessibilityNodeInfo): IntArray { val r = Rect(); n.getBoundsInScreen(r); return intArrayOf(r.left, r.top, r.right, r.bottom) }
+        override fun viewId(n: AccessibilityNodeInfo): String = n.viewIdResourceName.orEmpty()
+    }
+
+    /** One flash observation: the app in front, the indexed elements and their nodes. Null = no active window. */
+    class FlashSnapshot(val pkg: String, val app: String, val w: Int, val h: Int,
+                        val items: List<Pair<AccessibilityNodeInfo, com.blaze.assistant.phone.flash.UiNode>>, val refused: String? = null)
+
+    fun flashSnapshot(): FlashSnapshot? {
+        val root = rootInActiveWindow ?: return null
+        val dm = resources.displayMetrics
+        val pkg = root.packageName?.toString().orEmpty()
+        if (bankInFront()) return FlashSnapshot(pkg, appLabel(pkg), dm.widthPixels, dm.heightPixels, emptyList(), com.blaze.assistant.bank.BankModeLogic.REFUSE)
+        val items = try { com.blaze.assistant.phone.flash.FlashTree.build(root, FlashAccess, dm.widthPixels, dm.heightPixels) } catch (_: Throwable) { emptyList() }
+        return FlashSnapshot(pkg, appLabel(pkg), dm.widthPixels, dm.heightPixels, items)
+    }
+
+    /** Tap a node from a flash observation: accessibility click on it or its clickable parent, checked; else a touch at its centre. */
+    suspend fun flashTap(node: AccessibilityNodeInfo, long: Boolean): String {
+        if (bankInFront()) return com.blaze.assistant.bank.BankModeLogic.REFUSE
+        node.refresh()
+        if (!node.isVisibleToUser) return "That element is gone (the screen changed)."
+        val p0 = centerOf(node)
+        if (p0 != null && !pointTo(p0.first, p0.second, long)) return "Stopped: the user tapped Stop. Nothing was tapped."
+        val action = if (long) AccessibilityNodeInfo.ACTION_LONG_CLICK else AccessibilityNodeInfo.ACTION_CLICK
+        var n: AccessibilityNodeInfo? = node; var hops = 0
+        val before = android.os.SystemClock.uptimeMillis()
+        acted()
+        while (n != null && hops < 6) {
+            if ((if (long) n.isLongClickable else n.isClickable) && n.isEnabled) { if (n.performAction(action) && changedSince(before, 450)) return "Tapped."; break }
+            n = n.parent; hops++
+        }
+        val pt = p0 ?: return "Couldn't tap: the element is off screen."
+        return if (gestureTap(pt.first, pt.second, if (long) 800 else 60)) "Tapped by touch." else "Couldn't tap."
+    }
+
+    /** Touch the screen at (x, y) px (the visual fallback when the tree is empty). */
+    suspend fun flashTapAt(x: Float, y: Float, long: Boolean): String {
+        if (bankInFront()) return com.blaze.assistant.bank.BankModeLogic.REFUSE
+        if (!pointTo(x, y, long)) return "Stopped: the user tapped Stop. Nothing was tapped."
+        acted()
+        return if (gestureTap(x, y, if (long) 800 else 60)) "Touched the screen there." else "Couldn't touch the screen there."
+    }
+
+    /** Set the text of a field node (a non-field is tapped first; the focused field then gets the text). */
+    suspend fun flashType(node: AccessibilityNodeInfo?, text: String, submit: Boolean): String {
+        if (bankInFront()) return com.blaze.assistant.bank.BankModeLogic.REFUSE
+        var f = node
+        if (f != null && !f.isEditable) { flashTap(f, false); settle(700, 150); f = null }
+        if (f == null) f = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.takeIf { it.isEditable }
+        f ?: return "No text field to type into."
+        if (f.isPassword) return "That's a password field. Blaze never types passwords; the user types it."
+        acted()
+        f.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text) }
+        if (!f.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) return "Couldn't type into that field."
+        if (!submit) return "Typed."
+        return if (submitIme(f)) "Typed and pressed Enter." else "Typed, but couldn't press Enter."
+    }
+
+    /** Scroll a node (or the main list), else swipe the middle of the screen. */
+    suspend fun flashScroll(node: AccessibilityNodeInfo?, direction: String): String {
+        acted()
+        val forward = direction.lowercase() in listOf("down", "right")
+        var n: AccessibilityNodeInfo? = node ?: mainScroller()
+        while (n != null) {
+            if (n.isScrollable && n.performAction(if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) return "Scrolled $direction."
+            n = n.parent
+        }
+        val dm = resources.displayMetrics
+        val cx = dm.widthPixels / 2f; val cy = dm.heightPixels / 2f; val dy = dm.heightPixels * 0.3f; val dx = dm.widthPixels * 0.3f
+        val ok = when (direction.lowercase()) {
+            "down" -> swipe(cx, cy + dy, cx, cy - dy)
+            "up" -> swipe(cx, cy - dy, cx, cy + dy)
+            "right" -> swipe(cx + dx, cy, cx - dx, cy)
+            else -> swipe(cx - dx, cy, cx + dx, cy)
+        }
+        return if (ok) "Swiped $direction." else "Couldn't scroll."
+    }
+
+    /** Enter on the focused field. */
+    suspend fun flashEnter(): Boolean {
+        val f = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return pressEnter()
+        return submitIme(f)
+    }
+
     private suspend fun gestureTap(x: Float, y: Float, durationMs: Long): Boolean {
         Pointer.ownGesture(durationMs)
         val path = Path().apply { moveTo(x, y) }
