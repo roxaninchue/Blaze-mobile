@@ -1,0 +1,11 @@
+<resources>
+    <!-- 0.47.x sky splash: same as values-night/themes.xml plus the icon-less, dusk-navy system splash. -->
+    <style name="Theme.Blaze" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#26262A</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowSplashScreenBackground">#1B2344</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_icon_none</item>
+        <item name="android:windowSplashScreenAnimationDuration">0</item>
+    </style>
+</resources>

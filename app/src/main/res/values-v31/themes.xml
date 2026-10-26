@@ -1,0 +1,16 @@
+<resources>
+    <!-- 0.47.x sky splash: same as values/themes.xml plus an icon-less, dusk-navy system splash (never white) that fades into the sky splash. -->
+    <style name="Theme.Blaze" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#FCFCFC</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowSplashScreenBackground">#1B2344</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_icon_none</item>
+        <item name="android:windowSplashScreenAnimationDuration">0</item>
+    </style>
+    <style name="Theme.Blaze.Transparent" parent="android:Theme.Translucent.NoTitleBar">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
+</resources>

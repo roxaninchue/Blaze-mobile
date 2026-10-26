@@ -29,6 +29,14 @@ class MainActivity : FragmentActivity(), com.blaze.assistant.ui.BackRule.Shelled
     private val videoPip = mutableStateOf(false)
     /** When Blaze last opened one of its own screens (that is not "leaving Blaze"). */
     private var ownLaunchAt = 0L
+    /** 0.47.x sky splash: the open animation overlays the app on every open (SkySplashGate decides when). */
+    private val splash = mutableStateOf(false)
+    private val splashPhase = mutableStateOf(com.blaze.assistant.ui.splash.SkySplashSpec.Phase.DAY)
+    /** True once the app content has composed and drawn twice; the splash cross-fades out only after that. */
+    @Volatile private var contentReady = false
+    private var restarting = false
+    private var stopOwnScreen = false
+    private var stopScreenOff = false
 
     companion object { const val EXTRA_LISTEN = "listen"; const val ACTION_CALL = "com.blaze.assistant.CALL" }
 
@@ -44,6 +52,11 @@ class MainActivity : FragmentActivity(), com.blaze.assistant.ui.BackRule.Shelled
             navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT)
         )
         locked.value = com.blaze.assistant.agent.Settings.appLock
+        // 0.47.x sky splash: the system splash (icon-less, see values-v31) fades into it; the blurred sky is drawn off the main thread now.
+        if (android.os.Build.VERSION.SDK_INT >= 31) splashScreen.setOnExitAnimationListener { v ->
+            v.animate().alpha(0f).setDuration(com.blaze.assistant.ui.MotionTokens.ms(180)).withEndAction { v.remove() }.start()
+        }
+        if (savedInstanceState == null && com.blaze.assistant.ui.splash.SkySplashGate.onCold(intent?.action, intent?.getBooleanExtra(EXTRA_LISTEN, false) == true, locked.value)) startSplash()
         setContent { BlazeTheme {
             // 0.45.19 fix 4: in picture-in-picture only Blaze Phone's live view is drawn; the chat stays composed (its
             // draft, attachments and scroll survive) but is not placed, so nothing of it shows in the small window.
@@ -52,7 +65,13 @@ class MainActivity : FragmentActivity(), com.blaze.assistant.ui.BackRule.Shelled
                     val p = m.measure(c); layout(p.width, p.height) { if (!pip.value) p.place(0, 0) }
                 }) {
                     if (locked.value) com.blaze.assistant.ui.LockScreen { unlock() } else ChatScreen()
+                    androidx.compose.runtime.LaunchedEffect(Unit) {
+                        androidx.compose.runtime.withFrameNanos { }; androidx.compose.runtime.withFrameNanos { }; contentReady = true
+                    }
                 }
+                if (splash.value && !pip.value) com.blaze.assistant.ui.splash.SkySplash(splashPhase.value, ready = { contentReady },
+                    motion = com.blaze.assistant.ui.MotionTokens.enabled,
+                    onFinished = { splash.value = false; com.blaze.assistant.ui.splash.SkyArt.release() })
                 if (pip.value && !locked.value) { if (videoPip.value) com.blaze.assistant.ui.StageVideoPip() else com.blaze.assistant.browser.phone.PhonePipView() }
                 // 0.46.5: after a crash (also a native one, read on the next start), offer the local report once; the user chooses
                 val crash = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(com.blaze.assistant.device.CrashLog.pendingReport()) }
@@ -87,6 +106,18 @@ class MainActivity : FragmentActivity(), com.blaze.assistant.ui.BackRule.Shelled
         } catch (_: Exception) { }
     }
 
+    /** 0.47.x: shows the sky splash for the current local time (the background bitmap is prepared on a worker thread). */
+    private fun startSplash() {
+        val phase = com.blaze.assistant.ui.splash.SkySplashSpec.phaseFor(java.time.LocalTime.now().hour)
+        val (w, h) = try {
+            if (android.os.Build.VERSION.SDK_INT >= 30) windowManager.currentWindowMetrics.bounds.let { it.width() to it.height() }
+            else resources.displayMetrics.let { it.widthPixels to it.heightPixels }
+        } catch (_: Throwable) { resources.displayMetrics.let { it.widthPixels to it.heightPixels } }
+        splashPhase.value = phase
+        com.blaze.assistant.ui.splash.SkyArt.prepare(w, h, phase)
+        splash.value = true
+    }
+
     /** True when an older Blaze task was brought to the front and this duplicate task is being closed. */
     private fun joinExistingTask(): Boolean {
         val am = getSystemService(android.app.ActivityManager::class.java) ?: return false
@@ -114,6 +145,7 @@ class MainActivity : FragmentActivity(), com.blaze.assistant.ui.BackRule.Shelled
     override fun backToChat() { com.blaze.assistant.ui.BackRule.toChat?.invoke() }
 
     override fun onNewIntent(intent: android.content.Intent) {
+        if (com.blaze.assistant.ui.splash.SkySplashGate.cancelFor(intent.action, intent.getBooleanExtra(EXTRA_LISTEN, false))) splash.value = false
         super.onNewIntent(intent); setIntent(intent); handle(intent)
     }
 
@@ -183,9 +215,21 @@ class MainActivity : FragmentActivity(), com.blaze.assistant.ui.BackRule.Shelled
         super.onStart()
         if (com.blaze.assistant.agent.Settings.appLock && leftAt > 0 && System.currentTimeMillis() - leftAt > 30_000) locked.value = true
         if (locked.value) window.decorView.post { unlock() }
+        if (restarting) {
+            restarting = false
+            if (com.blaze.assistant.ui.splash.SkySplashGate.onReturn(stopOwnScreen, stopScreenOff, pip.value, locked.value)) startSplash()
+        }
     }
 
-    override fun onStop() { leftAt = System.currentTimeMillis(); super.onStop() }
+    override fun onRestart() { super.onRestart(); restarting = true }
+
+    override fun onStop() {
+        leftAt = System.currentTimeMillis()
+        stopOwnScreen = android.os.SystemClock.uptimeMillis() - ownLaunchAt < 1500
+        stopScreenOff = try { getSystemService(android.os.PowerManager::class.java)?.isInteractive == false } catch (_: Throwable) { false }
+        splash.value = false
+        super.onStop()
+    }
 
     /** Below API 31 Blaze enters picture-in-picture itself when the user leaves while Blaze Phone works. */
     override fun onUserLeaveHint() {
