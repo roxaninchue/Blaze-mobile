@@ -18,6 +18,8 @@ import org.junit.Test
  */
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class HedgeRaceTest {
+    /** Missing-Main launch failures from earlier test classes surface at the first runTest here (CI run 40374778854); drop only those ([LeakedMainLaunches]). */
+    @org.junit.Before fun drainLeaks() = LeakedMainLaunches.drain()
     enum class B { PHONE, NOUS, CLOUD }
 
     val chat = HedgeRace.Limits(firstMs = 8_000, hedgeMs = 3_000, stallMs = 30_000, thinkMs = 8_000, wholeMs = 30_000)

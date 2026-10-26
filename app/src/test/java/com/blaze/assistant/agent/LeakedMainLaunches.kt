@@ -26,7 +26,7 @@ object LeakedMainLaunches {
         try { runTest { } } catch (e: IllegalStateException) {
             if (e.javaClass.simpleName != "UncaughtExceptionsBeforeTest") throw e
             val other = e.suppressed.filterNot { missingMain(it) }
-            if (other.isNotEmpty()) throw e
+            if (other.isNotEmpty()) { other.forEach { it.printStackTrace() }; throw e }
             System.err.println("LeakedMainLaunches: dropped ${e.suppressed.size} missing-Main launch failure(s) from earlier tests")
         }
     }

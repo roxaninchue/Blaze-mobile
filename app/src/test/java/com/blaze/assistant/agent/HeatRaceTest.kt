@@ -11,6 +11,8 @@ import org.junit.Test
 /** 0.46.4 heat audit: the race sleeps instead of polling, cancels losers at once, and never hedges when told not to (warm phone). */
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class HeatRaceTest {
+    /** Missing-Main launch failures from earlier test classes surface at the first runTest here (CI run 40374778854); drop only those ([LeakedMainLaunches]). */
+    @org.junit.Before fun drainLeaks() = LeakedMainLaunches.drain()
     enum class B { NOUS, CLOUD }
     private val task = HedgeRace.Limits(20_000, 6_000, 30_000, 45_000, 60_000)
 

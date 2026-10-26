@@ -27,7 +27,7 @@ class BrainRaceTest {
         assertEquals(BrainRace.Kind.TASK, BrainRace.kind(false, false, 60, false, 600))
         assertEquals(BrainRace.Kind.CODING, BrainRace.kind(false, false, 60, true, 30))
         assertEquals(BrainRace.Kind.CHAT, BrainRace.kind(false, true, 60, true, 30, forced = BrainRace.Kind.CHAT))   // Halo's side lane
-        assertEquals(12, BrainRace.userChars(JSONArray().put(JSONObject().put("role", "user").put("content", " what's up?? "))))
+        assertEquals(11, BrainRace.userChars(JSONArray().put(JSONObject().put("role", "user").put("content", " what's up?? "))))
     }
 
     @Test fun orderNeverWaitsOnACold() {

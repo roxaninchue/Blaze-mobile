@@ -21,6 +21,8 @@ import java.io.File
  */
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class BrainBenchTest {
+    /** Missing-Main launch failures from earlier test classes surface at the first runTest here (CI run 40374778854); drop only those ([LeakedMainLaunches]). */
+    @org.junit.Before fun drainLeaks() = LeakedMainLaunches.drain()
     enum class B { PHONE, NOUS, CLOUD }
 
     /** first = ms to the first word (null = never); think = streams hidden thinking until then; err = 429 after that many ms. */
