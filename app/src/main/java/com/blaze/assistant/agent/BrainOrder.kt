@@ -29,7 +29,7 @@ object BrainOrder {
 
     /** Display names for Settings › Brains. */
     fun label(s: BackupRoute.Step): String = when (s) {
-        BackupRoute.Step.BACKUP -> "On-phone brain (OpenCode)"
+        BackupRoute.Step.BACKUP -> "On-phone brain"
         BackupRoute.Step.RESERVE -> "Nous reserve"
         BackupRoute.Step.CLOUD -> "Blaze Cloud"
     }

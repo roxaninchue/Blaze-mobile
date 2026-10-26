@@ -692,8 +692,8 @@ fun ChatScreen() {
                     }
                 // 0.46.3: the on-phone brain's one-time question before its setup uses mobile data
                 val askData by com.blaze.assistant.agent.BackupBrain.askMobile.collectAsState()
-                if (askData) BlazeDialog("Set up the on-phone brain?", "Blaze's main brain runs on your phone. Setting it up downloads about " +
-                    com.blaze.assistant.agent.BackupNudge.mb(com.blaze.assistant.agent.BackupBrain.DOWNLOAD_BYTES) + " MB plus a small Linux. You're on mobile data. Until it's ready, Blaze uses its online brains.",
+                if (askData) BlazeDialog(com.blaze.assistant.agent.BackupNudge.mobileDataQuestion(com.blaze.assistant.agent.BackupBrain.DOWNLOAD_BYTES),
+                    "Until then, Blaze answers online. On Wi-Fi this finishes by itself.",
                     confirm = "Use mobile data", onConfirm = { com.blaze.assistant.agent.BackupBrain.answerMobile(true) },
                     dismiss = "Wait for Wi-Fi", onDismiss = { com.blaze.assistant.agent.BackupBrain.answerMobile(false) })
                 // 0.46.3: the one-time phone control explainer (a phone task needed control and it was off).

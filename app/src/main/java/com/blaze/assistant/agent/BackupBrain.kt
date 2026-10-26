@@ -210,8 +210,8 @@ object BackupBrain {
 
     /** Downloads, checks and unpacks the pinned build into Alpine, plus the two libraries it needs. */
     suspend fun install(force: Boolean): String = withContext(Dispatchers.IO) {
-        if (!supported()) return@withContext "This phone can't run the backup brain (64-bit ARM only)."
-        if (!enabled && !force) return@withContext "The backup brain is off."
+        if (!supported()) return@withContext "This phone can't run the on-phone brain (it needs a 64-bit phone)."
+        if (!enabled && !force) return@withContext "The on-phone brain is off."
         if (!Linux.installed()) return@withContext "Linux isn't installed yet."
         if (installed()) return@withContext "Already installed."
         lock.withLock {
@@ -231,7 +231,7 @@ object BackupBrain {
                 runCatching { LinuxReadyRunner.ensure("alpine") }
                 // Bun's musl build links libstdc++ (and libgcc_s).
                 val (ok, out) = LinuxReadyRunner.runHidden("alpine", "set -e\n${com.blaze.assistant.terminal.LinuxPm.APK_TIMEOUT_PROBE}\napk \$T add libstdc++ libgcc\necho BK_OK", 600)
-                if (!ok || !out.contains("BK_OK")) return@withLock "Couldn't add the backup brain's libraries: ${out.takeLast(200)}"
+                if (!ok || !out.contains("BK_OK")) return@withLock "Couldn't finish setting up the on-phone brain: ${out.takeLast(200)}"
                 File(dir(), ".version").writeText(VERSION)
                 "Installed."
             } catch (e: Exception) {

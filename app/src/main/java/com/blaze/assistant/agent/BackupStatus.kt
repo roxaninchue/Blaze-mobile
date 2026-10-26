@@ -1,7 +1,7 @@
 package com.blaze.assistant.agent
 
 /**
- * v0.45.28, pure (BackupStatusTest): the one status line Settings › Backup brain shows, and which buttons go with it.
+ * v0.45.28, pure (BackupStatusTest): the one status line Settings › On-phone brain shows, and which buttons go with it.
  */
 object BackupStatus {
     enum class State { NOT_SUPPORTED, INSTALLED, RESTING, OFF, DOWNLOADING, NEEDS_LINUX, WAITING_WIFI, NOT_DOWNLOADED }
@@ -19,20 +19,20 @@ object BackupStatus {
     /** [backAt] = the reset time already formatted for the phone ("14:05"). */
     fun line(s: State, version: String, mb: Long, backAt: String = ""): String = when (s) {
         State.NOT_SUPPORTED -> "Not supported on this phone (it needs a 64-bit phone)."
-        State.INSTALLED -> "Installed v$version. Ready when Blaze Cloud struggles."
-        State.RESTING -> "Installed v$version. Free allowance used" + (if (backAt.isNotBlank()) ", back at $backAt." else ", back later.")
-        State.OFF -> "Off. Blaze Cloud's own reserve still answers when it struggles."
-        State.DOWNLOADING -> "Downloading (about $mb MB)…"
-        State.NEEDS_LINUX -> "Needs Linux (Alpine) first."
-        State.WAITING_WIFI -> "Not downloaded yet: waiting for Wi-Fi (about $mb MB)."
-        State.NOT_DOWNLOADED -> "Not downloaded yet (about $mb MB)."
+        State.INSTALLED -> "On-phone brain ready."
+        State.RESTING -> "On-phone brain ready. Free allowance used" + (if (backAt.isNotBlank()) ", back at $backAt." else ", back later.")
+        State.OFF -> "Off. Blaze answers with its online brains."
+        State.DOWNLOADING -> "Getting your on-phone brain ready (one-time)…"
+        State.NEEDS_LINUX -> "Getting ready: a small one-time setup comes first."
+        State.WAITING_WIFI -> "Not set up yet: it finishes by itself on Wi-Fi (about $mb MB, one time)."
+        State.NOT_DOWNLOADED -> "Not set up yet (about $mb MB, one time)."
     }
 
     /** 0.46.3: the startup health check line ("" = not checked / not installed). [at] = the time already formatted. */
     fun healthLine(ok: Boolean?, at: String): String = when (ok) {
         null -> ""
         true -> "Health check: answering" + (if (at.isNotBlank()) " ($at)." else ".")
-        false -> "Health check: not answering" + (if (at.isNotBlank()) " ($at)" else "") + ". Blaze Cloud's reserve still covers for it."
+        false -> "Health check: not answering" + (if (at.isNotBlank()) " ($at)" else "") + ". Blaze answers with its online brains meanwhile."
     }
 
     /** "Download now" is offered for these. */

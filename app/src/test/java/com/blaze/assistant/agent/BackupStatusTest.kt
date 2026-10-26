@@ -23,9 +23,9 @@ class BackupStatusTest {
     }
 
     @Test fun linesAndButtons() {
-        assertEquals("Installed v1.19.4. Ready when Blaze Cloud struggles.", BackupStatus.line(State.INSTALLED, "1.19.4", 78))
+        assertEquals("On-phone brain ready.", BackupStatus.line(State.INSTALLED, "1.19.4", 78))
         assertTrue(BackupStatus.line(State.RESTING, "1.19.4", 78, "14:05").contains("back at 14:05"))
-        assertTrue(BackupStatus.line(State.NEEDS_LINUX, "1.19.4", 78).contains("Alpine"))
+        assertTrue(BackupStatus.line(State.NEEDS_LINUX, "1.19.4", 78).contains("one-time"))
         assertTrue(BackupStatus.line(State.WAITING_WIFI, "1.19.4", 78).contains("Wi-Fi") && BackupStatus.line(State.WAITING_WIFI, "1.19.4", 78).contains("78 MB"))
         assertTrue(BackupStatus.line(State.NOT_SUPPORTED, "1.19.4", 78).contains("Not supported"))
         assertTrue(BackupStatus.canDownload(State.WAITING_WIFI) && BackupStatus.canDownload(State.NOT_DOWNLOADED))

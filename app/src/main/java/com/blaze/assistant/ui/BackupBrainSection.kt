@@ -50,7 +50,7 @@ internal fun BackupBrainSection() {
     val mb = BackupNudge.mb(BackupBrain.DOWNLOAD_BYTES)
 
     fun download() {
-        note = "Starting the download…"
+        note = "Getting your on-phone brain ready (one-time)…"
         BackupBrain.startDownload(force = true) { r -> note = r; tick++ }
         tick++
     }
@@ -60,30 +60,30 @@ internal fun BackupBrainSection() {
     V18Note(com.blaze.assistant.agent.BrainOrder.plan(true).mapIndexed { i, st ->
         val ledger = com.blaze.assistant.agent.BrainLedger.app
         val health = when {
-            st == com.blaze.assistant.agent.BackupRoute.Step.BACKUP && !BackupBrain.ready() -> "not ready yet, requests start at Nous"
+            st == com.blaze.assistant.agent.BackupRoute.Step.BACKUP && !BackupBrain.ready() -> "getting ready (one-time), requests start at Nous"
             st == com.blaze.assistant.agent.BackupRoute.Step.BACKUP && BackupBrain.healthOk == false -> "not answering its health check"
             else -> ledger.health(st)
         }
         val n = ledger.rows[st]?.calls ?: 0
         "${i + 1}. ${com.blaze.assistant.agent.BrainOrder.label(st)}: $health" + (if (n > 0) " · $n answers" else "")
-    }.joinToString("\n") + "\nCoding jobs use the strongest free coders on the phone first. Never NVIDIA or System One models.")
-    V18Section("Backup brain")
-    V18Note("Answers on the phone when Blaze Cloud is busy or down, before Blaze Cloud's own reserve. Status: " +
+    }.joinToString("\n") + "\nCoding jobs use the strongest free coders on the phone first.")
+    V18Section("On-phone brain")
+    V18Note("Blaze's first brain, right on your phone. It sets itself up on Wi-Fi. Status: " +
         BackupStatus.line(state, BackupBrain.VERSION, mb, backAt) +
         BackupStatus.healthLine(BackupBrain.healthOk, BackupBrain.healthAt.takeIf { it > 0 }?.let { java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(it)) }.orEmpty())
             .let { if (it.isEmpty()) "" else " $it" })
-    if (state == BackupStatus.State.INSTALLED) V18Button("Check now") { scope.launch { note = if (BackupBrain.healthCheck()) "The backup brain answered." else "The backup brain didn't answer."; tick++ } }
-    if (BackupStatus.canDownload(state)) V18Button("Download now (~$mb MB)") {
+    if (state == BackupStatus.State.INSTALLED) V18Button("Check now") { scope.launch { note = if (BackupBrain.healthCheck()) "The on-phone brain answered." else "The on-phone brain didn't answer."; tick++ } }
+    if (BackupStatus.canDownload(state)) V18Button("Set up now (~$mb MB)") {
         if (BackupStatus.confirmMobileData(BackupBrain.phone())) askMobile = true else download()
     }
     if (BackupStatus.needsLinux(state)) V18Button("Install Linux (Alpine)") {
         note = "Installing Alpine Linux…"
         scope.launch { val r = try { com.blaze.assistant.terminal.Linux.install() } catch (e: Exception) { e.message ?: "Couldn't install Linux." }; note = r; tick++ }
     }
-    ToggleRow("Backup brain", "Use the on-device backup when Blaze Cloud struggles", on) {
+    ToggleRow("On-phone brain", "Answer on the phone first when it's ready", on) {
         on = !on; Settings.setBool("backup_brain", on); tick++
     }
-    ToggleRow("Use mobile data for download", "Let the one-time download (about $mb MB) start without Wi-Fi", mobile) {
+    ToggleRow("Use mobile data for setup", "Let the one-time setup (about $mb MB) finish without Wi-Fi", mobile) {
         mobile = !mobile; Settings.setBool("backup_brain_mobile_data", mobile); tick++
     }
     Row(Modifier.fillMaxWidth().padding(vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -103,8 +103,8 @@ internal fun BackupBrainSection() {
     }
     if (note.isNotBlank()) V18Note(note, top = 6)
     if (askMobile) BlazeDialog(
-        title = "Download on mobile data?",
-        body = "You're not on Wi-Fi. The backup brain is about $mb MB, downloaded once.",
-        confirm = "Download", onConfirm = { askMobile = false; download() },
+        title = com.blaze.assistant.agent.BackupNudge.mobileDataQuestion(BackupBrain.DOWNLOAD_BYTES),
+        body = "You're not on Wi-Fi. On Wi-Fi this finishes by itself.",
+        confirm = "Use mobile data", onConfirm = { askMobile = false; download() },
         dismiss = "Wait for Wi-Fi", onDismiss = { askMobile = false })
 }

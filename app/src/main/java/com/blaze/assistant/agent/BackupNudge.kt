@@ -58,6 +58,12 @@ object BackupNudge {
     /** "78 MB" style size (decimal megabytes, rounded), as the changelog states it. */
     fun mb(bytes: Long): Long = ((bytes + 500_000L) / 1_000_000L).coerceAtLeast(1)
 
+    /** 0.46.3: the one-time setup size as the mobile-data question says it ("About 80 MB"): rounded up to 10 MB (download + small Linux). */
+    fun setupMb(bytes: Long): Long = ((mb(bytes) + 9) / 10) * 10
+
+    /** 0.46.3 (Rocky 18:20): the only prompt the on-phone brain setup may show, worded without any product name. */
+    fun mobileDataQuestion(bytes: Long): String = "Finish setting up Blaze on mobile data? About ${setupMb(bytes)} MB, one time."
+
     const val OOPS = "Oops, I ran into an error."
 
     /** The chat line for [pick] (null = keep the normal error). */

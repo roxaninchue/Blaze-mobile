@@ -12,6 +12,9 @@ import org.junit.Test
 
 /** 0.46.3 lookup fast lane: routing, escalation, answer first then update in place, the progress line, per-fetch timeouts. */
 class LookupLaneTest {
+    /** CI run5: missing-Main launch failures from other tests surfaced here; drop only those ([LeakedMainLaunches]). */
+    @org.junit.Before fun drainLeaks() = LeakedMainLaunches.drain()
+
     private fun fx(id: String) = LookupBench.fixtures.first { it.id == id }
 
     @Test fun routesLookupsAndKeepsEverythingElse() {

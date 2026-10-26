@@ -132,7 +132,7 @@ object SelfControl {
         "tool_cache" to "reuse identical web lookups", "speculative_fetch" to "prefetch top search results on Wi-Fi", "learned_router" to "learned tool router",
         "adaptive_think" to "adaptive thinking budget", "token_ledger" to "token ledger",
         // v0.45.26: the on-device backup brain (answers when Blaze Cloud is down or slow).
-        "backup_brain" to "on-device backup brain", "backup_brain_mobile_data" to "let the backup brain's one-time download use mobile data")
+        "backup_brain" to "on-phone brain", "backup_brain_mobile_data" to "let the on-phone brain's one-time setup use mobile data")
 
     private fun setSetting(key: String, value: String): String {
         val k = key.trim().lowercase()
@@ -146,7 +146,7 @@ object SelfControl {
             val sec = value.trim().removeSuffix("s").trim().toDoubleOrNull() ?: return "Give a number of seconds (0 = switch only on errors)."
             val ms = if (k == "backup_ttft_ms" && sec > 300) sec.toLong() else (sec * 1000).toLong()
             Settings.setStr("backup_ttft_ms", ms.toString())
-            return if (ms == 0L) "The backup brain now takes over only when Blaze Cloud fails." else "Blaze Cloud now gets ${BackupRoute.ttftMs(true, ms) / 1000} s to start answering before the backup brain takes over."
+            return if (ms == 0L) "The on-phone brain now takes over only when Blaze Cloud fails." else "Blaze Cloud now gets ${BackupRoute.ttftMs(true, ms) / 1000} s to start answering before the backup brain takes over."
         }
         return "I can't change \u201c$key\u201d. I can change: ${boolKeys.keys.joinToString()}, wake_conf, backup_wait (seconds)."
     }

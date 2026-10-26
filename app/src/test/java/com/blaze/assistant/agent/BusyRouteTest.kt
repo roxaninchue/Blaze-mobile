@@ -21,6 +21,9 @@ import java.io.File
  * cancels, and nothing deadlocks or answers twice. The Agent wiring itself is checked in its source.
  */
 class BusyRouteTest {
+    /** CI run5: missing-Main launch failures from other tests surfaced here; drop only those ([LeakedMainLaunches]). */
+    @org.junit.Before fun drainLeaks() = LeakedMainLaunches.drain()
+
     @Test fun routesStopSteerAndSide() {
         listOf("stop", "Stop!", "cancel that", "never mind", "@blaze stop", "stop it please").forEach { assertEquals(it, BusyRoute.Kind.STOP, BusyRoute.route(it)) }
         listOf("also check the price on Jumia", "actually make it 7 pm", "instead use WhatsApp", "no, the other one", "@blaze add milk too", "don't send it yet",

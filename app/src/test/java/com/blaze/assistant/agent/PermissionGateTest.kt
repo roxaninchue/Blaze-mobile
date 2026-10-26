@@ -19,6 +19,9 @@ import kotlin.time.Duration.Companion.seconds
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class PermissionGateTest {
+    /** CI run5: missing-Main launch failures from other tests surfaced here; drop only those ([LeakedMainLaunches]). */
+    @org.junit.Before fun drainLeaks() = LeakedMainLaunches.drain()
+
     @get:Rule val timeout: Timeout = Timeout.seconds(60)
 
     private val root = listOf(File("src/main/java"), File("app/src/main/java")).first { it.isDirectory }
