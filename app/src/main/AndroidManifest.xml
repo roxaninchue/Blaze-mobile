@@ -205,16 +205,6 @@
         <!-- 0.45.19: Blaze Phone's picture-in-picture Stop / Open Blaze buttons (RemoteAction broadcasts). -->
         <receiver android:name=".browser.phone.PhonePipReceiver" android:exported="false" />
 
-        <!-- v0.33.2 BlazeOS: Blaze's own virtual phone, fullscreen (same task as Blaze; its own power / pause / exit). -->
-        <activity
-            android:name=".blazeos.BlazeOsActivity"
-            android:exported="false"
-            android:label="BlazeOS"
-            android:theme="@style/Theme.Blaze"
-            android:screenOrientation="portrait"
-            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode"
-            android:windowSoftInputMode="adjustResize" />
-
         <!-- v0.33.2 an installed website as its own app: one document task per site (its own Recents entry). -->
         <activity
             android:name=".siteapps.SiteAppActivity"

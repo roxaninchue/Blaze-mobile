@@ -73,8 +73,14 @@ class BlazeApp : Application() {
         com.blaze.assistant.device.StartGuard.step("routine.Routines.init") { com.blaze.assistant.routine.Routines.init(this) }
         // v0.29.0 Home board: widgets + cached content in blaze.db, refreshed by WorkManager (≥ 1 h).
         com.blaze.assistant.device.StartGuard.step("home.HomeBoard.init") { com.blaze.assistant.home.HomeBoard.init(this) }
-        // v0.33.2 BlazeOS (Home's virtual phone): reads and once migrates its bos_* prefs; its disk opens at boot.
-        try { com.blaze.assistant.blazeos.BlazeOs.init(this) } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("BlazeApp: BlazeOs.init", e) }
+        // 0.45.29: BlazeOS ("Blaze Phone", Home's virtual phone) was removed; once after the update, free its disk, prefs and profile.
+        if (!com.blaze.assistant.device.StartGuard.safeStart && !Settings.bool(com.blaze.assistant.home.BlazeOsCleanup.PREF_DONE, false)) {
+            val app = this
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).launch {
+                kotlinx.coroutines.delay(20_000)   // after start-up work, not competing with it
+                com.blaze.assistant.home.BlazeOsCleanup.runOnce(app)
+            }
+        }
         com.blaze.assistant.device.StartGuard.step("notify.Notifier.init") { com.blaze.assistant.notify.Notifier.init(this) }
         try { com.blaze.assistant.update.Updater.checkInBackground(this) } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("BlazeApp: Updater.check", e) }
         com.blaze.assistant.device.StartGuard.step("Settings.tellIfSecretsDropped") { Settings.tellIfSecretsDropped() }

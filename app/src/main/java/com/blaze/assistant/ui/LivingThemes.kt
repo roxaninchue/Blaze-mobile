@@ -121,6 +121,68 @@ object LivingThemes {
     fun modeAfterPick(t: Theme, current: String): String = if (t.light) "light" else if (current == "light" && t.motion != Motion.NONE) "dark" else current
 }
 
+/**
+ * 0.45.29 theme-tuned chat bubbles, pure part (BubbleTonesTest). Every theme (Classic included) has its own accent for the
+ * user's bubble ([Tones.mine]) and a soft tint for Blaze's and Halo's bubbles that goes with it ([Tones.blaze]). The base
+ * colour of a bubble is the page's neutral mixed with that tone: strongly enough to tell the themes apart, never so much
+ * that the text loses AA contrast (BubblePalette then picks the frost's opacity, and the tests check every theme in light
+ * and dark over black, white, the page and the theme's own ground, particles and accent).
+ */
+object BubbleTones {
+    data class Tones(val mine: Long, val blaze: Long)
+
+    /** Theme id -> its bubble tones. Every theme in [LivingThemes.PICKER] has a row; no two themes share a user bubble. */
+    val BY_THEME: Map<String, Tones> = linkedMapOf(
+        LivingThemes.CLASSIC to Tones(0xFF3D7EFF, 0xFF5A6070),
+        "golden_ember" to Tones(0xFFE89A3C, 0xFF8A6A48),
+        "arctic_aurora" to Tones(0xFF3FBFB4, 0xFF5C7FA8),
+        "deep_sea" to Tones(0xFF1FA7C4, 0xFF3E6F82),
+        "solar_flare" to Tones(0xFFFF6A2A, 0xFF8C5A44),
+        "nebula" to Tones(0xFF9B55D0, 0xFF6E5A8E),
+        "mono_ink" to Tones(0xFF9A9AA2, 0xFF6A6A70),
+        "rose_dawn" to Tones(0xFFC2566F, 0xFF8E6470),
+        "firefly_forest" to Tones(0xFF94B84A, 0xFF5E7454),
+        "liquid_mercury" to Tones(0xFF8E9AA8, 0xFF6C7682),
+        "prism" to Tones(0xFF6F8CFF, 0xFF7A6FA8),
+        "desert_dune" to Tones(0xFFD4873C, 0xFF8C7056),
+        "neon_rain" to Tones(0xFFC145D6, 0xFF4F7A92),
+        LivingThemes.WEATHER to Tones(0xFF4E9EF0, 0xFF5D7894),
+    )
+
+    fun of(themeId: String?): Tones = BY_THEME[themeId?.trim().orEmpty()] ?: BY_THEME.getValue(LivingThemes.CLASSIC)
+
+    /** The neutral each bubble starts from. */
+    const val DARK_MINE = 0xFF26262C
+    const val DARK_BLAZE = 0xFF1B1B20
+    const val LIGHT_GROUND = 0xFFFFFFFF
+    /** How much of the tone goes in. */
+    const val DARK_MINE_K = 0.42f
+    const val DARK_BLAZE_K = 0.16f
+    const val LIGHT_MINE_K = 0.22f
+    const val LIGHT_BLAZE_K = 0.07f
+    /** The least contrast the text keeps on the solid base (the frost search then holds AA over any ground). */
+    const val SOLID_MIN = 5.0
+
+    private fun lin(c: Int): Double { val v = c / 255.0; return if (v <= 0.04045) v / 12.92 else Math.pow((v + 0.055) / 1.055, 2.4) }
+    fun luminance(argb: Long): Double = 0.2126 * lin(((argb shr 16) and 0xFF).toInt()) + 0.7152 * lin(((argb shr 8) and 0xFF).toInt()) + 0.0722 * lin((argb and 0xFF).toInt())
+    fun ratio(a: Long, b: Long): Double { val la = luminance(a); val lb = luminance(b); return (maxOf(la, lb) + 0.05) / (minOf(la, lb) + 0.05) }
+
+    /**
+     * The opaque base of a bubble for [themeId] in [dark] mode. [mine] = the user's; [lookAccent] (Classic only) is the
+     * accent picked in Look & feel, which then tints the user's bubble. [ink] is the text colour drawn on it: a tone that
+     * would leave it under [SOLID_MIN] (a very pale custom accent in dark mode) is mixed in less until it reads.
+     */
+    fun base(themeId: String?, dark: Boolean, mine: Boolean, ink: Long, lookAccent: Long? = null): Long {
+        val t = of(themeId)
+        val tone = if (mine) (if (themeId.isNullOrBlank() && lookAccent != null) lookAccent else t.mine) else t.blaze
+        val from = if (!dark) LIGHT_GROUND else if (mine) DARK_MINE else DARK_BLAZE
+        var k = if (dark) (if (mine) DARK_MINE_K else DARK_BLAZE_K) else (if (mine) LIGHT_MINE_K else LIGHT_BLAZE_K)
+        var b = LivingLogic.mix(from, tone, k)
+        while (k > 0f && ratio(ink or 0xFF000000, b) < SOLID_MIN) { k = (k - 0.04f).coerceAtLeast(0f); b = LivingLogic.mix(from, tone, k) }
+        return b or 0xFF000000
+    }
+}
+
 /** v0.45.2: long-press on the profile icon flips light / dark (pure: the new mode and the short message). */
 object LightDark {
     fun toggle(currentlyDark: Boolean): Pair<String, String> = if (currentlyDark) "light" to "Light theme" else "dark" to "Dark theme"

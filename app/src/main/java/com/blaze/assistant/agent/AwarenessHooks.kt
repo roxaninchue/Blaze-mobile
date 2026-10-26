@@ -16,7 +16,6 @@ import androidx.media3.common.Player
  *  - the Blaze screen in front (activity callbacks) and the view open over the chat (Views.showing, Design's title);
  *  - other apps' media (Spotify, YouTube, podcasts…) from their media sessions, read through the notification
  *    listener Blaze already has (no new permission; nothing when notification access is off);
- *  - the BlazeOS app in front;
  *  - Blaze Music and Blaze Video report their own player ([music], [video], [videoClosed]).
  * All readers are cheap and never throw.
  */
@@ -25,7 +24,7 @@ object AwarenessHooks {
     @Volatile private var started = 0
     private val friendly = mapOf(
         "MainActivity" to "Chat", "VideoActivity" to "Blaze Video", "MusicActivity" to "Blaze Music",
-        "BlazeOsActivity" to "BlazeOS", "BrowserActivity" to "Browser", "SiteAppActivity" to "a site app",
+        "BrowserActivity" to "Browser", "SiteAppActivity" to "a site app",
         "BlazeTerminalActivity" to "Terminal",
     )
 
@@ -50,7 +49,6 @@ object AwarenessHooks {
             override fun onActivityDestroyed(a: Activity) {}
         })
         Awareness.readers += { viewNow() }
-        Awareness.readers += { osNow() }
         Awareness.readers += { phoneMedia(app) }
     }
 
@@ -61,15 +59,6 @@ object AwarenessHooks {
         val name = com.blaze.assistant.ui.Views.find(v)?.name ?: v
         val title = if (v == "design") (try { Designs.current()?.title } catch (_: Throwable) { null })?.ifBlank { null } else null
         return listOf(Awareness.Now("view", "Open", title ?: name, if (title != null) "the Design view" else "Blaze"))
-    }
-
-    private fun osNow(): List<Awareness.Now> {
-        val os = com.blaze.assistant.blazeos.BlazeOs
-        if (!os.ready || os.power.value != com.blaze.assistant.blazeos.Power.ON) return emptyList()
-        val front = os.tasks.value.front
-        val title = if (front.isBlank()) "Home screen" else try { os.label(front) } catch (_: Throwable) { front }
-        val open = os.tasks.value.open.size
-        return listOf(Awareness.Now("blazeos", "Open", title, "BlazeOS", if (open > 1) "($open apps open)" else ""))
     }
 
     /** Other apps' media sessions (Blaze's own are reported by the players themselves). */

@@ -11,7 +11,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
-/** Ack now, work in the background, report when done (HQ 22 Oct 20:35 / 20:36). */
+/** Work in the background, report when done (HQ 22 Oct 20:35 / 20:36); since 0.45.29 without any ack text. */
 class AckTest {
 
     private val tasks = listOf(
@@ -24,63 +24,24 @@ class AckTest {
     private val chat = listOf("hi", "hey Blaze", "good morning", "thanks", "thank you!", "ok", "lol", "how are you?",
         "what's the capital of Zambia?", "who won the game last night?", "why is the sky blue")
 
-    @Test fun tasksGetAnAckChatDoesNot() {
-        tasks.forEach { assertNotNull(it, Ack.local(it)) }
-        chat.forEach { assertNull(it, Ack.local(it)) }
-        assertNull(Ack.local("[Scheduled routine] morning brief"))
-        assertNull(Ack.local("/clear"))
-    }
-
-    @Test fun anAckNeverSaysDone() {
-        tasks.forEach { t -> val a = Ack.local(t)!!; assertTrue("$t -> $a", Ack.safe(a)); assertFalse(a, a.contains("\u2713")) }
-        listOf("Done! Reminder set for 9:00.", "I've set your alarm for 6:30.", "Your reminder is set.", "Message sent.",
-            "All set, alarm for 7.", "I sent the text.", "Timer started successfully.", "The table has been booked.", "Wi-Fi is now on.")
-            .forEach { assertFalse(it, Ack.safe(it)) }
-        listOf("Got it, setting that reminder for 9:00 tomorrow. I'll confirm when it's set.",
-            "Sending it now. I'll confirm once it's sent.", "Booking a table for two on Friday.", "Turning on dark mode.")
-            .forEach { assertTrue(it, Ack.safe(it)) }
-        // 0.45.19: placeholders are never an ack.
-        listOf("Got it, I'm on it. I'll message you here when it's done.", "On it, I'll let you know once it's sent.",
-            "Booking that now. I'll message you when it's booked.", "Got it \u2014 passing that straight to Blaze.")
-            .forEach { assertFalse(it, Ack.safe(it)) }
-    }
-
-    @Test fun reminderAckNamesTheTime() {
-        assertEquals("Setting a reminder for 9:00 tomorrow.", Ack.local("remind me to call mum at 9 tomorrow"))
-        assertEquals("Setting an alarm for 6:30 am.", Ack.local("set an alarm for 6:30 am"))
-        assertEquals("Starting a timer.", Ack.local("set a timer"))
-        assertEquals("in 10 minutes", Ack.whenPart("set a timer in 10 minutes"))
-        assertEquals("for Friday", Ack.whenPart("book a table on friday"))
+    @Test fun tasksAreTrackedChatIsNot() {
+        tasks.forEach { assertTrue(it, Ack.wants(it)) }
+        chat.forEach { assertFalse(it, Ack.wants(it)) }
+        assertFalse(Ack.wants("[Scheduled routine] morning brief"))
+        assertFalse(Ack.wants("/clear"))
         assertEquals("Reminder \u00b7 in progress", Ack.chip("remind me at 9"))
+        assertEquals(2_000L, Ack.FAST_MS)
     }
 
-    @Test fun localAckIsInstantAndNeedsNoNetwork() {
-        val t0 = System.nanoTime()
-        repeat(50) { tasks.forEach { Ack.local(it) } }
-        val perMs = (System.nanoTime() - t0) / 1e6 / (50 * tasks.size)
-        assertTrue("ack took $perMs ms", perMs < 5.0)
-        assertEquals(2_000L, Ack.FAST_MS)   // 0.45.19: a task done within ~2 s gets no ack at all, only its result
-    }
-
-    @Test fun oneAckPerTurnWhoeverSendsFirst() {
+    @Test fun oneTrackedTaskPerTurnAndNoneAfterTheAnswer() {
         val g = Ack.Gate()
-        assertFalse(g.take("Got it, I'm on it. I'll message you here when it's done."))   // 0.45.19: a placeholder never shows
-        assertTrue(g.take("Turning on dark mode."))
-        assertFalse(g.take("On it, I'll confirm when it's set."))          // the gateway's ack after the local one
-        assertFalse(g.take("Halo here, I'll confirm when it's set."))      // the duo: one ack only
+        assertTrue(g.track())
+        assertFalse(g.track())          // the gateway's ack after the phone's own check: still one task
+        assertTrue(g.tracked)
         val g2 = Ack.Gate()
-        assertFalse(g2.take("Done, reminder set."))                         // an unsafe ack is never shown
-        g2.finished = true
-        assertFalse(g2.take("Got it, I'll confirm when it's set."))         // the turn already answered
-        assertFalse(g2.acked)
-    }
-
-    @Test fun doneOnlyWhenEveryActionWasVerified() {
-        assertEquals("Done \u2713 Reminder set for Fri 9:00.", Ack.receipt("Reminder set for Fri 9:00.", verified = 1, unproven = 0, rewrote = false))
-        assertEquals("I tried to set the reminder, but it didn't work.", Ack.receipt("I tried to set the reminder, but it didn't work.", 1, 1, false))
-        assertEquals("Reminder set.", Ack.receipt("Reminder set.", verified = 0, unproven = 0, rewrote = false))   // a claim with nothing behind it
-        assertEquals("x", Ack.receipt("x", 1, 0, rewrote = true))
-        assertEquals("Done \u2713 a", Ack.receipt("Done \u2713 a", 2, 0, false))
+        g2.finish()
+        assertFalse(g2.track())         // the turn already answered
+        assertFalse(g2.tracked)
     }
 
     @Test fun ackFramesWithOrWithoutType() {
@@ -133,7 +94,7 @@ class AckTest {
         val t = CloudRuns.Turn("main", "t-ack-2")
         client.complete(t, user("hi"), null, "quick", ev)
         assertTrue(acks.isEmpty())
-        assertNull(Ack.local("hi"))
+        assertFalse(Ack.wants("hi"))
     }
 
     // ---- killed mid-task: completes or reports, never a false done ----
@@ -150,7 +111,7 @@ class AckTest {
         assertEquals(TaskKeeper.Verdict.DROP, TaskKeeper.verdict(t, false, false, now = 1_000 + CloudRuns.KEEP_MS + 1))
         val line = TaskKeeper.stoppedLine("remind me at 9")
         assertTrue(line.contains("stopped before I could confirm"))
-        assertFalse(line.contains("\u2713")); assertFalse(Ack.safe(line) && line.contains("Done"))
+        assertFalse(line.contains("\u2713")); assertFalse(line.contains("Done"))
         led.remove("main", 7)
         assertTrue(led.all().isEmpty())
         assertTrue(TaskKeeper.Codec.decode("not json").isEmpty())

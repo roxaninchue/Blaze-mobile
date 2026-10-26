@@ -20,8 +20,7 @@ class ChatUi20Test {
 
     /** The palette BlazeTheme builds for [id] in [dark] (same rule as Theme.kt). */
     private fun palette(id: String, dark: Boolean): BlazeColors {
-        val base = if (dark) DarkColors else LightColors
-        return LivingThemes.accentFor(id, null)?.let { a -> base.copy(accent = Color(if (dark) a else LivingThemes.onLight(a))) } ?: base
+        return blazePalette(id, dark, null)
     }
 
     private fun backdrops(id: String, c: BlazeColors): List<Color> {
@@ -59,10 +58,10 @@ class ChatUi20Test {
                 assertTrue("$id $dark $mine alpha $a", a >= BubblePalette.FROST && a < 1f)
             }
         }
-        // Your bubble follows the theme accent; Blaze's stays neutral; never WhatsApp green.
+        // 0.45.29: your bubble takes the theme's own accent and Blaze's a soft tint that goes with it; never WhatsApp green.
         val ember = palette("golden_ember", true); val rose = palette("rose_dawn", true)
         assertTrue(BubblePalette.fill(ember, true) != BubblePalette.fill(rose, true))
-        assertEquals(BubblePalette.fill(ember, false), BubblePalette.fill(rose, false))
+        assertTrue(BubblePalette.fill(ember, false) != BubblePalette.fill(rose, false))
         // Blaze's own greys and the theme accent, never WhatsApp's green.
         for (id in themes) for (dark in listOf(false, true)) for (mine in listOf(true, false)) {
             val f = BubblePalette.fill(palette(id, dark), mine)

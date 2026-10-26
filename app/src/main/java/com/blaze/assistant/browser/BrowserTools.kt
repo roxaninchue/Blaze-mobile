@@ -7,7 +7,9 @@ import org.json.JSONObject
 
 /** Tools that let Blaze browse in its own browser, in the background, without touching the screen. */
 object BrowserTools {
-    val names = setOf("browser_open", "browser_read", "browser_click", "browser_type", "browser_scroll", "browser_back", "browser_tabs", "browser_show", "browser_vpn", SECURE)
+    val names = setOf("browser_open", "browser_read", "browser_click", "browser_type", "browser_scroll", "browser_back", "browser_tabs", "browser_show", "browser_vpn", SECURE,
+        // 0.45.29: choose in dropdowns, press keys, wait for something, find words on the page.
+        "browser_select", "browser_key", "browser_wait", "browser_find")
     /** v0.20.0: in-chat secure form; handled by the Agent (it needs the chat card). */
     const val SECURE = "browser_secure_input"
 
@@ -22,13 +24,27 @@ object BrowserTools {
             JSONObject().put("url", p("string", "URL or search words")).put("new_tab", p("boolean", "Open in a new tab"))
                 .put("show", p("boolean", "Also show the browser to the user"))
                 .put("private", p("boolean", "Open in a private tab: no history, cookies wiped when closed, location masked")), listOf("url")),
-        fn("browser_read", "Read the current browser page again: text plus numbered links, buttons and fields."),
-        fn("browser_click", "Click an element in the browser page by its [number] from browser_read, or by its visible text.",
+        fn("browser_read", "Read the current browser page again, what's on screen first: scroll position, text on screen, numbered links, buttons and fields " +
+            "(\u2193 = below the screen), then text below. Numbers stay the same while the page is open."),
+        fn("browser_click", "Click an element in the browser page by its [number] from browser_read, or by its visible text. Returns what the page shows after, " +
+            "or why it couldn't (covered by a pop-up, hidden, disabled). Use browser_select for dropdowns.",
             JSONObject().put("number", p("integer", "Element number")).put("text", p("string", "Visible text, if no number"))),
-        fn("browser_type", "Type into a field in the browser page (by [number] or label), optionally pressing Enter/submitting.",
+        fn("browser_type", "Type into a text field in the browser page (by [number] or label), optionally pressing Enter/submitting. Checks the field kept the text.",
             JSONObject().put("number", p("integer", "Field number")).put("label", p("string", "Field label/placeholder, if no number"))
                 .put("text", p("string", "Text to type")).put("submit", p("boolean", "Press Enter / submit the form")), listOf("text")),
-        fn("browser_scroll", "Scroll the browser page.", JSONObject().put("direction", JSONObject().put("type", "string").put("enum", JSONArray(listOf("down", "up"))))),
+        fn("browser_select", "Choose an option in a dropdown (a select, or a custom dropdown) by the option's visible text.",
+            JSONObject().put("number", p("integer", "The dropdown's number")).put("label", p("string", "The dropdown's label, if no number"))
+                .put("option", p("string", "The option's text")), listOf("option")),
+        fn("browser_key", "Press a key on the focused element of the browser page: ${BrowserRead.KEYS.joinToString()}.",
+            JSONObject().put("key", JSONObject().put("type", "string").put("enum", JSONArray(BrowserRead.KEYS))), listOf("key")),
+        fn("browser_wait", "Wait (up to 20 s) until text appears on the page (or goes away), a CSS selector shows, or just until the page settles. Use after searches, " +
+            "logins and anything that loads in the background, instead of reading again and again.",
+            JSONObject().put("text", p("string", "Text to wait for")).put("selector", p("string", "CSS selector to wait for, if no text"))
+                .put("gone", p("boolean", "Wait for it to go away instead")).put("seconds", p("integer", "Most seconds to wait (default 10, max 20)"))),
+        fn("browser_find", "Find words on the browser page (text and element labels), even below the screen: matching snippets with the nearest element's [number]; " +
+            "scrolls the first one into view. Faster than scrolling and reading.",
+            JSONObject().put("query", p("string", "Words to find")), listOf("query")),
+        fn("browser_scroll", "Scroll the browser page by a screen; returns what's on screen after.", JSONObject().put("direction", JSONObject().put("type", "string").put("enum", JSONArray(listOf("down", "up"))))),
         fn("browser_back", "Go back one page in the browser."),
         fn("browser_tabs", "List browser tabs, or switch with switch_to.", JSONObject().put("switch_to", p("integer", "Tab number to switch to"))),
         fn(SECURE, "When the page in Blaze's background browser needs something only the user has (email, phone, username + password, API key, " +
@@ -62,6 +78,10 @@ object BrowserTools {
         "browser_click" -> "Clicking ${a.optString("text").ifBlank { "#" + a.optInt("number") }}"
         "browser_type" -> "Typing in the page"
         "browser_scroll" -> "Scrolling the page"
+        "browser_select" -> "Choosing ${a.optString("option").take(40)}"
+        "browser_key" -> "Pressing ${a.optString("key")}"
+        "browser_wait" -> "Waiting for the page"
+        "browser_find" -> "Finding \u201c${a.optString("query").take(40)}\u201d"
         "browser_back" -> "Going back"
         "browser_tabs" -> "Checking tabs"
         SECURE -> "Asking you for ${a.optString("title").ifBlank { "a detail" }.take(40)}"
@@ -95,6 +115,20 @@ object BrowserTools {
             "browser_type" -> BrowserEngine.type(ctx, if (a.has("number")) a.optInt("number") else null, a.optString("label").ifBlank { null },
                 a.optString("text"), a.optBoolean("submit", false))
             "browser_scroll" -> BrowserEngine.scroll(ctx, a.optString("direction", "down") != "up")
+            "browser_select" -> BrowserEngine.select(ctx, if (a.has("number")) a.optInt("number") else null, a.optString("label").ifBlank { null }, a.optString("option"))
+            "browser_key" -> {
+                // An Enter on a pay / send / post / delete button asks first, like a click on it (ConfirmGate).
+                val k = a.optString("key")
+                val focused = if (k.equals("Enter", true) || k.equals("Space", true)) BrowserEngine.focusedLabel() else ""
+                val site = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { BrowserEngine.host() }.ifBlank { "this page" }
+                if (focused.isNotBlank() && com.blaze.assistant.phone.Pointer.risky(focused) &&
+                    !com.blaze.assistant.agent.Agent.confirm("Press \u201c${focused.trim().take(40)}\u201d on $site?",
+                        "This looks like it pays, sends, posts or deletes something.", "Press", always = true))
+                    "The user did NOT approve pressing \"${focused.trim().take(40)}\". Don't retry; tell them it's ready for them to finish (browser_show)."
+                else BrowserEngine.key(ctx, k)
+            }
+            "browser_wait" -> BrowserEngine.waitFor(ctx, a.optString("selector").ifBlank { null }, a.optString("text").ifBlank { null }, a.optBoolean("gone", false), a.optInt("seconds", 10))
+            "browser_find" -> BrowserEngine.find(ctx, a.optString("query"))
             "browser_back" -> BrowserEngine.back(ctx)
             "browser_tabs" -> if (a.has("switch_to")) BrowserEngine.switchTab(a.optInt("switch_to")) else BrowserEngine.tabList()
             "browser_show" -> { show(ctx); "The browser is on screen." }

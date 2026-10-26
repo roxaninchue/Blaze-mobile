@@ -235,12 +235,22 @@ object SkillPacks {
         Triple("sign-in-flows", "Signing in to websites and apps quickly and safely (Google sign-in, Continue as, cookie banners)", """
 # Sign-in flows
 1. Prefer Blaze's background browser for websites; use the screen only when the site needs the user's own app session.
-2. Before you start, switch on watchers: watch preset=cookies and preset=popups, and preset=google_signin if the site offers Google.
+2. In the background browser, deal with a cookie banner or pop-up first: browser_read shows it ("Dialog open"), click its accept / close button. If a click says it is covered, close what covers it.
 3. For "Choose an account", ask the user which account with ask_user unless they named one.
 4. Emails, passwords, phone numbers, API keys and codes come from browser_secure_input (a secure form in the chat; saved logins fill in by themselves). Never ask for them in chat, never invent or guess one; you only see {{secret:...}} placeholders.
 5. Captchas and approvals in another app: ask the user (ask_user) or offer browser_show so they can do that step, then continue.
 7. If the site says the account can't use a password (e.g. GitHub's "does not support password sign-in"), stop asking for it: offer Continue with Google, a passkey or the live browser with ask_user.
 6. Check you are really signed in (an account name, avatar or dashboard) before saying it worked.
+"""),
+        Triple("browser-tasks", "Doing a task on a website in Blaze's background browser (search, forms, shopping, booking, reading listings)", """
+# Browser tasks
+1. Plan the steps in one line, then browser_open the site (or its search page directly).
+2. Read what is on screen (browser_read). Close a cookie banner or pop-up first.
+3. Act with the element [numbers]: browser_click, browser_type (submit=true for a search box), browser_select for dropdowns, browser_key for Enter / Escape / Tab.
+4. Each action returns what the page shows after it. If it says the page didn't change, don't repeat it blindly: browser_wait for the result, or read and pick another element.
+5. Find things lower on the page with browser_find (words) instead of scrolling and reading again and again; browser_scroll pages through lists.
+6. Logins and codes: browser_secure_input. Paying, sending, posting or deleting asks the user first.
+7. Never say it's done until the page shows the confirmation (an order number, "saved", the signed-in account); quote what it shows.
 """),
         Triple("research-report", "Researching a question on the web and giving a short, sourced answer", """
 # Research report
@@ -265,8 +275,24 @@ object SkillPacks {
 """),
     )
 
+    /** 0.45.29: starter skills written by an older version that still give old advice (screen watchers in the background browser). */
+    private val stale = mapOf("sign-in-flows" to "watch preset=cookies")
+    const val STARTERS_V = 2
+
     fun ensureStarters() {
         try {
+            // 0.45.29: refresh starters an older version wrote (unless the user changed them) and add new ones, once.
+            if (Settings.int("skill_starters_v", 1) < STARTERS_V) {
+                for ((n, d, body) in starters) {
+                    val p = find(n)
+                    val old = p?.let { try { File(it.dir, "SKILL.md").readText() } catch (_: Exception) { "" } }.orEmpty()
+                    if (p == null && Settings.bool("skill_starters_done", false) && n != "browser-tasks") continue   // the user deleted it
+                    if (p == null || stale[n]?.let { old.contains(it) } == true) write(n, d, body.trimIndent())
+                }
+                Settings.setInt("skill_starters_v", STARTERS_V)
+                Settings.setBool("skill_starters_done", true)
+                return
+            }
             if (Settings.bool("skill_starters_done", false)) return
             for ((n, d, body) in starters) if (find(n) == null) write(n, d, body.trimIndent())
             Settings.setBool("skill_starters_done", true)

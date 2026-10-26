@@ -26,7 +26,7 @@ import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 
 /**
- * v0.33.2 an installed website as an app (outside BlazeOS): opened from its pinned launcher icon. No URL bar or browser
+ * v0.33.2 an installed website as an app: opened from its pinned launcher icon. No URL bar or browser
  * chrome; the status / navigation bars take the manifest's theme_color; a splash with the icon and name on its
  * background_color until the first page has loaded; its own task in Recents (setTaskDescription with its name, icon and
  * colour; a distinct document per site); its own WebView profile (cookies and storage) when the phone's WebView supports

@@ -2,7 +2,6 @@ package com.blaze.assistant
 
 import android.content.Intent
 import com.blaze.assistant.bank.BankModeLogic
-import com.blaze.assistant.blazeos.OsBridgeLimits
 import com.blaze.assistant.browser.SavedPages
 import com.blaze.assistant.device.CrashLog
 import org.junit.Assert.assertEquals
@@ -52,21 +51,6 @@ class SecurityP4Test {
         assertFalse(SavedPages.fileAccessFor(null)); assertFalse(SavedPages.fileAccessFor(""))
     }
 
-    // ---- #33 BlazeOS bridge limits ----
-    @Test fun notifyIsRateLimited() {
-        val r = OsBridgeLimits.Rate(OsBridgeLimits.NOTIFY_MAX, OsBridgeLimits.NOTIFY_WINDOW_MS)
-        val ok = (0 until 50).count { r.allow(1_000L + it) }
-        assertEquals(OsBridgeLimits.NOTIFY_MAX, ok)
-        assertTrue(r.allow(1_000L + OsBridgeLimits.NOTIFY_WINDOW_MS + 1))
-    }
-
-    @Test fun storageWritesCoalesce() {
-        val d = OsBridgeLimits.WriteDebounce(750)
-        assertTrue(d.mark(0)); assertFalse(d.mark(10)); assertFalse(d.mark(500))   // one flush scheduled for the burst
-        assertFalse(d.due(700)); assertTrue(d.due(760))
-        d.flushed(); assertFalse(d.pending()); assertTrue(d.mark(800))
-    }
-
     // ---- #24 bank mode restore wording ----
     @Test fun bankRestoreAskExplainsThenStops() {
         assertEquals(BankModeLogic.RESTORE_ASK, BankModeLogic.restoreAsk(0, simple = true)!!.text)
@@ -106,7 +90,7 @@ class SecurityP4Test {
 
     /** #29: the files cleaned in P4 keep no empty catch blocks. */
     @Test fun cleanedFilesHaveNoEmptyCatch() {
-        val cleaned = setOf("Agent.kt", "BlazeApp.kt", "Mind.kt", "CloudSync.kt", "BrowserEngine.kt", "Bridge.kt", "OsWebApp.kt", "Dashboard.kt", "DashHttp.kt")
+        val cleaned = setOf("Agent.kt", "BlazeApp.kt", "Mind.kt", "CloudSync.kt", "BrowserEngine.kt", "Bridge.kt", "Dashboard.kt", "DashHttp.kt")
         val empty = Regex("""catch \(_: (Throwable|Exception)\) \{ ?\}""")
         val hits = mainSources().filter { it.name in cleaned }.flatMap { f -> f.readLines().mapIndexedNotNull { i, l -> if (empty.containsMatchIn(l)) "${f.name}:${i + 1}" else null } }
         assertTrue("empty catch blocks came back: $hits", hits.isEmpty())

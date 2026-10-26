@@ -833,18 +833,55 @@ object BrowserEngine {
             (if (newTab || tabs.isEmpty() || tab()?.isPrivate != isPrivate) newTab(ctx, url, isPrivate) else tab()!!.also { load(it, url) }).also { markAgent(it) }
         }
         waitLoad(t)
-        return "Opened ${t.title.take(80)} (${t.url}).\n\n" + read(ctx, 3500)
+        settle(t, 2_000)
+        return "Opened ${t.title.take(80)} (${t.url}).\n\n" + read(ctx, BrowserRead.BUDGET - 200)
     }
 
-    /** Page text plus numbered interactive elements Blaze can click or type into. */
-    suspend fun read(ctx: Context, max: Int = 7000): String {
+    // ---------- 0.45.29 browser tasks: BrowserScripts (page side) + BrowserRead (what the model reads) ----------
+
+    /** The page as [BrowserScripts.READ] sees it (null when the page didn't answer). */
+    private suspend fun readRaw(t: Tab): JSONObject? = try { js(t, BrowserScripts.READ) as? JSONObject }
+        catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }
+
+    /** What changes when an action did something: the address, the title, the text on screen, the elements, the scroll, a dialog. */
+    private fun sig(r: JSONObject?): String = if (r == null) "" else
+        listOf(r.optString("url"), r.optString("title"), r.optString("on").hashCode(), r.optString("dialog"), r.optInt("y"),
+            r.optJSONArray("items")?.let { a -> (0 until a.length()).joinToString(",") { i -> a.optJSONObject(i)?.let { "${it.optInt("id")}${it.optString("value")}${it.optBoolean("checked")}" }.orEmpty() } }.orEmpty().hashCode()).joinToString("|")
+
+    private fun isNoChange(before: String, after: JSONObject?): Boolean = before.isNotEmpty() && sig(after) == before
+
+    /**
+     * After an action: waits for a navigation it started (up to 12 s, as before), then until the page has been quiet for
+     * 500 ms, at most [maxMs] (3 s).
+     */
+    private suspend fun settle(t: Tab, maxMs: Long = 3_000) {
+        kotlinx.coroutines.delay(150)
+        if (t.progress < 100) withTimeoutOrNull(12_000) { t.loaded.await() }
+        val end = System.currentTimeMillis() + maxMs
+        while (System.currentTimeMillis() < end) {
+            val q = (try { js(t, BrowserScripts.QUIET) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { null }) as? String ?: break
+            val quiet = q.substringBefore('|').toLongOrNull() ?: 0L
+            if (quiet >= 500 && q.endsWith("complete") && t.progress >= 100) break
+            kotlinx.coroutines.delay(200)
+        }
+    }
+
+    /** A short read of the page after an action, plus a line when nothing visibly changed. */
+    private suspend fun after(t: Tab, before: String, done: String): String {
+        val r = readRaw(t)
+        val same = isNoChange(before, r)
+        val sb = StringBuilder(done)
+        if (same) sb.append(" The page didn't visibly change (it may need a moment: browser_wait, or the action didn't take; check before retrying).")
+        sb.append("\n\n").append(if (r != null) BrowserRead.format(r, BrowserRead.AFTER, compact = true) else "Now on: ${t.title.take(80)} (${t.url})")
+        notes(t, r)?.let { sb.append('\n').append(it) }
+        return SecureInput.scrub(sb.toString())
+    }
+
+    /** The page, viewport first, at most [max] characters ([BrowserRead.BUDGET]). */
+    suspend fun read(ctx: Context, max: Int = BrowserRead.BUDGET): String {
         val t = withContext(Dispatchers.Main) { tab() } ?: return "No page open. Use browser_open first."
-        val r = js(t, READ_JS) as? JSONObject ?: return "Couldn't read this page."
-        val items = r.optJSONArray("items") ?: JSONArray()
-        val sb = StringBuilder()
-        sb.append("Page: ").append(r.optString("title")).append(" — ").append(r.optString("url")).append('\n')
-        sb.append(r.optString("text").take(max)).append("\n\nElements:\n")
-        for (i in 0 until minOf(items.length(), 120)) sb.append(items.getString(i)).append('\n')
+        val r = readRaw(t) ?: return "Couldn't read this page (it didn't answer; it may still be loading). Try browser_wait, then browser_read."
+        val sb = StringBuilder(BrowserRead.format(r, max))
         notes(t, r)?.let { sb.append('\n').append(it) }
         return SecureInput.scrub(sb.toString())
     }
@@ -863,20 +900,17 @@ object BrowserEngine {
             alts = list("alts"), password = r.optBoolean("pw"))
     }
 
+    private fun itemLines(r: JSONObject): List<String> = r.optJSONArray("items")?.let { a -> (0 until a.length()).mapNotNull { a.optJSONObject(it)?.let(BrowserRead::item) } } ?: emptyList()
+    private fun textOf(r: JSONObject): String = r.optString("on") + "\n" + r.optString("below")
+
     /** Things Blaze should know about the page: a dialog it answered, a renderer restart, a site that refuses passwords. */
     private fun notes(t: Tab, r: JSONObject?): String? {
         val out = ArrayList<String>()
         lastCrash?.let { out += it; lastCrash = null }
         t.lastDialog?.let { out += "The page showed a dialog while in the background ($it)."; t.lastDialog = null }
-        if (r != null) {
-            val items = r.optJSONArray("items")?.let { a -> (0 until a.length()).map { a.optString(it) } } ?: emptyList()
-            SignInHints.check(r.optString("text"), items)?.let { out += it }
-        }
+        if (r != null) SignInHints.check(textOf(r), itemLines(r))?.let { out += it }
         return out.takeIf { it.isNotEmpty() }?.joinToString("\n")
     }
-
-    /** Notes for the page as it is now (after a click or a submit). */
-    private suspend fun notesNow(t: Tab): String = notes(t, js(t, READ_JS) as? JSONObject)?.let { "\n$it" }.orEmpty()
 
     /** Host of the page in the current tab ("" when none). */
     fun host(): String = tab()?.url?.let { SecureInput.hostOf(it) }.orEmpty()
@@ -885,9 +919,8 @@ object BrowserEngine {
     /** True when the current page says this account can't use a password. */
     suspend fun passwordRefused(): String? {
         val t = withContext(Dispatchers.Main) { tab() } ?: return null
-        val r = js(t, READ_JS) as? JSONObject ?: return null
-        val items = r.optJSONArray("items")?.let { a -> (0 until a.length()).map { a.optString(it) } } ?: emptyList()
-        return SignInHints.check(r.optString("text"), items)
+        val r = readRaw(t) ?: return null
+        return SignInHints.check(textOf(r), itemLines(r))
     }
 
     /**
@@ -897,51 +930,49 @@ object BrowserEngine {
     suspend fun fillSecret(f: SecureInput.Field, value: String): Boolean {
         val t = withContext(Dispatchers.Main) { tab() } ?: return false
         if (!com.blaze.assistant.connect.UrlSafety.autofillAllowed(t.url)) return false   // v0.28.2: never on plain http (LAN excepted)
-        val sel = f.target.toIntOrNull()?.let { "document.querySelector('[data-bz=\"$it\"]')" }
-            ?: f.target.takeIf { it.isNotBlank() }?.let { "bzFind(${JSONObject.quote(it)}, true)" }
-            ?: "bzFirst(${JSONObject.quote(SecureInput.autoSelector(f.kind))})"
-        val r = js(t, """(function(){$FIND_JS
-            function bzFirst(s){var l=[].slice.call(document.querySelectorAll(s)).filter(function(e){return bzVis(e)&&!e.disabled&&!e.readOnly&&!e.hasAttribute('data-bz-secret');});return l[0]||null;}
-            var e=$sel; if(!e) return 'missing'; e.scrollIntoView({block:'center'}); e.focus();
-            var v=${JSONObject.quote(value)};
-            var proto = e.tagName=='TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-            Object.getOwnPropertyDescriptor(proto,'value').set.call(e, v);
-            e.setAttribute('data-bz-secret','1');
-            e.dispatchEvent(new Event('input',{bubbles:true})); e.dispatchEvent(new Event('change',{bubbles:true}));
-            return 'ok'; })()""")
-        return r == "ok"
+        val n = f.target.trim().toIntOrNull()
+        val label = f.target.takeIf { n == null && it.isNotBlank() }
+        return js(t, BrowserScripts.fillSecret(n, label, SecureInput.autoSelector(f.kind), value)) == "ok"
     }
 
     /** Submits the form the secure fields are in (its submit button, else requestSubmit, else Enter). */
     suspend fun submitSecret(): String {
         val t = withContext(Dispatchers.Main) { tab() } ?: return "No page open."
+        val before = sig(readRaw(t))
         js(t, """(function(){var l=document.querySelectorAll('[data-bz-secret]'); var e=l[l.length-1]; if(!e) return 'missing';
             var f=e.form; var b=f&&f.querySelector('button[type=submit],input[type=submit],button:not([type])');
             if(b){b.click();return 'ok';} if(f){ if(f.requestSubmit) f.requestSubmit(); else f.submit(); return 'ok'; }
             var o={key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true};
             e.dispatchEvent(new KeyboardEvent('keydown',o)); e.dispatchEvent(new KeyboardEvent('keyup',o)); return 'ok'; })()""")
-        kotlinx.coroutines.delay(400)
-        if (t.progress < 100) waitLoad(t, 12_000) else kotlinx.coroutines.delay(800)
-        return "Submitted. Now on: ${t.title.take(80)} (${t.url})" + notesNow(t)
+        settle(t)
+        return after(t, before, "Submitted.")
     }
 
     /** v0.28.2: what [click] would press (its words), without pressing it; "" when not found. */
     suspend fun labelOf(n: Int?, text: String?): String {
         val t = withContext(Dispatchers.Main) { tab() } ?: return ""
-        val sel = if (n != null && n >= 0) "document.querySelector('[data-bz=\"$n\"]')" else "bzFind(${JSONObject.quote(text.orEmpty())})"
-        return (js(t, "(function(){$FIND_JS var e=$sel; if(!e) return ''; return (e.innerText||e.value||e.getAttribute('aria-label')||'').slice(0,80);})()") as? String).orEmpty()
+        return (js(t, BrowserScripts.label(n?.takeIf { it >= 0 }, text)) as? String).orEmpty()
     }
 
+    /** The words on the focused element (for an Enter / Space that would press a risky button); "" when none. */
+    suspend fun focusedLabel(): String {
+        val t = withContext(Dispatchers.Main) { tab() } ?: return ""
+        return (js(t, "(function(){var e=document.activeElement;if(!e||e===document.body||e===document.documentElement)return '';" +
+            "var f=e.form&&(e.tagName=='INPUT')?e.form.querySelector('button[type=submit],input[type=submit],button:not([type])'):null;var x=f||e;" +
+            "return ((x.tagName=='INPUT'&&/submit|button/.test(x.type)?x.value:(x.innerText||''))||x.getAttribute('aria-label')||'').slice(0,80);})()") as? String).orEmpty()
+    }
+
+    /** A real click (pointer + mouse events at the element's centre); says why when it can't, and what the page shows after. */
     suspend fun click(ctx: Context, n: Int?, text: String?): String {
         val t = withContext(Dispatchers.Main) { tab() } ?: return "No page open."
-        val sel = if (n != null && n >= 0) "document.querySelector('[data-bz=\"$n\"]')" else "bzFind(${JSONObject.quote(text.orEmpty())})"
-        val r = js(t, "(function(){$FIND_JS var e=$sel; if(!e) return 'missing'; e.scrollIntoView({block:'center'}); e.focus&&e.focus(); e.click(); return 'ok:'+(e.innerText||e.value||e.getAttribute('aria-label')||e.tagName).slice(0,60);})()")
-        if (r == "missing") return "No such element. Call browser_read to get fresh numbers."
-        kotlinx.coroutines.delay(300)
-        if (t.progress < 100) waitLoad(t, 12_000) else kotlinx.coroutines.delay(500)
-        return SecureInput.scrub("Clicked ${r.toString().removePrefix("ok:")}. Now on: ${t.title.take(80)} (${t.url})" + notesNow(t))
+        val before = sig(readRaw(t))
+        val r = js(t, BrowserScripts.click(n?.takeIf { it >= 0 }, text)) as? JSONObject
+        BrowserRead.problem(r, "click")?.let { return SecureInput.scrub(it) }
+        settle(t)
+        return after(t, before, "Clicked \u201c${r!!.optString("l").take(60)}\u201d.")
     }
 
+    /** Types into a field and checks the value landed; [submit] presses Enter / submits its form. */
     suspend fun type(ctx: Context, n: Int?, label: String?, text0: String, submit: Boolean): String {
         val t = withContext(Dispatchers.Main) { tab() } ?: return "No page open."
         // {{secret:name}} placeholders: swapped for the real value here, at the last moment; the model only ever saw the placeholder.
@@ -949,32 +980,83 @@ object BrowserEngine {
         if (secret && !com.blaze.assistant.connect.UrlSafety.autofillAllowed(t.url)) return com.blaze.assistant.connect.UrlSafety.AUTOFILL_REFUSED
         val text = if (!secret) text0 else SecureInput.resolve(text0, SecureInput.hostOf(t.url)).let { (v, missing) ->
             v ?: return "No value for ${missing.joinToString { SecureInput.placeholder(it) }} yet. Ask the user with browser_secure_input (it shows a secure form in the chat)." }
-        val sel = if (n != null && n >= 0) "document.querySelector('[data-bz=\"$n\"]')"
-            else if (!label.isNullOrBlank()) "bzFind(${JSONObject.quote(label)}, true)"
-            else "(document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName) ? document.activeElement : document.querySelector('input[type=search],input[type=text],input:not([type]),textarea'))"
-        val r = js(t, """(function(){$FIND_JS var e=$sel; if(!e) return 'missing'; e.scrollIntoView({block:'center'}); e.focus();
-            var v=${JSONObject.quote(text)};
-            if (e.isContentEditable) { e.innerText = v; } else {
-              var proto = e.tagName=='TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-              var setter = Object.getOwnPropertyDescriptor(proto,'value').set; setter.call(e, v); }
-            if (${if (secret) "true" else "false"}) e.setAttribute('data-bz-secret','1');
-            e.dispatchEvent(new Event('input',{bubbles:true})); e.dispatchEvent(new Event('change',{bubbles:true}));
-            if (${if (submit) "true" else "false"}) {
-              var o={key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true};
-              e.dispatchEvent(new KeyboardEvent('keydown',o)); e.dispatchEvent(new KeyboardEvent('keypress',o)); e.dispatchEvent(new KeyboardEvent('keyup',o));
-              if (e.form) { if (e.form.requestSubmit) e.form.requestSubmit(); else e.form.submit(); }
-            }
-            return 'ok'; })()""")
-        if (r == "missing") return "No text field found. Call browser_read to see the fields."
-        if (submit) { kotlinx.coroutines.delay(400); if (t.progress < 100) waitLoad(t, 12_000) }
-        return SecureInput.scrub(if (submit) "Typed and submitted. Now on: ${t.title.take(80)} (${t.url})" + notesNow(t) else "Typed \u201c${text0.take(60)}\u201d.")
+        val before = if (submit) sig(readRaw(t)) else ""
+        val r = js(t, BrowserScripts.type(n?.takeIf { it >= 0 }, label, text, submit, secret)) as? JSONObject
+        BrowserRead.problem(r, "type")?.let { return SecureInput.scrub(it) }
+        val into = r!!.optString("l").take(60).let { if (it.isBlank()) "" else " into \u201c$it\u201d" }
+        val shown = if (secret) "the saved value" else "\u201c${text0.take(60)}\u201d"
+        if (!submit) return SecureInput.scrub("Typed $shown$into (the field shows it).")
+        settle(t)
+        return after(t, before, "Typed $shown$into and pressed Enter" + if (r.optBoolean("submitted")) " (form submitted)." else ".")
     }
 
+    /** Picks an option in a dropdown: a real `<select>`, else opens the custom dropdown and clicks the matching option. */
+    suspend fun select(ctx: Context, n: Int?, label: String?, option: String): String {
+        val t = withContext(Dispatchers.Main) { tab() } ?: return "No page open."
+        val before = sig(readRaw(t))
+        val r = js(t, BrowserScripts.select(n?.takeIf { it >= 0 }, label, option)) as? JSONObject
+        if (r?.optString("r") == "notselect") {
+            val c = js(t, BrowserScripts.click(n?.takeIf { it >= 0 }, label)) as? JSONObject
+            BrowserRead.problem(c, "open that dropdown")?.let { return SecureInput.scrub(it) }
+            settle(t, 1_500)
+            val p = js(t, BrowserScripts.pickOption(option)) as? JSONObject
+            if (p?.optString("r") != "ok") return SecureInput.scrub("Opened \u201c${c!!.optString("l").take(60)}\u201d but no visible option matches \u201c${option.take(60)}\u201d. browser_read shows what's open now.")
+            settle(t)
+            return after(t, before, "Chose \u201c${p!!.optString("v").take(60)}\u201d.")
+        }
+        BrowserRead.problem(r, "choose that")?.let { return SecureInput.scrub(it) }
+        settle(t)
+        return after(t, before, "Chose \u201c${r!!.optString("v").take(60)}\u201d in \u201c${r.optString("l").take(60)}\u201d.")
+    }
+
+    /** Presses one key ([BrowserRead.KEYS]) on the focused element. */
+    suspend fun key(ctx: Context, name: String): String {
+        val t = withContext(Dispatchers.Main) { tab() } ?: return "No page open."
+        val k = BrowserRead.KEYS.firstOrNull { it.equals(name.trim(), ignoreCase = true) } ?: return BrowserRead.problem(JSONObject().put("r", "badkey"), "press that")!!
+        val before = sig(readRaw(t))
+        val r = js(t, BrowserScripts.key(k)) as? JSONObject
+        BrowserRead.problem(r, "press $k")?.let { return it }
+        settle(t)
+        val did = r!!.optString("did").takeIf { it.isNotBlank() }?.let { " ($it)" }.orEmpty()
+        return after(t, before, "Pressed $k$did.")
+    }
+
+    /** Waits (≤ 20 s) for [selector] to show, [text] to appear (or with [gone], to go), or just for the page to settle. */
+    suspend fun waitFor(ctx: Context, selector: String?, text: String?, gone: Boolean, seconds: Int): String {
+        val t = withContext(Dispatchers.Main) { tab() } ?: return "No page open."
+        val secs = seconds.coerceIn(1, 20)
+        val what = when { !text.isNullOrBlank() -> "\u201c${text.take(60)}\u201d" + if (gone) " to go away" else ""; !selector.isNullOrBlank() -> "$selector" + if (gone) " to go away" else ""; else -> "the page to settle" }
+        if (selector.isNullOrBlank() && text.isNullOrBlank()) { settle(t, secs * 1000L); return after(t, "", "Waited for the page to settle.") }
+        val end = System.currentTimeMillis() + secs * 1000L
+        var ok = false
+        while (System.currentTimeMillis() < end) {
+            val r = js(t, BrowserScripts.waitCheck(selector, text, gone)) as? String
+            if (r == "badselector") return "That isn't a valid CSS selector. Wait for text instead."
+            if (r == "yes") { ok = true; break }
+            kotlinx.coroutines.delay(400)
+        }
+        if (ok) settle(t, 1_500)
+        return after(t, "", if (ok) "Done waiting: $what." else "Waited ${secs}s; still waiting for $what.")
+    }
+
+    /** Finds words in the page (text and element labels) and scrolls the first hit into view. */
+    suspend fun find(ctx: Context, query: String): String {
+        val t = withContext(Dispatchers.Main) { tab() } ?: return "No page open."
+        if (query.isBlank()) return "Say what to find."
+        val r = js(t, BrowserScripts.find(query)) as? JSONObject ?: return "Couldn't search this page (it didn't answer)."
+        return SecureInput.scrub(BrowserRead.found(query, r))
+    }
+
+    /** Scrolls by most of a screen and shows what is on screen now. */
     suspend fun scroll(ctx: Context, down: Boolean): String {
         val t = withContext(Dispatchers.Main) { tab() } ?: return "No page open."
-        js(t, "window.scrollBy(0, ${if (down) "" else "-"}window.innerHeight*0.85)")
-        kotlinx.coroutines.delay(400)
-        return "Scrolled ${if (down) "down" else "up"}."
+        val y0 = (js(t, "Math.round(scrollY)") as? Number)?.toInt()
+        val s = js(t, BrowserScripts.scroll(down)) as? String
+        settle(t, 1_000)
+        val y = s?.substringBefore('|')?.toIntOrNull()
+        val r = readRaw(t)
+        val head = if (y != null && y == y0) (if (down) "Already at the bottom; nothing more below." else "Already at the top.") else "Scrolled ${if (down) "down" else "up"}."
+        return SecureInput.scrub(head + "\n\n" + (r?.let { BrowserRead.format(it, 2_000, compact = true) } ?: "Now on: ${t.title.take(80)} (${t.url})"))
     }
 
     suspend fun back(ctx: Context): String = withContext(Dispatchers.Main) {
@@ -990,14 +1072,6 @@ object BrowserEngine {
         if (i in tabs.indices) { current = i; "Switched to ${tabs[i].title}." } else "No tab $i."
     }
 
-    private const val FIND_JS = """
-      function bzVis(e){var r=e.getBoundingClientRect();var s=getComputedStyle(e);return r.width>0&&r.height>0&&s.visibility!='hidden'&&s.display!='none';}
-      function bzLabel(e){return ((e.innerText||'')+' '+(e.value||'')+' '+(e.getAttribute('aria-label')||'')+' '+(e.getAttribute('placeholder')||'')+' '+(e.getAttribute('title')||'')+' '+(e.getAttribute('name')||'')+' '+(e.getAttribute('alt')||'')).replace(/\s+/g,' ').trim().toLowerCase();}
-      function bzFind(q,field){q=q.toLowerCase();var sel=field?'input,textarea,[contenteditable=true]':'a,button,input,select,textarea,summary,[role=button],[role=link],[role=tab],[role=menuitem],[role=option],[onclick],label';
-        var all=[].slice.call(document.querySelectorAll(sel)).filter(bzVis);var best=null,bs=1e9;
-        all.forEach(function(e){var l=bzLabel(e);if(!l)return;var i=l.indexOf(q);if(i<0)return;var s=l.length-q.length+i;if(s<bs){bs=s;best=e;}});return best;}
-    """
-
     private const val ASK_JS = """(function(){
       function vis(e){var r=e.getBoundingClientRect();var s=getComputedStyle(e);return r.width>0&&r.height>0&&s.visibility!='hidden'&&s.display!='none';}
       var labels=[];
@@ -1012,23 +1086,6 @@ object BrowserEngine {
       var pw=[].slice.call(document.querySelectorAll('input[type=password]')).some(vis);
       var text=(document.body?document.body.innerText:'').replace(/\n{3,}/g,'\n\n').trim();
       return {title:document.title,url:location.href,text:text,labels:labels,imgs:imgs.length,alts:alts.slice(0,40),pw:pw};
-    })()"""
-
-    private const val READ_JS = """(function(){
-      function vis(e){var r=e.getBoundingClientRect();var s=getComputedStyle(e);return r.width>0&&r.height>0&&s.visibility!='hidden'&&s.display!='none';}
-      var els=[].slice.call(document.querySelectorAll('a[href],button,input:not([type=hidden]),select,textarea,summary,[role=button],[role=link],[role=tab],[role=menuitem],[role=checkbox],[onclick],[contenteditable=true]')).filter(vis);
-      var items=[];
-      els.slice(0,150).forEach(function(e,i){ e.setAttribute('data-bz',i);
-        var tag=e.tagName.toLowerCase(), type=e.getAttribute('type')||'';
-        var hide = type=='password' || e.hasAttribute('data-bz-secret');
-        var label=(e.innerText||(hide?(e.value?'(filled, hidden)':''):e.value)||e.getAttribute('aria-label')||e.getAttribute('placeholder')||e.getAttribute('title')||e.getAttribute('name')||e.getAttribute('alt')||'').replace(/\s+/g,' ').trim().slice(0,80);
-        var kind = tag=='a'?'link':(tag=='input'||tag=='textarea'||e.isContentEditable)?('field'+(type?':'+type:'')):tag=='select'?'select':'button';
-        if (tag=='input' && /checkbox|radio/.test(type)) kind=type+(e.checked?' (checked)':'');
-        if (!label && kind=='link') return;
-        items.push('['+i+'] '+kind+' "'+label+'"'+(tag=='a'&&e.href&&e.href.indexOf('javascript')!=0?' → '+e.href.slice(0,90):''));
-      });
-      var text=(document.body?document.body.innerText:'').replace(/\n{3,}/g,'\n\n').trim();
-      return {title:document.title,url:location.href,text:text,items:items};
     })()"""
 }
 

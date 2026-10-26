@@ -45,6 +45,13 @@ object LongChat {
     /** Tools whose results always stay whole (reading them back must not be set aside again). */
     val keepWhole = setOf("use_skill", "skill_file", "read_artifact", "read_turn", "search_chat", "update_brief", "ask_user")
 
+    /**
+     * 0.45.29: true when [name]'s result is never set aside. Browser pages (browser_* and the Blaze Phone browser's phone_*)
+     * were cut to their first 40 and last 20 lines, so the model never saw most of a page; their readers now fit a budget
+     * themselves (BrowserRead.BUDGET) and stay whole, here and in Cloud runs (which read the same history).
+     */
+    fun keeps(name: String): Boolean = name in keepWhole || name.startsWith("browser_") || name.startsWith("phone_")
+
     /** A chat's long-chat state: the rolling note and the first history index it doesn't cover. */
     data class State(val summary: String = "", val upto: Int = 0)
 

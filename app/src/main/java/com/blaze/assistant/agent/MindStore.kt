@@ -63,12 +63,12 @@ class MindStore(val blaze: BlazeDb, val sql: Sql) : Mind.Store {
         val k = Mind.normKind(kind); val s = Mind.squash(subject).ifBlank { "You" }.take(60); val t = Mind.clean(text, max = max)
         val sec = now / 1000
         when (val d = Mind.decide(all(), k, s, t)) {
-            is Mind.Decision.Same -> "same" to d.id
+            is Mind.Decision.Same -> { touch(d.id, related, now); "same" to d.id }
             is Mind.Decision.Update -> {
                 val old = mem(d.id) ?: return@synchronized "same" to d.id
                 sql.tx {
                     sql.exec("UPDATE memories SET text=?, norm=?, category=?, updated=? WHERE id=?", t, BlazeDb.norm(t), k, sec, d.id)
-                    side(d.id, old.created / 1000, s, related.ifBlank { old.related }, if (sourceTurn > 0) sourceTurn else old.sourceTurn)
+                    side(d.id, old.created / 1000, s, MemoryMerge.unionRelated(old.related, related), if (sourceTurn > 0) sourceTurn else old.sourceTurn)
                 }
                 "updated" to d.id
             }
@@ -95,6 +95,30 @@ class MindStore(val blaze: BlazeDb, val sql: Sql) : Mind.Store {
         sql.tx {
             sql.exec("UPDATE memories SET text=?, norm=?, category=?, updated=? WHERE id=?", t, BlazeDb.norm(t), k, now / 1000, id)
             side(id, old.created / 1000, s, old.related, old.sourceTurn)
+        }
+        true
+    }
+
+    override fun touch(id: Long, related: String, now: Long): Boolean = synchronized(lock) {
+        val old = mem(id) ?: return false
+        val rel = MemoryMerge.unionRelated(old.related, related)
+        sql.tx {
+            sql.exec("UPDATE memories SET updated=? WHERE id=?", now / 1000, id)
+            if (rel != old.related) side(id, old.created / 1000, old.subject, rel, old.sourceTurn)
+        }
+        true
+    }
+
+    override fun mergeInto(keep: Long, text: String, kind: String, subject: String, related: String, drop: List<Long>, now: Long): Boolean = synchronized(lock) {
+        val old = mem(keep) ?: return false
+        val t = Mind.clean(text, max = maxOf(Mind.MERGED_MAX, old.text.length)).ifBlank { return false }
+        val k = Mind.normKind(kind)
+        val s = Mind.squash(subject).ifBlank { old.subject }.take(60)
+        val gone = drop.distinct().filter { it != keep }
+        sql.tx {
+            sql.exec("UPDATE memories SET text=?, norm=?, category=?, updated=? WHERE id=?", t, BlazeDb.norm(t), k, now / 1000, keep)
+            side(keep, old.created / 1000, s, related, old.sourceTurn)
+            for (id in gone) { sql.exec("DELETE FROM memories WHERE id=?", id); sql.exec("DELETE FROM mind_mem WHERE id=?", id) }
         }
         true
     }

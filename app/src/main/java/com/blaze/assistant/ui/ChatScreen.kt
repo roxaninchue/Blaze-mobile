@@ -362,7 +362,6 @@ fun ChatScreen() {
         when (v.special) {
             "gallery" -> GalleryUi.open.value = true
             "home" -> homeRequests.value++
-            "phone" -> com.blaze.assistant.blazeos.BlazeOsActivity.open(ctx)
             "projects" -> go(navNow().projectsList())
             "browser" -> com.blaze.assistant.browser.BrowserTools.show(ctx)
             "phonebrowser" -> com.blaze.assistant.browser.phone.PhoneBrowserActivity.open(ctx, control = false)
@@ -402,7 +401,7 @@ fun ChatScreen() {
             if (cmdName == "views") { input = TextFieldValue(""); showViews = true; return }
             if (cmdName == "search") { input = TextFieldValue(""); showSearch = true; return }
             if (cmdName == "projects") { input = TextFieldValue(""); go(navNow().projectsList()); return }
-            if (cmdName in setOf("jobs", "schedule", "accounts", "doctor", "design", "router", "skills", "gallery", "browser", "terminal", "music", "video", "phone", "doing", "look", "home", "sync") && !text.contains(' ')) {
+            if (cmdName in setOf("jobs", "schedule", "accounts", "doctor", "design", "router", "skills", "gallery", "browser", "terminal", "music", "video", "doing", "look", "home", "sync") && !text.contains(' ')) {
                 input = TextFieldValue(""); Views.find(cmdName)?.let { openView(it) }; return
             }
         }
@@ -599,10 +598,8 @@ fun ChatScreen() {
                     animationSpec = MotionTokens.medium(), label = "tab") { paneNow ->
                 if (paneNow == "home") {
                     // v0.29.0 Home board: plain-words asks go to Blaze in the main chat (home_widget_* tools).
-                    // v0.33.2: Home is BlazeOS, Blaze's own virtual phone (fullscreen); the old board stays as "Classic board".
-                    val osPrefs by com.blaze.assistant.blazeos.BlazeOs.prefs.collectAsState()
-                    if (osPrefs.classic) HomePane(onAsk = { t -> Agent.send(t) }, onQuote = { t -> quote = t; go(navNow().switchTab(ChatNav.CHAT)) })
-                    else com.blaze.assistant.blazeos.BlazeOsCard()
+                    // 0.45.29: BlazeOS ("Blaze Phone", the virtual phone that v0.33.2 put on Home) was removed; Home is the board.
+                    HomePane(onAsk = { t -> Agent.send(t) }, onQuote = { t -> quote = t; go(navNow().switchTab(ChatNav.CHAT)) })
                 } else if (paneNow == "projects") {
                     val needs = remember(question, allChats) { question?.let { q -> allChats.filter { it.title == q.chat }.map { it.id }.toSet() } ?: emptySet() }
                     ProjectsPane(projects, allChats, busyChats, needs, nav.project,
@@ -926,7 +923,7 @@ private fun MessageList(mood: Mood, onQuote: (String) -> Unit, onFollowup: (Stri
     val replyRefs = rememberReplyRefs(messages)
     // v0.31.1: one stable lambda (it captured the whole item list, so every row's params changed on every streamed frame).
     val itemsNow = rememberUpdatedState(items)
-    val jumpTo: (Long) -> Unit = remember { { id -> itemsNow.value.indexOfFirst { it.key == "m$id" }.takeIf { it >= 0 }?.let { i -> scope.launch { state.animateScrollToItem(i); follow = false; ReplyFocus.flash(id) } } } }
+    val jumpTo: (Long) -> Unit = remember { { id -> itemsNow.value.indexOfFirst { it.key == "m$id" }.takeIf { it >= 0 }?.let { i -> scope.launch { state.animateScrollToItem(i); follow = false } } } }
     val meter by Agent.meter.collectAsState()
     val lastStepsKey = items.lastOrNull { it is Item.Steps }?.key
     // v0.27.0: messages that arrive while the chat is open fade in with a slight rise, once (not the history).

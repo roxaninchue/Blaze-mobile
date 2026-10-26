@@ -54,9 +54,6 @@ internal fun FeelPage() {
     var habits by remember { mutableStateOf(Settings.bool("habit_offers", true)) }
     var morning by remember { mutableStateOf(Settings.bool("morning_brief", true)) }
     ToggleRow("Morning brief", "A short good-morning card with your day when your quiet hours end", morning) { morning = !morning; Settings.setBool("morning_brief", morning) }
-    // v0.33.2: Home is BlazeOS; the old Home board is still there as the Classic board.
-    var classic by remember { mutableStateOf(com.blaze.assistant.blazeos.BlazeOs.classic) }
-    ToggleRow("Classic board on Home", "Show the old Home board instead of BlazeOS, Blaze's virtual phone", classic) { classic = !classic; com.blaze.assistant.blazeos.BlazeOs.classic = classic }
     ToggleRow("Offer to automate habits", "If you open an app at the same time most days, Blaze offers once to do it for you", habits) { habits = !habits; Settings.setBool("habit_offers", habits) }
     V18Section("Learning from what I do")
     V18Note("Blaze keeps a private log of the steps it runs on screen ($traces so far). It never leaves your phone and will train a faster on-device model later.")

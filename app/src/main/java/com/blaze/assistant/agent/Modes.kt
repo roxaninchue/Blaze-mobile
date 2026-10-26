@@ -49,7 +49,7 @@ object Modes {
 
     /** Tools that only read or look. Anything else is refused in Plan. */
     val planTools = setOf(
-        "web_search", "fetch_page", "browser_open", "browser_read", "browser_scroll", "browser_back", "browser_tabs",
+        "web_search", "fetch_page", "browser_open", "browser_read", "browser_scroll", "browser_back", "browser_tabs", "browser_find", "browser_wait",
         "recall_memory", "memory_search", "search_past_chats", "search_screen_memory", "search_chat", "read_turn", "read_artifact",
         "device_status", "battery_level", "list_apps", "app_usage", "read_screen", "look_at_screen", "self_test",
         "recent_notifications", "read_messages", "recent_calls", "find_contact", "calendar_events",

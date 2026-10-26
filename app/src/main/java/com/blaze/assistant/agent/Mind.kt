@@ -73,7 +73,8 @@ object Mind {
 
     fun normKind(k: String?): String = k.orEmpty().trim().lowercase().let { if (it in KINDS) it else "fact" }
 
-    fun words(s: String): Set<String> = s.lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter { it.length > 1 && it != "inferred" }.toSet()
+    /** 0.45.29: single digits count too ("wakes at 6" and "wakes at 7" are not the same words). */
+    fun words(s: String): Set<String> = s.lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter { (it.length > 1 || (it.length == 1 && it[0].isDigit())) && it != "inferred" }.toSet()
 
     fun jaccard(a: String, b: String): Double {
         val x = words(a); val y = words(b)
@@ -111,6 +112,15 @@ object Mind {
             // A slightly fuller wording replaces a normal line; a merged (long) line is never overwritten.
             return if (near.text.length <= TEXT_MAX && Mind.words(text).size > Mind.words(near.text).size) Decision.Update(near.id) else Decision.Same(near.id)
         }
+        // 0.45.29: the same fact about the same entity and kind in other words ("Likes jazz" / "Loves jazz music" /
+        // "Enjoys jazz"): one line, keeping the more specific wording. Only lines of this kind and entity are compared.
+        val ent = MemoryKey.entity(s); val key = MemoryKey.key(text); val neg = MemoryKey.negative(text)
+        if (key.isNotEmpty()) existing.asSequence().filter { it.kind == k && MemoryKey.entity(it.subject) == ent }
+            .map { it to MemoryKey.key(it.text) }
+            .filter { (m, mk) -> MemoryKey.sameFact(mk, key, MemoryKey.negative(m.text), neg) }
+            .maxByOrNull { (_, mk) -> mk.count { it in key } }?.let { (near, nk) ->
+                return if (near.text.length <= TEXT_MAX && MemoryKey.moreSpecific(key, nk, text, near.text)) Decision.Update(near.id) else Decision.Same(near.id)
+            }
         val best = same.maxByOrNull { jaccard(it.text, text) } ?: return Decision.Insert
         // A merged line (longer than a normal one) is never replaced by a newer short one: the new line is kept beside it.
         return if (jaccard(best.text, text) >= SAME && best.text.length <= TEXT_MAX) Decision.Update(best.id) else Decision.Insert
@@ -263,6 +273,16 @@ object Mind {
         /** [max] 0 = [editMax] of the stored line (an edit never cuts what is already saved). */
         fun update(id: Long, text: String, kind: String? = null, subject: String? = null, now: Long = System.currentTimeMillis(), max: Int = 0): Boolean
         fun delete(id: Long)
+        /**
+         * 0.45.29: a duplicate save of line [id]: its time is refreshed and [related] is added to its links (nothing else
+         * changes). Returns false when the line is gone.
+         */
+        fun touch(id: Long, related: String = "", now: Long = System.currentTimeMillis()): Boolean
+        /**
+         * 0.45.29: one atomic merge: line [keep] becomes [text] / [kind] / [subject] with [related] as its links, and the
+         * lines [drop] are deleted, all in one transaction (a failure changes nothing, so no line is ever lost).
+         */
+        fun mergeInto(keep: Long, text: String, kind: String, subject: String, related: String, drop: List<Long>, now: Long = System.currentTimeMillis()): Boolean
         fun search(query: String, kind: String? = null, limit: Int = 12): List<Mem>
         // v0.19.0 logs (MindLogs): journal rows that aren't chat turns.
         fun logAppend(conv: String, role: String, content: String, at: Long, kind: String): Long
@@ -445,9 +465,10 @@ object Mind {
             val k = normKind(kind); val s = squash(subject).ifBlank { "You" }.take(60); val t = clean(text, max = max)
             val db = writableDatabase
             return when (val d = decide(all(), k, s, t)) {
-                is Decision.Same -> "same" to d.id
+                is Decision.Same -> { touch(d.id, related, now); "same" to d.id }
                 is Decision.Update -> {
-                    db.update("memories", ContentValues().apply { put("text", t); put("updated", now); if (related.isNotBlank()) put("related", related)
+                    val oldRel = mem(d.id)?.related.orEmpty()
+                    db.update("memories", ContentValues().apply { put("text", t); put("updated", now); put("related", MemoryMerge.unionRelated(oldRel, related))
                         if (sourceTurn > 0) put("source_turn", sourceTurn) }, "id=?", arrayOf(d.id.toString()))
                     ftsPut(db, d.id, s, t, true); "updated" to d.id
                 }
@@ -468,6 +489,32 @@ object Mind {
             db.update("memories", ContentValues().apply { put("text", t); put("subject", s); put("updated", now)
                 if (!kind.isNullOrBlank()) put("kind", normKind(kind)) }, "id=?", arrayOf(id.toString()))
             ftsPut(db, id, s, t, true)
+            return true
+        }
+
+        @Synchronized override fun touch(id: Long, related: String, now: Long): Boolean {
+            retired?.let { return it.touch(id, related, now) }
+            val old = mem(id) ?: return false
+            writableDatabase.update("memories", ContentValues().apply { put("updated", now); put("related", MemoryMerge.unionRelated(old.related, related)) },
+                "id=?", arrayOf(id.toString()))
+            return true
+        }
+
+        @Synchronized override fun mergeInto(keep: Long, text: String, kind: String, subject: String, related: String, drop: List<Long>, now: Long): Boolean {
+            retired?.let { return it.mergeInto(keep, text, kind, subject, related, drop, now) }
+            val old = mem(keep) ?: return false
+            val t = clean(text, max = maxOf(MERGED_MAX, old.text.length)).ifBlank { return false }
+            val s = squash(subject).ifBlank { old.subject }.take(60)
+            val db = writableDatabase
+            db.beginTransaction()
+            try {
+                db.update("memories", ContentValues().apply { put("text", t); put("subject", s); put("kind", normKind(kind)); put("related", related); put("updated", now) },
+                    "id=?", arrayOf(keep.toString()))
+                for (id in drop.distinct()) if (id != keep) db.delete("memories", "id=?", arrayOf(id.toString()))
+                db.setTransactionSuccessful()
+            } finally { db.endTransaction() }
+            ftsPut(db, keep, s, t, true)
+            if (fts) for (id in drop.distinct()) if (id != keep) try { db.delete("memories_fts", "docid=?", arrayOf(id.toString())) } catch (e: Exception) { com.blaze.assistant.device.CrashLog.quiet("Mind: merge fts", e) }
             return true
         }
 
@@ -665,29 +712,51 @@ object Mind {
      * 0.45.24: merges the lines [ids] into one (the oldest keeps its #id; the others are deleted). [text] is the merged
      * line when the model or the user wrote it; otherwise the lines are combined ([MemoryMerge.combine]). Up to
      * [MERGED_MAX] characters; a longer result is refused, never cut. Returns (merged id, "") or (0, why not).
+     * 0.45.29: one transaction ([Store.mergeInto]) and the merged line keeps every line's links.
      */
     fun merge(ids: List<Long>, text: String = ""): Pair<Long, String> {
         val d = db ?: return 0L to "Memory isn't available on this phone right now."
-        val byId = try { d.all().associateBy { it.id } } catch (_: Exception) { return 0L to "Memory isn't available on this phone right now." }
-        val mems = ids.distinct().mapNotNull { byId[it] }.sortedWith(compareBy({ it.created }, { it.id }))
+        val mems = try { ids.distinct().mapNotNull { d.mem(it) } } catch (_: Exception) { return 0L to "Memory isn't available on this phone right now." }
+        return mergeRows(d, mems, text).also { if (it.first > 0) changed() }
+    }
+
+    /** Merges [rows] (current rows of [d]) in one transaction. No [changed]: the caller says when the screen should update. */
+    private fun mergeRows(d: Store, rows: List<Mem>, text: String = ""): Pair<Long, String> {
+        val mems = rows.distinctBy { it.id }.sortedWith(compareBy({ it.created }, { it.id }))
         if (mems.size < 2) return 0L to "Pick at least two saved lines to merge (memory_search gives the #ids)."
         val merged = (if (text.isNotBlank()) squash(text).removeSuffix(".").takeIf { it.length <= MERGED_MAX } else MemoryMerge.combine(mems.map { it.text }))
             ?: return 0L to "Too long to merge into one line (over $MERGED_MAX characters). Merge fewer lines."
         if (Learn.secret(merged)) return 0L to "Not merged: that looks like a password, code or account number."
         val (kind, subject) = MemoryMerge.pick(mems)
         val keep = mems.first()
-        if (!d.update(keep.id, merged, kind, subject, max = MERGED_MAX)) return 0L to "Couldn't merge right now."
-        mems.drop(1).forEach { try { d.delete(it.id) } catch (e: Exception) { com.blaze.assistant.device.CrashLog.quiet("Mind: merge delete", e) } }
-        changed()
-        return keep.id to ""
+        val ok = try { d.mergeInto(keep.id, merged, kind, subject, MemoryMerge.related(mems), mems.drop(1).map { it.id }) }
+            catch (e: Exception) { com.blaze.assistant.device.CrashLog.quiet("Mind: merge", e); false }
+        return if (ok) keep.id to "" else 0L to "Couldn't merge right now."
     }
 
-    /** 0.45.24: the automatic pass: merges each group of near-duplicate lines ([MemoryMerge.groups]). Returns how many groups. */
-    fun consolidate(): Int {
+    /**
+     * 0.45.24: the automatic pass: merges each group of near-duplicate lines ([MemoryMerge.groups]). Returns how many groups.
+     *
+     * 0.45.29 (Tidy up froze, then crashed, on 253 lines / 564 links): it ran on the main thread, re-read the whole table
+     * and told the screen to rebuild its graph after every single group, and one failed write could throw out of the loop.
+     * Now: call it off the main thread; the groups are found once from one read (fast, [MemoryMerge.groups]); each group
+     * is re-read and merged in its own transaction ([Store.mergeInto], links kept), so a failure or [cancelled] leaves every
+     * line either merged or untouched; [progress] reports (done, total) groups; the screen is told once, at the end.
+     */
+    fun consolidate(cancelled: () -> Boolean = { false }, progress: (done: Int, total: Int) -> Unit = { _, _ -> }): Int {
         val d = db ?: return 0
-        val groups = try { MemoryMerge.groups(d.all()) } catch (_: Exception) { return 0 }
+        val groups = try { MemoryMerge.groups(d.all(), cancelled) } catch (e: Exception) { com.blaze.assistant.device.CrashLog.quiet("Mind: tidy groups", e); return 0 }
         var n = 0
-        for (g in groups) if (merge(g.map { it.id }).first > 0) n++
+        try { progress(0, groups.size) } catch (_: Throwable) { }
+        for ((i, g) in groups.withIndex()) {
+            if (cancelled()) break
+            try {
+                val rows = g.mapNotNull { d.mem(it.id) }
+                if (rows.size == g.size && mergeRows(d, rows).first > 0) n++
+            } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("Mind: tidy group", e) }
+            try { progress(i + 1, groups.size) } catch (_: Throwable) { }
+        }
+        if (n > 0) changed()
         return n
     }
 

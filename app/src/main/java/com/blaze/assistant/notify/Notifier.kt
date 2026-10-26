@@ -222,21 +222,23 @@ object Notifier {
     }
 
     /**
-     * 0.45.19: THE builder for every Blaze message (ack, reply, Done ✓, honest failure, check-in, heads-up, question,
-     * follow-up, call offer). One MessagingStyle conversation with one Person "Blaze" (app-icon avatar), one shortcut,
+     * 0.45.19: THE builder for every Blaze message (reply, honest failure, check-in, heads-up, question, follow-up, call
+     * offer) and, since 0.45.29, the user's own inline reply ([userReplied], drawn as "You"). One MessagingStyle conversation with one Person "Blaze" (app-icon avatar), one shortcut,
      * one notification id, quick replies that fit ([QuickReplies]) plus an inline Reply, on the alerting channel.
      * [extra] = buttons beyond Reply (a suggestion, Going / No, Call me). [tap] = what tapping opens (default: the chat).
      */
     fun post(raw: String, kind: BlazeThread.Kind, chatId: String? = null, context: String? = null, urgent: Boolean = false,
-             extra: List<NotificationCompat.Action> = emptyList(), tap: PendingIntent? = null, reply: Boolean = true) {
+             extra: List<NotificationCompat.Action> = emptyList(), tap: PendingIntent? = null, reply: Boolean = true, quiet: Boolean = false) {
         if (!::app.isInitialized) return
         val text = com.blaze.assistant.ui.Md.plain(raw)
         if (text.isBlank() || !allowed()) return
         val lines = synchronized(thread) { BlazeThread.push(thread, BlazeThread.Msg(System.currentTimeMillis(), text, kind)) }
         val chips = QuickReplies.forMessage(text, kind)
+        // The collapsed line is Blaze's newest words; the user's own reply shows in the conversation as theirs.
+        val lastBlaze = lines.lastOrNull { !it.fromUser }?.text ?: text
         val input = RemoteInput.Builder(KEY_REPLY).setLabel("Reply to Blaze")
             .apply { if (chips.isNotEmpty()) setChoices(Array<CharSequence>(chips.size) { chips[it] }) }.build()
-        val replyA = NotificationCompat.Action.Builder(0, "Reply", replyIntent(7101, chatId, context ?: if (chatId == null) text else null))
+        val replyA = NotificationCompat.Action.Builder(0, "Reply", replyIntent(7101, chatId, context ?: if (chatId == null && kind != BlazeThread.Kind.USER) text else null))
             .addRemoteInput(input)
             // Android's generated replies offered "Weird" / "Great!" under a result: only Blaze's own choices.
             .setAllowGeneratedReplies(false)
@@ -247,9 +249,10 @@ object Notifier {
             .setSmallIcon(R.drawable.ic_stat_blaze)
             .setColor(ACCENT)
             .setContentTitle(BlazeThread.title(kind, urgent))
-            .setContentText(text)
+            .setContentText(lastBlaze)
             .setAutoCancel(true)
-            .setOnlyAlertOnce(false)
+            .setOnlyAlertOnce(quiet)
+            .setSilent(quiet)
             .setContentIntent(tap ?: openChat(chatId))
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -258,31 +261,35 @@ object Notifier {
         extra.take(2).forEach { b.addAction(it) }
         try {
             val style = NotificationCompat.MessagingStyle(me)
-            lines.forEach { m -> style.addMessage(m.text, m.at, blaze()) }
+            lines.forEach { m -> style.addMessage(m.text, m.at, if (m.fromUser) me else blaze()) }
             b.setStyle(style)
         } catch (_: Throwable) {
-            b.setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            b.setStyle(NotificationCompat.BigTextStyle().bigText(lastBlaze))
         }
         try { NotificationManagerCompat.from(app).notify(BlazeThread.NOTIF_ID, b.build()) } catch (_: SecurityException) { } catch (_: Throwable) { }
     }
 
     /**
-     * Blaze's message (its ack, its reply, its Done ✓ or an honest failure) as a text from Blaze: MessagingStyle,
-     * with an inline Reply box. Ack-and-background (HQ 22 Oct 20:36). 0.45.19: through [post].
+     * Blaze's answer (its reply, a verified "Done ✓" toggle line or an honest failure) as a text from Blaze:
+     * MessagingStyle, with an inline Reply box. 0.45.19: through [post]. 0.45.29: there is no ack text any more.
      */
-    /** 0.45.19: Blaze's ack ("Turning on dark mode.") off screen: a plain text from Blaze, no reply chips. */
-    fun ack(raw: String, chatId: String? = null) = post(raw, BlazeThread.Kind.ACK, chatId)
+    fun reply(raw: String, isError: Boolean, chatId: String? = null) = post(raw, replyKind(raw, isError), chatId)
 
-    fun reply(raw: String, isError: Boolean, chatId: String? = null) {
-        val t = raw.trim()
-        val kind = when {
-            isError -> BlazeThread.Kind.FAILED
-            t.startsWith(com.blaze.assistant.agent.Ack.DONE) -> BlazeThread.Kind.RESULT
-            t.startsWith("Got it, ") -> BlazeThread.Kind.ACK
-            else -> BlazeThread.Kind.REPLY
-        }
-        post(raw, kind, chatId)
+    /** The kind of an answer line. Pure. */
+    fun replyKind(raw: String, isError: Boolean): BlazeThread.Kind = when {
+        isError -> BlazeThread.Kind.FAILED
+        raw.trim().startsWith(com.blaze.assistant.agent.Ack.DONE) -> BlazeThread.Kind.RESULT
+        else -> BlazeThread.Kind.REPLY
     }
+
+    /**
+     * 0.45.29: the user answered from the notification's Reply box. Android keeps a spinner on the Reply box until the
+     * notification is updated, so the thread is posted again at once with the user's words, exactly as typed and shown
+     * as theirs ("You"), quietly (no second sound). Blaze's real answer is added below when the turn ends ([reply]).
+     * Nothing is reworded and no line is invented for Blaze.
+     */
+    fun userReplied(raw: String, chatId: String?, context: String? = null) =
+        post(raw, BlazeThread.Kind.USER, chatId, context = context, quiet = true)
 
     /** Fallback when Android blocks opening Blaze from the background: a full-screen / heads-up prompt. */
     fun wakeHeard() {
@@ -426,12 +433,12 @@ class ActionReceiver : BroadcastReceiver() {
             DENY -> { Agent.answerConfirm(false); Notifier.clearConfirm() }
             REPLY -> {
                 val text = RemoteInput.getResultsFromIntent(intent)?.getCharSequence(Notifier.KEY_REPLY)?.toString()
-                Notifier.clearReplies()
-                androidx.core.app.NotificationManagerCompat.from(ctx).cancel(8)
-                if (!text.isNullOrBlank()) {
-                    Agent.replyFromNotification(intent.getStringExtra(EXTRA_CHAT), intent.getStringExtra(EXTRA_CONTEXT), text)
-                    Notifier.working("Thinking about: " + text.take(60))
-                }
+                val chat = intent.getStringExtra(EXTRA_CHAT)
+                val context = intent.getStringExtra(EXTRA_CONTEXT)
+                if (text.isNullOrBlank()) { Notifier.clearReplies(); return }
+                // 0.45.29: the real agent answers it; meanwhile the thread shows the user's own words as theirs.
+                Notifier.userReplied(text, chat?.takeIf { it.isNotBlank() }, context?.takeIf { it.isNotBlank() })
+                Agent.replyFromNotification(chat, context, text)
             }
         }
     }

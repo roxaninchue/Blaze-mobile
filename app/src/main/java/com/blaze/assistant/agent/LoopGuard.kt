@@ -20,7 +20,14 @@ class LoopGuard {
         const val SAME_MAX = 2
         const val NO_EFFECT_MAX = 3
         val EXEMPT = setOf("tap", "scroll", "swipe", "press_button", "type_text", "read_screen", "look_at_screen", "screenshot",
-            "wait", "wait_for", "terminal_jobs", "check_agent", "browser_scroll", "browser_read", "ask_user", "find_tool", "load_tools", "run_plan")
+            "wait", "wait_for", "terminal_jobs", "check_agent", "browser_scroll", "browser_read", "ask_user", "find_tool", "load_tools", "run_plan",
+            // 0.45.29: reading, finding, waiting and paging through a page is how a browser task moves on.
+            "browser_find", "browser_wait", "browser_key", "browser_back", "phone_read", "phone_wait", "phone_status", "phone_screenshot")
+        /**
+         * 0.45.29: browser tools that act on a page (a click, typing, a choice) are only stopped when the same call got the
+         * same answer again; "No such element" after the page changed (a fresh read in between) is not "no effect".
+         */
+        val PAGE_ACTS = setOf("browser_click", "browser_type", "browser_select", "phone_act")
         private val noEffect = Regex("""(?i)^(nothing matched|nothing deleted|no saved line|not found|no such|nothing to (save|delete|remove)|couldn't find|no match)|\bnothing matched\b|\bnot found\b""")
         fun noEffect(result: String): Boolean = noEffect.containsMatchIn(result.trim().take(200))
 
@@ -48,7 +55,7 @@ class LoopGuard {
         val r = result.take(4_000)
         seen[k] = if (lastOf[k] == r) (seen[k] ?: 0) + 1 else 1
         lastOf[k] = r
-        misses[name] = if (noEffect(result)) (misses[name] ?: 0) + 1 else 0
+        misses[name] = if (name !in PAGE_ACTS && noEffect(result)) (misses[name] ?: 0) + 1 else 0
     }
 
     @Synchronized fun clear() { seen.clear(); misses.clear(); lastOf.clear() }

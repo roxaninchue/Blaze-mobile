@@ -35,7 +35,6 @@ object Views {
         BlazeView("music", "Music", "Blaze Music: your songs, playlists and a Store (Jamendo, Internet Archive" + (if (com.blaze.assistant.mediaapps.store.StoreSources.get("youtube") != null) ", YouTube" else "") + ") with downloads", special = "music", aliases = listOf("songs", "player", "music player", "playlist", "playlists")),
         BlazeView("video", "Video", "Blaze Video: your videos, continue watching, and a Store (public-domain films, Blender open movies" + (if (com.blaze.assistant.mediaapps.store.StoreSources.get("youtube") != null) ", YouTube" else "") + ")", special = "video", aliases = listOf("videos", "movies", "films", "video player")),
         BlazeView("apps", "App Store", "Free open-source apps from their developers' own releases. Not made by Blazeinchue; install at your own risk", page = "appstore", aliases = listOf("app store", "appstore", "open source apps", "foss apps", "get apps")),
-        BlazeView("phone", "Phone", "BlazeOS: Blaze's own virtual phone with its own apps and App Store, fullscreen", special = "phone", aliases = listOf("blazeos", "virtual phone", "blaze os")),
         BlazeView("gallery", "Gallery", "Images, music and files Blaze made", special = "gallery"),
         BlazeView("browser", "Browser", "Blaze's own browser and tabs", special = "browser"),
         BlazeView("phonebrowser", "Blaze Phone", "Blaze's own phone browser: watch it log in and book, take control, hand back", special = "phonebrowser", aliases = listOf("blaze phone", "phone browser", "blaze phone browser", "blaze's phone")),
@@ -114,7 +113,7 @@ object Views {
     fun tool(): JSONObject = JSONObject().put("type", "function").put("function", JSONObject().put("name", TOOL)
         .put("description", "Switch Blaze's own screen to one of its views: design (live preview of anything visual: a 3D scene, art, a site, UI mockup, diagram, chart, poster or slides; with no target it shows the current design; make or change designs with the design tool), " +
             "learn (flashcard decks; open it after flashcards add), memory, jobs, schedule, projects, agents, accounts, router (models/keys), skills, gallery, browser, doctor, usage, settings, " +
-            "music, video, phone (BlazeOS), doing (things Blaze is doing: routines, reminders, today's diary), look (Look & feel: backgrounds and theme), and every other id in the list. Views hidden in Simple mode still open. " +
+            "music, video, doing (things Blaze is doing: routines, reminders, today's diary), look (Look & feel: backgrounds and theme), and every other id in the list. Views hidden in Simple mode still open. " +
             "Output that fits a view is made there and the view opened, never dumped in chat. " +
             "The user can always tap Exit to come back to the chat. For design pass target = the file path (e.g. ~/site/index.html) or URL to preview, or nothing for the current design.")
         .put("parameters", JSONObject().put("type", "object").put("properties", JSONObject()

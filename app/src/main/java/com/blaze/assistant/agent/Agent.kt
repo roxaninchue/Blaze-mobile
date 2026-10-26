@@ -1538,7 +1538,7 @@ When you finish, say what you did in one short sentence.
                 if (v == Mood.IDLE && streamId >= 0) streamId = -1L   // v0.31.0: a stopped / failed turn never leaves a live droplet
                 if (v == Mood.IDLE) { status = ""; focus = emptySet() } else if (status.isBlank()) status = Friendly.between(null)
             }
-        /** Ack-and-background (HQ 22 Oct): this turn's one ack ([Ack.Gate]); null between turns. */
+        /** Ack-and-background (HQ 22 Oct): this turn's task on the ledger ([Ack.Gate], no text since 0.45.29); null between turns. */
         @Volatile var ackGate: Ack.Gate? = null
         private var _taskChip = ""
         var taskChip: String
@@ -2061,15 +2061,15 @@ When you finish, say what you did in one short sentence.
             mood = Mood.THINKING
             LlmClient.prewarm()   // speed plan step 10: open the connection while the fast lane checks
             if (!routine && ack) com.blaze.assistant.device.Haptics.tick(app)
-            // Ack now, work in the background (HQ 22 Oct 20:35): one plain message from Blaze within a second, never "done".
+            // Work in the background (HQ 22 Oct 20:35). 0.45.29: no ack line at all (it reworded the user's message, e.g.
+            // "I play guitar" -> "Playing guitar a little."); a task still running after Ack.FAST_MS only goes on the ledger.
             val gate = Ack.Gate().also { ackGate = it }
             taskChip = ""
             val turnUser = users[0].id
-            if (!routine && agentId == null && specialistId == null) Ack.local(shown)?.let { a ->
+            if (!routine && agentId == null && specialistId == null && Ack.wants(shown)) {
                 scope.launch {
-                    // 0.45.19: a task that finishes within Ack.FAST_MS (a single toggle) gets no ack, only its verified result.
                     kotlinx.coroutines.delay(Ack.holdMs(gate.at, System.currentTimeMillis()))
-                    if (job?.isActive == true) showAck(gate, a, turnUser, shown)
+                    if (job?.isActive == true) trackTask(gate, turnUser, shown)
                 }
             }
             if (byVoice && !routine) scope.launch {
@@ -2553,7 +2553,7 @@ When you finish, say what you did in one short sentence.
                 if (room >= 0 && msgs.firstOrNull { it.id == room }?.meta?.let { Duo.cardState(it) } == Duo.LIVE) setCard(room, Duo.cardMeta(Duo.STOPPED))
                 voice = Duo.Who.BLAZE; roomSink = -1L
                 duoLive = emptySet(); streamId = -1L
-                ackGate?.let { g -> g.finished = true; if (g.acked) TaskKeeper.finished(app, id, g.user) }; taskChip = ""
+                ackGate?.let { g -> g.finish(); if (g.tracked) TaskKeeper.finished(app, id, g.user) }; taskChip = ""
                 mood = Mood.IDLE
                 persist(); announce()
             }
@@ -3036,6 +3036,9 @@ When you finish, say what you did in one short sentence.
                 fun pickTools(): JSONArray {
                     if (widened) { sizeLine = "tools all ${allTools.length()} (widened)"; return allTools }
                     // v0.45.9 (ToolTruth): every agent request carries the full registered list (gateway 0.8.2 drops calls to tools not in it).
+                    // 0.45.29: a browser task's steps carry the browser tools (+ ask / search / memory); asking for another widens again.
+                    if (!bulk && com.blaze.assistant.browser.BrowserFocus.active(synchronized(turnTools) { turnTools.toList() })) {
+                        val b = com.blaze.assistant.browser.BrowserFocus.subset(allTools); sizeLine = "tools browser ${b.length()} of ${allTools.length()}"; return b }
                     if (ToolTruth.full) { sizeLine = "tools all ${allTools.length()}"; return ToolTruth.forRequest(allTools) { allTools } }
                     val diet = ToolRouter.select(allTools, groupsOn)
                     val sent = ToolPick.keepOrder(sentOrder, ToolPick.pick(diet, userNow, usedNames + synchronized(turnTools) { turnTools.toSet() }, groupsOn, keepAll = bulk,
@@ -3193,9 +3196,9 @@ When you finish, say what you did in one short sentence.
                             // 0.45.20: the step's limit starts once the gateway has the message (an offline send keeps retrying).
                             val got = CloudRuns.timedAfterSent(ct, minOf(budget, TurnDeadline.CLOUD_STEP_MS)) {
                                 CloudRuns.step(ct, r, tools, onText, { line -> scope.launch { if (mood != Mood.IDLE) status = line } },
-                                    { a -> val g = ackGate; val u = turnFrom; val said = lastUserText(); scope.launch {
-                                        // 0.45.19: the gateway's ack waits out Ack.FAST_MS too; a fast answer goes out alone.
-                                        if (g != null) { kotlinx.coroutines.delay(Ack.holdMs(g.at, System.currentTimeMillis())); if (job?.isActive == true) showAck(g, a, u, said) } } },
+                                    { _ -> val g = ackGate; val u = turnFrom; val said = lastUserText(); scope.launch {
+                                        // 0.45.29: the gateway's `ack` text is never shown; it only marks the turn as a task (after Ack.FAST_MS).
+                                        if (g != null) { kotlinx.coroutines.delay(Ack.holdMs(g.at, System.currentTimeMillis())); if (job?.isActive == true) trackTask(g, u, said) } } },
                                     { o -> runEvent(ct, o) }).also { ended = true }
                             }
                             if (got != null) return got
@@ -3781,7 +3784,7 @@ When you finish, say what you did in one short sentence.
                             JSONObject().put("role", "tool")
                                 .put("tool_call_id", call.optString("id", "call_$step$i"))
                                 .put("name", name)
-                                .put("content", if (!Settings.longChat || name in LongChat.keepWhole || FastActions.isScreen(result)) result else LongChat.aside(result))
+                                .put("content", if (!Settings.longChat || LongChat.keeps(name) || FastActions.isScreen(result)) result else LongChat.aside(result))
                         )
                         // v0.30.4: only the newest screen stays in the history; older readouts are dropped in place.
                         if (FastActions.isScreen(result)) FastActions.pruneScreens(history)
@@ -4122,7 +4125,7 @@ When you finish, say what you did in one short sentence.
                 catch (e: CancellationException) { throw e }
                 catch (e: Throwable) { com.blaze.assistant.device.CrashLog.error("tool $name", e); ToolGuide.crash(name, e) }
             // v0.39.0: a finished undoable action under Autopilot gets the 10-second Undo bar; a missing access gets a fix card.
-            if (agentId == null && this === cur) try { UndoCenter.afterTool(name, args, r0, Modes.autopilot || ackGate?.acked == true, undoBefore) } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("Agent: UndoCenter.afterToolname args r0 Modes.a", e) }
+            if (agentId == null && this === cur) try { UndoCenter.afterTool(name, args, r0, Modes.autopilot || ackGate?.tracked == true, undoBefore) } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("Agent: UndoCenter.afterToolname args r0 Modes.a", e) }
             val fix = if (agentId == null) FixCards.kindOf(r0) else null
             if (fix != null) FixCards.afterTool(name, r0)
             val r = if (fix != null) r0 + FixCards.NOTE else r0
@@ -4975,55 +4978,34 @@ When you finish, say what you did in one short sentence.
             }
         }
 
-        /**
-         * Ack-and-background: shows [a] as a plain Blaze message when [gate] lets it (first ack of the turn, nothing has
-         * answered yet, it doesn't claim done). The model never sees acks; off screen it lands as a text-style notification.
-         */
         /** 0.45.20: a run event: the delivery label (Sent / Read) of the turn's bubbles, and the step pill. */
         private fun runEvent(ct: CloudRuns.Turn, o: JSONObject) {
             try { Delivery.eventOf(o)?.let { Delivery.tracker().apply(ct.gids, it) } } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("Agent: delivery event", e) }
             if (agentId == null) StepPills.onEvent(id, o)
         }
 
-        fun showAck(gate: Ack.Gate, a: String, turnUser: Long, said: String) {
-            if (gate !== ackGate || streamId >= 0 || duoLive.isNotEmpty()) return
-            // 0.45.19: an ack that carries call text ("browser_open(...)") is never shown; nothing is better than code.
-            if (try { CallScan.has(a) || ToolLeak.forDisplay(a).trim() != a.trim() } catch (_: Throwable) { false }) return
+        /**
+         * Ack-and-background without words (0.45.29): a task still running after Ack.FAST_MS goes on the task ledger
+         * (TaskKeeper: kept alive when the user leaves, never lost silently) and the quiet task chip shows. Nothing is
+         * added to the chat and nothing is notified: the next thing the user sees from Blaze is what the model wrote.
+         */
+        fun trackTask(gate: Ack.Gate, turnUser: Long, said: String) {
+            if (gate !== ackGate) return
             val after = msgs.dropWhile { it.id != turnUser }.drop(1)
-            if (after.any { it.role == Role.BLAZE || it.role == Role.ERROR }) return
-            if (!gate.take(a)) return
+            if (after.any { (it.role == Role.BLAZE && it.meta != Ack.META) || it.role == Role.ERROR }) return
+            if (!gate.track()) return
             gate.user = turnUser
             gate.said = said
-            val aid = ids.getAndIncrement()
-            msgs = msgs + ChatMessage(aid, Role.BLAZE, a.trim(), meta = Ack.META)
             taskChip = Ack.chip(said)
-            persist()
             TaskKeeper.started(app, TaskKeeper.Task(id, turnUser, said, System.currentTimeMillis()))
-            if (!(this === cur && (inForeground || overlayOpen))) {
-                if (isPrivate) Notifier.reply("Blaze got your message in your private chat.", false, id)
-                else Notifier.ack(a.trim(), id)
-            }
         }
 
-        /**
-         * Ack-and-background: the end of an acknowledged turn. The last reply becomes "Done ✓ …" only when every action
-         * the turn ran was verified (ClaimCheck has already made a failure honest); the task chip goes away.
-         */
+        /** The end of a tracked turn: the task leaves the ledger and the chip goes. The reply is left exactly as written. */
         private fun finishAck() {
             val gate = ackGate ?: return
-            gate.finished = true
+            gate.finish()
             taskChip = ""
-            if (!gate.acked) return
-            TaskKeeper.finished(app, id, gate.user)
-            val done = synchronized(turnDone) { turnDone.toList() }
-            // 0.45.19: only actions count; a status check or a page read never makes "Done ✓".
-            val last = done.filterNot { Ack.isReadOnly(it.name) }.groupBy { it.name }.mapValues { it.value.last().status }
-            val verified = last.count { it.value == ToolVerify.Status.VERIFIED }
-            val unproven = last.count { it.value != ToolVerify.Status.VERIFIED }
-            val r = msgs.lastOrNull() ?: return
-            if (r.role != Role.BLAZE || r.meta == Ack.META) return
-            val t = Ack.receipt(r.text, verified, unproven, rewrote = false, asked = gate.said)
-            if (t != r.text) msgs = msgs.map { if (it.id == r.id) it.copy(text = t) else it }
+            if (gate.tracked) TaskKeeper.finished(app, id, gate.user)
         }
 
         /** v0.42.0: a Cloud run's reply that arrived after its turn ended (app closed, connection lost). */

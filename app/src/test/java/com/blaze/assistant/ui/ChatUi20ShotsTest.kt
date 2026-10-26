@@ -72,8 +72,7 @@ class ChatUi20ShotsTest {
     }
 
     private fun palette(id: String, dark: Boolean): BlazeColors {
-        val base = if (dark) DarkColors else LightColors
-        return LivingThemes.accentFor(id, null)?.let { a -> base.copy(accent = Color(if (dark) a else LivingThemes.onLight(a))) } ?: base
+        return blazePalette(id, dark, null)
     }
 
     /** A still stand-in for the theme's scene: its ground gradient plus a few bright particles right behind the bubbles. */

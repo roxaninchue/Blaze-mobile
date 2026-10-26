@@ -23,7 +23,8 @@ object Friendly {
             "web_search" -> "Searching the web for " + q(v("query"))
             "fetch_page", "browser_read" -> "Reading " + host(or(v("url"), "a web page"))
             "browser_open", "open_url" -> "Opening " + host(or(v("url"), v("target")))
-            "browser_click", "browser_type", "browser_scroll", "browser_back", "browser_tabs", "browser_show" -> "Using the browser"
+            "browser_click", "browser_type", "browser_scroll", "browser_back", "browser_tabs", "browser_show",
+            "browser_select", "browser_key", "browser_wait", "browser_find" -> "Using the browser"
             "browser_vpn" -> when (v("action")) { "connect" -> "Switching the browser to " + or(v("country"), "another country"); "disconnect" -> "Turning the browser VPN off"; else -> "Checking the browser VPN" }
             "http_request" -> "Calling " + host(v("url"))
             "download_file" -> "Downloading " + host(v("url"))

@@ -10,14 +10,14 @@ import java.util.concurrent.ConcurrentHashMap
  * this song", "what was the movie I was just watching", "turn this up", "what's on my screen" work without asking.
  *
  *  - [Now]: live things, one per source key (the song in Blaze Music, the video in Blaze Video, another app's media
- *    session, the Blaze screen or view in front, the BlazeOS app in front, the design open). Features call [set] /
+ *    session, the Blaze screen or view in front, the design open). Features call [set] /
  *    [clear] from their own callbacks; a playing item's position is worked out at read time, so nothing has to tick.
  *  - [Event]: what just happened ("watched Dune, stopped at 41:02 of 2:35:12"), newest first, kept 3 days on disk
  *    (filesDir/awareness.json) so "the movie I was just watching" still works after Blaze restarts.
  *  - [promptBlock]: a compact WHAT'S GOING ON line in every prompt's changing tail (never the cached prefix).
  *  - [TOOL] blaze_now: the full report: everything live, the last 30 events and every Blaze feature with what it's for
  *    and the tool that drives it.
- * The formatting is pure (AwarenessTest); Android readers (media sessions, BlazeOS) plug in through [readers].
+ * The formatting is pure (AwarenessTest); Android readers (media sessions) plug in through [readers].
  */
 object Awareness {
     const val TOOL = "blaze_now"
@@ -38,7 +38,7 @@ object Awareness {
     private val events = ArrayList<Event>()
     @Volatile private var file: File? = null
 
-    /** Extra live lines read at prompt time (Android side: other apps' media, BlazeOS). Each must be quick and never throw. */
+    /** Extra live lines read at prompt time (Android side: other apps' media). Each must be quick and never throw. */
     val readers = java.util.concurrent.CopyOnWriteArrayList<() -> List<Now>>()
 
     fun init(filesDir: File) {
@@ -160,7 +160,6 @@ object Awareness {
         append("- Gallery: photos and everything Blaze makes; clean-up, trash, editor. Drive it with gallery / gallery_ops.\n")
         append("- Camera: Photo (Night, HDR), Document, Text (prices, sums), barcodes. blaze_camera, camera_math.\n")
         append("- Browser: Blaze's own browser (browser_open / browser_show) and installed site apps.\n")
-        append("- BlazeOS: the virtual phone with its own apps, App Store, Settings; native (WebAssembly) and web apps.\n")
         append("- Blaze Link: the paired PC (ask_pc).\n")
         append("- Simple / Advanced (Settings): Simple hides Terminal, MCP, BlazeRouter, AI models and developer settings from lists; every view and / command still works and you can open any of them.\n")
         append("- Home and Chat: with Swipe navigation (Settings › Navigation, the default) Blaze opens on Home (weather, news, heads-ups); the user swipes up the handle for Chat and pulls down from the top for Home; open_view view=home shows Home. Classic tabs is the old Chat | Projects | Home pill. 'surface' in Live now says which is in front.\n")
@@ -186,7 +185,7 @@ object Awareness {
     }
 
     fun tool(): JSONObject = JSONObject().put("type", "function").put("function", JSONObject().put("name", TOOL)
-        .put("description", "What's going on in Blaze and on the phone: what's playing (Blaze Music, Blaze Video, Spotify, YouTube and other apps), where a video was left, the screen and view in front, the BlazeOS app open, the design open, what the user just did, and every Blaze feature with the tool that drives it. Use it for 'this song', 'the movie I was watching', 'what am I looking at', 'what can you do'.")
+        .put("description", "What's going on in Blaze and on the phone: what's playing (Blaze Music, Blaze Video, Spotify, YouTube and other apps), where a video was left, the screen and view in front, the design open, what the user just did, and every Blaze feature with the tool that drives it. Use it for 'this song', 'the movie I was watching', 'what am I looking at', 'what can you do'.")
         .put("parameters", JSONObject().put("type", "object").put("properties", JSONObject())))
 
     // ---------------- disk ----------------

@@ -1022,13 +1022,6 @@ open class ShotsTest {
     }
 
 
-    /** v0.33.2 BlazeOS home screen (design B): status row, frosted widgets, squircle icons, dock, the dusk wallpaper. */
-    @Test fun blazeOsHome() {
-        com.blaze.assistant.blazeos.BlazeOs.power.value = com.blaze.assistant.blazeos.Power.ON
-        com.blaze.assistant.blazeos.BlazeOs.tasks.value = com.blaze.assistant.blazeos.OsTasks()
-        shot("57-blazeos-home", dark = true) { com.blaze.assistant.blazeos.BlazeOsScreen(onExit = {}) }
-    }
-
     /** Wave A 1 (items 4 + 26): video player with the thin scrub bar and no swipe-seek hint, plus the Music seek bar. */
     @Test fun waveA1PlayerScrub() = shot("90-wa1-player-scrub", dark = true) {
         val c = LocalBlaze.current

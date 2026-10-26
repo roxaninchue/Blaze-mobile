@@ -76,7 +76,10 @@ object BubblePalette {
     /** Everything that can sit behind a bubble: pure black, pure white and the page colour (scenes sit between). */
     fun grounds(c: BlazeColors): List<Color> = listOf(Color.Black, Color.White, c.paper.copy(alpha = 1f))
 
+    /** 0.45.29: the theme's own bubble base when the palette has one ([blazePalette], [BubbleTones]); else the neutral below. */
     private fun base(c: BlazeColors, mine: Boolean): Color = when {
+        mine && c.bubbleMe != Color.Unspecified -> c.bubbleMe
+        !mine && c.bubbleBlaze != Color.Unspecified -> c.bubbleBlaze
         c.dark && mine -> lerp(Color(0xFF26262C), c.accent.copy(alpha = 1f), 0.26f)
         c.dark -> Color(0xFF1B1B20)
         mine -> lerp(Color.White, c.accent.copy(alpha = 1f), 0.14f)

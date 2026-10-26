@@ -82,31 +82,129 @@ object MemoryMerge {
     fun related(mems: List<Mind.Mem>): String =
         mems.flatMap { it.related.split(',') }.map { it.trim() }.filter { it.isNotEmpty() }.distinctBy { it.lowercase() }.joinToString(", ").take(200)
 
+    /** Related subjects of two lines, each once (a merge or a duplicate save keeps the links of both). */
+    fun unionRelated(a: String, b: String): String =
+        (a.split(',') + b.split(',')).map { it.trim() }.filter { it.isNotEmpty() }.distinctBy { it.lowercase() }.joinToString(", ").take(200)
+
+    /** One line's precomputed features (computed once per pass, not per pair). */
+    private class Feat(val m: Mind.Mem, val norm: String, val words: Set<String>, val key: Set<String>, val entity: String, val neg: Boolean) {
+        val tokens: Set<String> = words + key + ("#" + norm)
+    }
+
+    private fun feat(m: Mind.Mem) = Feat(m, norm(m.text), Mind.words(m.text), MemoryKey.key(m.text), MemoryKey.entity(m.subject), MemoryKey.negative(m.text))
+
+    private fun jac(a: Set<String>, b: Set<String>): Double {
+        if (a.isEmpty() || b.isEmpty()) return 0.0
+        val inter = a.count { it in b }
+        return inter.toDouble() / (a.size + b.size - inter)
+    }
+
+    private fun coversW(big: Set<String>, small: Set<String>) = small.size >= 3 && big.containsAll(small)
+
+    private fun alike(a: Feat, b: Feat): Boolean {
+        val j = jac(a.words, b.words)
+        return a.norm == b.norm || j >= NEAR || coversW(a.words, b.words) || coversW(b.words, a.words) ||
+            (a.m.subject.equals(b.m.subject, true) && a.m.kind == b.m.kind && j >= GROUP) ||
+            (a.m.kind == b.m.kind && a.entity == b.entity && MemoryKey.sameFact(a.key, b.key, a.neg, b.neg))
+    }
+
     /**
-     * Near-duplicate groups for the automatic pass: lines about the same subject at least [GROUP] alike, or any two
-     * lines that are [nearDup] / one [covers] the other. Each group has 2..[GROUP_MAX] lines, oldest first, and its
-     * merged text fits in [Mind.MERGED_MAX].
+     * Near-duplicate groups for the automatic pass: lines about the same subject at least [GROUP] alike, any two lines
+     * that are [nearDup] / one [covers] the other, or the same fact about the same subject and kind in other words
+     * ([MemoryKey.sameFact]). Each group has 2..[GROUP_MAX] lines, oldest first, and its merged text fits in
+     * [Mind.MERGED_MAX].
+     *
+     * 0.45.29 (Tidy up froze and crashed on 253 lines): every line's words are worked out once, and a pair is only
+     * compared when the line shares a word with the group (lines with nothing in common can't be alike), so a pass over
+     * a few hundred lines takes milliseconds. [cancelled] stops it between lines.
      */
-    fun groups(mems: List<Mind.Mem>): List<List<Mind.Mem>> {
-        val sorted = mems.sortedWith(compareBy({ it.created }, { it.id }))
-        val used = HashSet<Long>()
+    fun groups(mems: List<Mind.Mem>, cancelled: () -> Boolean = { false }): List<List<Mind.Mem>> {
+        val feats = mems.sortedWith(compareBy({ it.created }, { it.id })).map { feat(it) }
+        val used = BooleanArray(feats.size)
         val out = ArrayList<List<Mind.Mem>>()
-        for (m in sorted) {
-            if (m.id in used) continue
-            val g = arrayListOf(m)
-            for (o in sorted) {
-                if (o.id == m.id || o.id in used || g.size >= GROUP_MAX) continue
-                if (g.any { alike(it, o) }) g += o
+        for (i in feats.indices) {
+            if (used[i]) continue
+            if (cancelled()) break
+            val g = arrayListOf(feats[i])
+            val toks = HashSet(feats[i].tokens)
+            for (o in feats.indices) {
+                if (o == i || used[o] || g.size >= GROUP_MAX) continue
+                val f = feats[o]
+                if (f.tokens.none { it in toks }) continue
+                if (g.any { alike(it, f) }) { g += f; toks += f.tokens }
             }
             if (g.size < 2) continue
-            if (combine(g.map { it.text }) == null) continue
-            used += g.map { it.id }
-            out += g
+            if (combine(g.map { it.m.text }) == null) continue
+            for (f in g) used[feats.indexOf(f)] = true
+            out += g.map { it.m }
         }
         return out
     }
+}
 
-    private fun alike(a: Mind.Mem, b: Mind.Mem): Boolean =
-        nearDup(a.text, b.text) || covers(a.text, b.text) || covers(b.text, a.text) ||
-            (a.subject.equals(b.subject, true) && a.kind == b.kind && Mind.jaccard(a.text, b.text) >= GROUP)
+/**
+ * 0.45.29 write-time de-duplication (and the Tidy up pass): the same fact said another way. A line's key is its content
+ * words, lower-cased, with filler words left out, a light stem ("plays" / "playing" -> "play") and the usual ways of
+ * saying you like something folded together ("loves", "enjoys", "a fan of" -> "like"). Two lines about the same entity
+ * and kind are the same fact when their keys mostly overlap, or one key is the other plus a detail or two (then the
+ * fuller wording is kept). A "not" / "never" / "dislike" on one side only means a different fact. Numbers count, so
+ * "wakes at 6" and "wakes at 7" stay apart. Pure (MemoryDedupTest).
+ */
+object MemoryKey {
+    private val STOP = setOf(
+        "a", "an", "the", "is", "are", "was", "were", "be", "been", "being", "am", "to", "of", "in", "on", "at", "for", "and", "or",
+        "but", "my", "me", "i", "you", "your", "user", "with", "so", "just", "also", "really", "very", "quite", "some", "bit",
+        "little", "lot", "lots", "much", "mostly", "usually", "often", "always", "that", "this", "it", "its", "has", "have",
+        "had", "does", "do", "did", "than", "as", "by", "from", "about", "into", "big", "huge", "inferred", "they", "them",
+        "their", "he", "she", "his", "her", "s",
+    )
+    private val SYN = mapOf(
+        "love" to "like", "loves" to "like", "loved" to "like", "loving" to "like", "enjoy" to "like", "enjoys" to "like",
+        "enjoyed" to "like", "enjoying" to "like", "adore" to "like", "adores" to "like", "fan" to "like", "fans" to "like", "likes" to "like", "liked" to "like",
+        "dislikes" to "dislike", "disliked" to "dislike", "hate" to "dislike", "hates" to "dislike", "hated" to "dislike",
+        "prefers" to "prefer", "preferred" to "prefer", "favourite" to "favorite", "favourites" to "favorite", "favorites" to "favorite",
+    )
+    private val NEG = setOf("not", "no", "never", "nt", "cannot", "without", "dislike")
+
+    /** Words, lower case: "doesn't" -> "doesnt", digits kept at any length, letters from two up. */
+    fun tokens(text: String): List<String> = text.lowercase().replace("\u2019", "'").replace("n't", "nt")
+        .split(Regex("[^\\p{L}\\p{N}]+")).filter { it.isNotEmpty() && (it.length > 1 || it[0].isDigit()) }
+
+    fun stem(w0: String): String {
+        SYN[w0]?.let { return it }
+        var w = w0
+        if (w.length > 5 && w.endsWith("ing")) w = w.dropLast(3)
+        else if (w.length > 4 && w.endsWith("ies")) w = w.dropLast(3) + "y"
+        else if (w.length > 4 && w.endsWith("ed")) w = w.dropLast(2)
+        else if (w.length > 4 && (w.endsWith("ches") || w.endsWith("shes") || w.endsWith("sses") || w.endsWith("xes"))) w = w.dropLast(2)
+        else if (w.length > 3 && w.endsWith("s") && !w.endsWith("ss") && !w.endsWith("us")) w = w.dropLast(1)
+        return SYN[w] ?: w
+    }
+
+    /** True when the line says "not" / "never" / "dislikes" (a different fact from the plain one). */
+    fun negative(text: String): Boolean = tokens(text).any { it in NEG || it.endsWith("nt") && it.length in 4..8 && it.dropLast(2) in setOf("does", "do", "did", "is", "are", "was", "were", "ca", "wo", "has", "have", "should", "would", "could") || SYN[it] == "dislike" }
+
+    /** The content-word key of a line. */
+    fun key(text: String): Set<String> = tokens(text).map { stem(it) }.filter { it !in STOP && it !in NEG }.toSet()
+
+    /** Who a line is about, for matching: the user under any of their names ("You", "me", "user") is one entity. */
+    fun entity(subject: String): String {
+        val s = subject.trim().lowercase().removeSuffix("'s").replace(Regex("\\s+"), " ")
+        return if (s.isEmpty() || s in setOf("you", "me", "i", "myself", "user", "the user", "yourself", "self", "owner")) "you" else s
+    }
+
+    /** True when keys [a] and [b] (with their negation) are the same fact. */
+    fun sameFact(a: Set<String>, b: Set<String>, negA: Boolean, negB: Boolean): Boolean {
+        if (a.isEmpty() || b.isEmpty() || negA != negB) return false
+        val inter = a.count { it in b }
+        if (inter == 0) return false
+        val union = a.size + b.size - inter
+        if (inter.toDouble() / union >= 0.6) return true
+        val (small, big) = if (a.size <= b.size) a to b else b to a
+        return small.size >= 2 && inter == small.size && big.size - small.size <= 2
+    }
+
+    /** True when [newer] says more than [older] (a fuller key, or the same key in more words). */
+    fun moreSpecific(newKey: Set<String>, oldKey: Set<String>, newer: String, older: String): Boolean =
+        newKey.size > oldKey.size || (newKey.size == oldKey.size && newer.trim().length > older.trim().length + 3)
 }

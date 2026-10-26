@@ -62,6 +62,7 @@ import com.blaze.assistant.agent.Memory
 import com.blaze.assistant.agent.Mind
 import com.blaze.assistant.agent.Settings
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
@@ -88,6 +89,12 @@ fun MemoryPage(mems0: List<Mind.Mem>? = null, mode0: String = "", select0: Long 
     var picking by remember { mutableStateOf(false) }
     var picked by remember { mutableStateOf(emptySet<Long>()) }
     var mergeNote by remember { mutableStateOf("") }
+    // 0.45.29: Tidy up runs off the main thread with progress and a Stop; the page updates once, when it's done.
+    val tidyScope = androidx.compose.runtime.rememberCoroutineScope()
+    val tidyProgress = remember { kotlinx.coroutines.flow.MutableStateFlow<Pair<Int, Int>?>(null) }
+    val tidyNow by tidyProgress.collectAsState()
+    val tidyStop = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
+    var tidying by remember { mutableStateOf(false) }
     // v0.26.3: one plain line when blaze.db couldn't be used (Blaze is on the copy it kept in mind.db).
     val notice = if (mems0 == null) Mind.notice else null
 
@@ -115,11 +122,29 @@ fun MemoryPage(mems0: List<Mind.Mem>? = null, mode0: String = "", select0: Long 
     if (Mind.ready && mems0 == null && mems.size >= 2) {
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (!picking) {
+            if (tidying) {
+                KitButton("Stop", Btn.LINE) { tidyStop.set(true) }
+            } else if (!picking) {
                 KitButton("Select to merge", Btn.GHOST) { picking = true; picked = emptySet(); sel = 0L; mergeNote = ""; if (mode != "list") { mode = "list" } }
                 KitButton("Tidy up duplicates", Btn.GHOST) {
-                    val n = Mind.consolidate()
-                    mergeNote = if (n == 0) "No duplicates to merge" else "Merged $n ${if (n == 1) "group" else "groups"} of duplicates"
+                    tidying = true; tidyStop.set(false); tidyProgress.value = null; mergeNote = ""
+                    tidyScope.launch {
+                        val n = try {
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                Mind.consolidate(cancelled = { tidyStop.get() }, progress = { d, t -> tidyProgress.value = d to t })
+                            }
+                        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Throwable) {
+                            com.blaze.assistant.device.CrashLog.quiet("MemoryPage: tidy", e); -1
+                        }
+                        val stopped = tidyStop.get()
+                        tidying = false; tidyProgress.value = null
+                        mergeNote = when {
+                            n < 0 -> "Couldn't tidy up right now. Nothing was lost."
+                            stopped -> "Stopped. Merged $n ${if (n == 1) "group" else "groups"} of duplicates; the rest are untouched"
+                            n == 0 -> "No duplicates to merge"
+                            else -> "Merged $n ${if (n == 1) "group" else "groups"} of duplicates"
+                        }
+                    }
                 }
             } else {
                 KitButton(if (picked.size >= 2) "Merge ${picked.size}" else "Merge", Btn.ACCENT, enabled = picked.size >= 2) {
@@ -131,6 +156,8 @@ fun MemoryPage(mems0: List<Mind.Mem>? = null, mode0: String = "", select0: Long 
             }
         }
         if (picking) Label("Tap the memories to merge into one line", size = 9.sp, color = c.sub, modifier = Modifier.padding(top = 6.dp))
+        if (tidying) Label(tidyNow?.let { (d, t) -> if (t == 0) "Looking for duplicates\u2026" else "Tidying up\u2026 $d of $t" } ?: "Looking for duplicates\u2026",
+            size = 9.sp, color = c.sub, modifier = Modifier.padding(top = 6.dp))
         if (mergeNote.isNotEmpty()) Label(mergeNote, size = 9.sp, color = c.accent, modifier = Modifier.padding(top = 6.dp))
     }
     if (matches != null) Label(if (matches.isEmpty()) "No memory matches \u201c$q\u201d" else "${matches.size} ${if (matches.size == 1) "match" else "matches"}",

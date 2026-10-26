@@ -85,7 +85,7 @@ class AwarenessTest {
         Awareness.set(Awareness.Now("music", "Playing", "Song", "Blaze Music", posMs = 0, durMs = 1000, playing = true))
         Awareness.readers += { listOf(Awareness.Now("media:x", "Playing", "song", "Other")) }   // same title: dropped
         Awareness.readers += { throw IllegalStateException("boom") }
-        Awareness.readers += { listOf(Awareness.Now("blazeos", "Open", "Snake", "BlazeOS")) }
+        Awareness.readers += { listOf(Awareness.Now("view", "Open", "Snake", "Blaze")) }
         val titles = Awareness.nows().map { it.title }
         assertEquals(listOf("Song", "Snake"), titles)
         assertFalse(Awareness.promptBlock().isBlank())

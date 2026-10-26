@@ -29,10 +29,16 @@ object BlazeThread {
     const val PERSON_KEY = "blaze"
     const val PERSON_NAME = "Blaze"
 
-    enum class Kind { ACK, REPLY, RESULT, FAILED, CHECK_IN, HEADS_UP, QUESTION, FOLLOW_UP, CALL_OFFER }
+    /**
+     * What a line of the thread is. [USER] (0.45.29) is the user's own inline reply, shown as theirs ("You") in their
+     * exact words while Blaze works on the answer. There is no ack kind: Blaze never posts a line it didn't write.
+     */
+    enum class Kind { USER, REPLY, RESULT, FAILED, CHECK_IN, HEADS_UP, QUESTION, FOLLOW_UP, CALL_OFFER }
 
-    /** One line of the thread. */
-    data class Msg(val at: Long, val text: String, val kind: Kind)
+    /** One line of the thread. [fromUser] lines are drawn as the user's ("You"), never as Blaze's. */
+    data class Msg(val at: Long, val text: String, val kind: Kind) {
+        val fromUser: Boolean get() = kind == Kind.USER
+    }
 
     /** Channels to delete after [CHANNEL] is created: the old message channels that still exist. */
     fun toDelete(existing: Collection<String>): List<String> = OLD_CHANNELS.filter { it in existing && it != CHANNEL }
@@ -49,7 +55,7 @@ object BlazeThread {
         val t = m.text.trim()
         if (t.isEmpty()) return thread.toList()
         // the same line twice in a row (a re-post) shows once
-        if (thread.lastOrNull()?.text == t) thread.removeLast()
+        if (thread.lastOrNull()?.let { it.text == t && it.fromUser == m.fromUser } == true) thread.removeLast()
         thread.addLast(m.copy(text = t.take(1000)))
         while (thread.size > keep) thread.removeFirst()
         return thread.toList()
@@ -80,7 +86,7 @@ object QuickReplies {
         val text = raw.trim().removePrefix("Done \u2713").trim()
         if (text.isEmpty()) return emptyList()
         val out: List<String> = when {
-            kind == BlazeThread.Kind.ACK || ackRe.containsMatchIn(text) -> emptyList()
+            kind == BlazeThread.Kind.USER || ackRe.containsMatchIn(text) -> emptyList()
             kind == BlazeThread.Kind.CALL_OFFER -> listOf("Not now")
             // honest fallback ("I turned it on but couldn't check it; it should be on")
             uncheckedRe.containsMatchIn(text) && turnedOn.containsMatchIn(text) -> listOf("Check it again", "Thanks")

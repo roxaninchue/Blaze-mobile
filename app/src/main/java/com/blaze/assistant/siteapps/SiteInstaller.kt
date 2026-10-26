@@ -22,9 +22,8 @@ import java.net.URL
  * v0.33.2 "Install app" for websites, the Android side. [inspect] reads the page and its web app manifest and fetches
  * the real icon in SiteLogic.iconOrder (manifest icons → apple-touch-icon → largest rel=icon → favicon.ico), drawing a
  * letter icon only when none decodes. Then:
- * - outside BlazeOS ([installOnPhone]): saved in filesDir/siteapps/ and pinned as a real launcher shortcut
- *   (ShortcutManagerCompat.requestPinShortcut, IconCompat bitmap) that opens [SiteAppActivity];
- * - inside BlazeOS ([installInBlazeOs]): an OsRegistry web-app entry with the icon and its own data folder.
+ * ([installOnPhone]) saved in filesDir/siteapps/ and pinned as a real launcher shortcut (ShortcutManagerCompat.requestPinShortcut,
+ * IconCompat bitmap) that opens [SiteAppActivity]. (0.45.29: the "inside BlazeOS" install went with BlazeOS.)
  */
 object SiteInstaller {
     const val ICON_PX = 192
@@ -88,7 +87,7 @@ object SiteInstaller {
 
     fun png(b: Bitmap): ByteArray = ByteArrayOutputStream().also { b.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
 
-    // ---------------- outside BlazeOS: the phone's launcher ----------------
+    // ---------------- the phone's launcher ----------------
 
     private fun root(ctx: Context) = File(ctx.filesDir, "siteapps")
     private fun listFile(ctx: Context) = File(root(ctx), "apps.json")
@@ -122,26 +121,12 @@ object SiteInstaller {
         if (ok) "Adding ${app.name} to your home screen." else "Installed ${app.name}. Your launcher doesn't let apps pin icons; open it from the browser menu › Installed apps."
     }
 
-    /** Uninstall (outside BlazeOS): the shortcut is disabled, the app's files go and its own WebView profile is wiped. */
+    /** Uninstall: the shortcut is disabled, the app's files go and its own WebView profile is wiped. */
     fun uninstall(ctx: Context, id: String) {
         try { ShortcutManagerCompat.disableShortcuts(ctx, listOf(id), "This app was uninstalled") } catch (_: Exception) { }
         try { ShortcutManagerCompat.removeDynamicShortcuts(ctx, listOf(id)) } catch (_: Exception) { }
         try { File(root(ctx), id).deleteRecursively() } catch (_: Exception) { }
         save(ctx, installed(ctx).filter { it.id != id })
         SiteAppActivity.wipeProfile(id)
-    }
-
-    // ---------------- inside BlazeOS ----------------
-
-    /** Adds the site to BlazeOS: an OsRegistry web-app entry (hosted url), its icon file and its own data folder. Null = done. */
-    suspend fun installInBlazeOs(ins: Inspected, name: String = ins.app.name): String? {
-        val a = ins.app
-        val m = com.blaze.assistant.blazeos.OsManifestData(
-            id = a.id, name = name.trim().ifEmpty { a.name }.take(30), version = "1.0", versionCode = 1,
-            icon = com.blaze.assistant.blazeos.OsIcon(file = "icon.png"),
-            entry = com.blaze.assistant.blazeos.OsEntry(com.blaze.assistant.blazeos.OsManifest.WEB, url = a.startUrl),
-            description = "Installed from ${SiteLogic.hostOf(a.startUrl)}", author = SiteLogic.hostOf(a.startUrl), category = "Websites",
-            themeColor = a.themeColor, backgroundColor = a.backgroundColor, scope = a.scope)
-        return com.blaze.assistant.blazeos.BlazeOs.installSite(m, png(ins.icon))
     }
 }

@@ -10,7 +10,7 @@ import android.webkit.WebView
 
 /**
  * v0.33.3: pure rules for "should this navigation leave the WebView for another app?" (tested in AppLinksTest).
- * Used by the Blaze browser, the BlazeOS Browser and SiteAppActivity.
+ * Used by the Blaze browser and SiteAppActivity.
  */
 object RedirectRules {
     enum class Kind {

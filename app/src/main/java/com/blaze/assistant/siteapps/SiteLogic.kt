@@ -9,7 +9,7 @@ import java.net.URI
  * link, icon links, theme-color, title), parsing a web app manifest, picking the site's real icon in the owner's order
  * (manifest icons, largest and maskable first, then apple-touch-icon, then the largest <link rel=icon>, then
  * /favicon.ico, and only then a generated letter icon), the app's id and scope, and which links stay inside the app.
- * The Android side (fetching, decoding, shortcuts, BlazeOS install) is SiteInstaller.kt; the app window is
+ * The Android side (fetching, decoding, shortcuts) is SiteInstaller.kt; the app window is
  * SiteAppActivity.kt.
  */
 

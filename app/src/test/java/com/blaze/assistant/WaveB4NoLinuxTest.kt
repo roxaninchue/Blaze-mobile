@@ -6,8 +6,6 @@ import com.blaze.assistant.agent.Commands
 import com.blaze.assistant.agent.ToolRouter
 import com.blaze.assistant.agent.ToolTruth
 import com.blaze.assistant.agent.ToolVerify
-import com.blaze.assistant.blazeos.OsApps
-import com.blaze.assistant.blazeos.OsManifest
 import com.blaze.assistant.terminal.LinuxDesktopCleanup
 import com.blaze.assistant.terminal.TermLogic
 import com.blaze.assistant.ui.Views
@@ -71,15 +69,6 @@ class WaveB4NoLinuxTest {
             val t = src(f)
             assertFalse(f, t.contains("PlusItem(\"linux\"")); assertFalse(f, t.contains("LinuxDesktopPage")); assertFalse(f, t.contains("KeepDesktopRow"))
         }
-    }
-
-    @Test fun blazeOsHasNoLinuxApps() {
-        assertFalse("linux" in OsApps.builtinKeys)
-        assertFalse("linux" in OsManifest.types)
-        assertTrue(OsManifest.parse("""{"id":"x.eyes","name":"Eyes","entry":{"type":"linux","command":"xeyes"}}""") is OsManifest.Parsed.Bad)
-        val cat = OsManifest.catalog(file("src/main/assets/blazeos/catalog.json").readText())
-        assertTrue(cat.errors.toString(), cat.errors.isEmpty())
-        assertFalse(file("src/main/assets/blazeos/catalog.json").readText().contains("\"linux\""))
     }
 
     @Test fun manifestDropsDesktopServicesAndPermission() {

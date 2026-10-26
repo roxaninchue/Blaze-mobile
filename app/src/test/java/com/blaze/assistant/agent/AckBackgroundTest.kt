@@ -12,7 +12,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Ack now, work in the background, report when done (HQ 22 Oct 20:35 / 20:36). */
+/** Work in the background, report when done (HQ 22 Oct 20:35 / 20:36); since 0.45.29 without any ack text. */
 class AckBackgroundTest {
 
     private val greetings = listOf("hi", "Hey Blaze", "hello!", "good morning", "thanks", "thank you", "ok", "lol", "how are you?",
@@ -25,57 +25,17 @@ class AckBackgroundTest {
         "schedule a reminder every Monday at 8", "translate this to French", "summarise this article", "export my music to Downloads",
         "find me a cheap flight to Lusaka", "wake me up at 5", "add milk to my shopping list")
 
-    @Test fun greetingsGetNoAck() {
-        for (g in greetings) { assertFalse(g, Ack.wants(g)); assertNull(g, Ack.local(g)) }
-        assertNull(Ack.local("[Scheduled routine] morning brief"))
-        assertNull(Ack.local("/clear"))
+    @Test fun greetingsAreNoTask() {
+        for (g in greetings) assertFalse(g, Ack.wants(g))
+        assertFalse(Ack.wants("[Scheduled routine] morning brief"))
+        assertFalse(Ack.wants("/clear"))
     }
 
-    @Test fun reminderAckNamesTheTimeAndNeverSaysDone() {
-        assertEquals("Setting a reminder for 9:00 tomorrow.", Ack.local("remind me to call mum at 9:00 tomorrow"))
-        assertEquals("Setting an alarm for 6:30 am.", Ack.local("set an alarm for 6:30 am"))
-        assertEquals("Starting a 10-minute timer.", Ack.local("set a timer for 10 minutes"))
-        assertEquals("Setting a reminder in 20 minutes.", Ack.local("remind me in 20 minutes to check the oven"))
-        assertEquals("for Friday", Ack.whenPart("book a table on friday"))
-    }
-
-    @Test fun everyTaskGetsOneSafeAck() {
+    @Test fun everyTaskIsTrackedWithAQuietChip() {
         for (t in tasks) {
-            val a = Ack.local(t)
-            assertTrue(t, a != null)
-            assertTrue(a!!, Ack.safe(a))
-            assertFalse(a, a.contains("Done") || a.contains("\u2713"))
+            assertTrue(t, Ack.wants(t))
             assertTrue(Ack.chip(t).endsWith("in progress"))
         }
-    }
-
-    @Test fun safeRejectsDoneClaims() {
-        for (bad in listOf("Done! Reminder set for 9.", "I've set your reminder for 9:00.", "Your alarm is set.", "All set \u2713",
-            "Message sent successfully.", "I booked the table.", "The timer is now running and has been started. Completed.", "Reminder has been scheduled."))
-            assertFalse(bad, Ack.safe(bad))
-        for (ok in listOf("Got it, setting that reminder for 9:00 tomorrow. I'll confirm when it's set.", "Sending it now. I'll tell you once it's sent.",
-            "Looking into flights to Lusaka."))
-            assertTrue(ok, Ack.safe(ok))
-        assertFalse(Ack.safe(""))
-        assertFalse(Ack.safe("x".repeat(300)))
-    }
-
-    @Test fun oneAckPerTurn() {
-        val g = Ack.Gate()
-        assertFalse(g.take("Done, reminder set."))   // unsafe: dropped, and the gate stays open
-        assertTrue(g.take("Setting a reminder for 9:00."))
-        assertFalse(g.take("Halo here, I'll handle it."))   // Halo / the gateway after the local ack: dropped
-        assertTrue(g.acked)
-        val late = Ack.Gate(); late.finished = true
-        assertFalse(late.take("Got it."))   // the answer came first: no ack after it
-    }
-
-    @Test fun doneReceiptOnlyWhenVerified() {
-        assertEquals("Done \u2713 Reminder set for Fri 9:00.", Ack.receipt("Reminder set for Fri 9:00.", verified = 1, unproven = 0, rewrote = false))
-        assertEquals("I tried, but couldn't confirm it.", Ack.receipt("I tried, but couldn't confirm it.", 1, 1, false))
-        assertEquals("Here's what I found.", Ack.receipt("Here's what I found.", 0, 0, false))
-        assertEquals("Reminder set.", Ack.receipt("Reminder set.", 1, 0, rewrote = true))
-        assertEquals("Done \u2713 x", Ack.receipt("Done \u2713 x", 1, 0, false))
     }
 
     @Test fun noWorkingNotificationEver() {
@@ -175,15 +135,14 @@ class AckBackgroundTest {
         assertFalse(msg.contains("Done"))
     }
 
-    /** Strict 5/5: the whole ack contract, five times over (no state leaks between rounds). */
+    /** Strict 5/5: the whole ledger contract, five times over (no state leaks between rounds). */
     @Test fun strictFiveOfFive() {
         repeat(5) { round ->
             val g = Ack.Gate()
-            val a = Ack.local(tasks[round])!!
-            assertTrue("round $round", g.take(a))
-            assertFalse(g.take(a))
-            assertTrue(Ack.safe(a))
-            assertNull(Ack.local(greetings[round]))
+            assertTrue(Ack.wants(tasks[round]))
+            assertTrue("round $round", g.track())
+            assertFalse(g.track())
+            assertFalse(Ack.wants(greetings[round]))
             Notifier.working("step $round")
             assertNull(StatusNote.line(Notifier.statusInput()))
         }

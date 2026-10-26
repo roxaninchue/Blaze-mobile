@@ -71,7 +71,6 @@ object BackRule {
 
     /** Views.special screens that are their own activity (ChatScreen.openView opens exactly these; BackRuleTest checks). */
     val SPECIAL_ACTIVITY = mapOf(
-        "phone" to "com.blaze.assistant.blazeos.BlazeOsActivity",
         "browser" to "com.blaze.assistant.browser.BrowserActivity",
         "phonebrowser" to "com.blaze.assistant.browser.phone.PhoneBrowserActivity",
         "terminal" to "com.blaze.assistant.terminal.BlazeTerminalActivity",
