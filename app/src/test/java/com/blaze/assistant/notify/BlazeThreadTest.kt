@@ -32,7 +32,7 @@ class BlazeThreadTest {
     @Test fun oneBuilderForEveryBlazeMessage() {
         val n = src("notify/Notifier.kt")
         val post = n.substringAfter("fun post(").substringBefore("fun reply(")
-        for (needle in listOf("NotificationCompat.MessagingStyle(me)", "style.addMessage(m.text, m.at, blaze())", ".setShortcutId(BlazeThread.SHORTCUT)",
+        for (needle in listOf("NotificationCompat.MessagingStyle(me)", "style.addMessage(m.text, m.at, if (m.fromUser) me else blaze())", ".setShortcutId(BlazeThread.SHORTCUT)",
                 "setAllowGeneratedReplies(false)", "QuickReplies.forMessage(text, kind)", "setChoices(", "SEMANTIC_ACTION_REPLY",
                 ".notify(BlazeThread.NOTIF_ID, ", "CATEGORY_MESSAGE", "ensureShortcut()"))
             assertTrue(needle, post.contains(needle))

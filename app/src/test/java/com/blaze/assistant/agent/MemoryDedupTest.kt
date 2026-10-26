@@ -50,7 +50,7 @@ class MemoryDedupTest {
             "Lives in Ndola", "Works at Acme", "Plays guitar at church")
         for (t in facts) assertEquals(t, "saved", Mind.save("preference", "You", t).first)
         assertEquals("saved", Mind.save("person", "Mary", "Sister, a nurse in Kitwe").first)
-        assertEquals("saved", Mind.save("person", "Luke", "Plays chess on Sundays").first)
+        assertEquals("saved", Mind.save("person", "Peter", "Plays chess on Sundays").first)
         assertEquals(facts.size + 2, st.all().size)
     }
 
@@ -66,7 +66,7 @@ class MemoryDedupTest {
 
     // ---------------- Tidy up ----------------
 
-    private val people = listOf("Mary", "Luke", "Gloria", "Mutale", "Ana", "Sam", "Joe", "Ruth", "Tom", "Eve")
+    private val people = listOf("Mary", "Peter", "Gloria", "Mutale", "Ana", "Sam", "Joe", "Ruth", "Tom", "Eve")
     private val topics = listOf("church", "guitar", "jazz", "running", "chess", "cooking", "football", "reading", "coding", "gardening",
         "swimming", "painting", "hiking", "dancing", "photography")
 
@@ -145,7 +145,7 @@ class MemoryDedupTest {
         Mind.save("fact", "You", "Has a red bike")
         val id = st.all().single().id
         // Keeping a line that is gone fails as a whole: the other line is not deleted.
-        Mind.save("fact", "Luke", "Plays chess on Sundays")
+        Mind.save("fact", "Peter", "Plays chess on Sundays")
         val other = st.all().first { it.id != id }.id
         assertFalse(st.mergeInto(999_999L, "x", "fact", "You", "", listOf(other)))
         assertEquals(2, st.all().size)

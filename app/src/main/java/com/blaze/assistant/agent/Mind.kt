@@ -747,14 +747,14 @@ object Mind {
         val d = db ?: return 0
         val groups = try { MemoryMerge.groups(d.all(), cancelled) } catch (e: Exception) { com.blaze.assistant.device.CrashLog.quiet("Mind: tidy groups", e); return 0 }
         var n = 0
-        try { progress(0, groups.size) } catch (_: Throwable) { }
+        try { progress(0, groups.size) } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("Mind: tidy progress", e) }
         for ((i, g) in groups.withIndex()) {
             if (cancelled()) break
             try {
                 val rows = g.mapNotNull { d.mem(it.id) }
                 if (rows.size == g.size && mergeRows(d, rows).first > 0) n++
             } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("Mind: tidy group", e) }
-            try { progress(i + 1, groups.size) } catch (_: Throwable) { }
+            try { progress(i + 1, groups.size) } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("Mind: tidy progress", e) }
         }
         if (n > 0) changed()
         return n

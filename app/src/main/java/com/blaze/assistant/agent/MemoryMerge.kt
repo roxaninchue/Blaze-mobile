@@ -104,7 +104,9 @@ object MemoryMerge {
     private fun alike(a: Feat, b: Feat): Boolean {
         val j = jac(a.words, b.words)
         return a.norm == b.norm || j >= NEAR || coversW(a.words, b.words) || coversW(b.words, a.words) ||
-            (a.m.subject.equals(b.m.subject, true) && a.m.kind == b.m.kind && j >= GROUP) ||
+            // 0.45.29: and their content keys overlap too: "Likes jazz; Loves jazz a lot" and "Likes chess; Loves chess a lot"
+            // share most words but are different facts (a second Tidy up merged unrelated preferences together).
+            (a.m.subject.equals(b.m.subject, true) && a.m.kind == b.m.kind && j >= GROUP && jac(a.key, b.key) >= 0.5) ||
             (a.m.kind == b.m.kind && a.entity == b.entity && MemoryKey.sameFact(a.key, b.key, a.neg, b.neg))
     }
 
