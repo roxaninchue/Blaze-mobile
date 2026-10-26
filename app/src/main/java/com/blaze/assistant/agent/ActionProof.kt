@@ -101,7 +101,7 @@ object ActionProof {
             setOf("file_write", "file_edit", "file_delete", "export_file", "run_code", "run_shell", "download_file", "gallery", "termux_run"),
             r("""\b(file|pdf|document|doc|csv|spreadsheet|export|save|folder|delete)\b""")),
         Action("open", "open that",
-            r("""$ME(?:opened|launched|started|loaded)\b[^.!?\n]{0,30}\b(?:app|whatsapp|youtube|spotify|camera|settings|browser|page|site|website|link|maps|chrome|gallery|instagram|tiktok|facebook)\b|\b(?:whatsapp|youtube|spotify|camera|settings|maps|chrome)\b[^.!?\n]{0,10}\bis (?:now )?open\b"""),
+            r("""$ME(?:opened|launched|started|loaded)\b[^.!?\n]{0,30}\b(?:app|whatsapp|youtube|spotify|camera|settings|browser|page|site|website|link|maps|chrome|gallery|instagram|tiktok|facebook|gmail|inbox|email|mail)\b|\b(?:whatsapp|youtube|spotify|camera|settings|maps|chrome|gmail|inbox)\b[^.!?\n]{0,10}\bis (?:now )?open\b"""),
             setOf("open_app", "open_url", "browser_open", "browser_show", "open_camera", "blaze_camera", "open_settings_page", "open_settings", "navigate_to", "search_in_app", "share_to_app", "spotify_play", "message_contact", "tap", "browser_read", "fetch_page", "browser_click"),
             r("""\b(open|launch|start|go to|show me|play)\b""")),
         Action("install", "install or uninstall that",
@@ -120,6 +120,21 @@ object ActionProof {
             r("""$ME(?:played|started playing|queued|paused|skipped|resumed)\b|\b(?:now playing|is playing|playing now)\b"""),
             setOf("spotify_play", "spotify_control", "spotify_now_playing", "media_control", "open_url", "open_app", "search_in_app"),
             r("""\b(play|pause|skip|next song|music|song|spotify|resume)\b""")),
+        // 0.45.29 (stale "Yes"): "You're unsubscribed from Shopify." after a "Yes" to a different offer, with nothing run.
+        Action("unsubscribe", "unsubscribe you",
+            r("""$ME(?:unsubscribed|opted (?:you )?out)\b|\byou(?:'re| are|'ve been| have been| were)\s+(?:now\s+|successfully\s+|all\s+)?(?:unsubscribed|opted out|removed from (?:the |their |its )?(?:mailing |email )?list)\b|\bunsubscribed (?:you|from)\b"""),
+            setOf("gmail_send", "send_email", "browser_click", "browser_key", "http_request", "phone_act", "run_plan", "tap"),
+            r("""\b(unsubscribe|opt[- ]?out|stop (?:these |the |their )?(?:emails|newsletters))\b""")),
+        // 0.45.29: "ordered / paid / bought" with nothing behind it (booking stays ClaimCheck.BOOKED's).
+        Action("purchase", "buy or pay for that",
+            r("""$ME(?:ordered|purchased|bought|paid(?: for)?|placed (?:the|your|an?) order|checked out)\b|\b(?:order|purchase|payment)\b[^.!?\n]{0,20}\b(?:is |has been |was )(?:now )?(?:placed|made|complete|completed|successful|sent)\b"""),
+            setOf("browser_click", "browser_key", "phone_act", "run_plan", "http_request", "tap"),
+            r("""\b(buy|order|purchase|pay|payment|checkout|check out)\b""")),
+        // 0.45.29: a bare "Done." / "All set." answering a short yes needs a tool that succeeded this turn.
+        Action("done", "do that",
+            r("""^\s*(?:done|all done|all set|that's done|it's done|completed?|finished|sorted)\b[\s!.\u2713\u2705]*$|^\s*(?:done|all set)[,!.:]\s"""),
+            emptySet(),
+            r("""(?!x)x""")),
     )
 
     private val negation = r("""\b(not|never|couldn't|could not|didn't|did not|wasn't|haven't|hasn't|unable|failed|can't|cannot|won't|once|after|if|until|want me|shall i|do you want)\b|\?\s*$""")
@@ -137,6 +152,7 @@ object ActionProof {
 
     /** Is the user's message a request that could involve [a] (not a question about something done before)? */
     fun asked(userText: String, a: Action): Boolean =
+        FollowUpBind.isShortYes(userText) ||   // 0.45.29: a bare "yes" may stand for any action, so every claim is checked
         (a.asks.containsMatchIn(userText) || (a.id == "send" && sendIntent.containsMatchIn(userText))) && !pastQuestion.containsMatchIn(userText)
 
     /**
@@ -156,6 +172,7 @@ object ActionProof {
         for (a in ACTIONS) {
             if (!asked(userText, a, intentTools)) continue
             if (claims(reply, a).isEmpty()) continue
+            if (a.id == "done") { if (okTools.isEmpty()) return a else continue }
             if (okTools.none { it in a.strong }) return a
         }
         return null
@@ -163,7 +180,7 @@ object ActionProof {
 
     /** The one re-prompt: do it with a tool now, or say plainly it isn't done. */
     fun nudge(a: Action): String = "[Blaze check] Your reply says you did this (${a.what}), but no tool that does it succeeded this turn, " +
-        "so it has NOT happened. Do it now with the right tool (${a.tools.take(5).joinToString(" / ")}), wait for its result, and only then reply. " +
+        "so it has NOT happened. Do it now with the right tool${if (a.tools.isEmpty()) "" else " (" + a.tools.take(5).joinToString(" / ") + ")"}, wait for its result, and only then reply. " +
         "If the tool fails or you can't, say plainly that it wasn't done and why. Never say it was done without a successful tool result."
 
     /** The claim sentences swapped for the truth (the rest of the reply is kept). */

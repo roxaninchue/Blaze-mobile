@@ -208,7 +208,9 @@ data class Attachment(val name: String, val parts: List<JSONObject>, val thumb: 
         // deletes, installs, phone settings): the card always shows. A turn that read untrusted content (web, messages,
         // notifications, the screen, shared files…) also loses standing OKs and Autopilot for destructive actions.
         val source = kotlin.coroutines.coroutineContext[ConfirmGate.Taint]?.source
-        when (ConfirmGate.decide(always, Modes.destructive(title0, detail0), !always && Autonomy.preApproved(title0, detail0), Modes.autopilot, source != null)) {
+        // 0.45.29 (stale "Yes"): an outbound / destructive action the newest offer didn't name always shows its card.
+        val unnamed = tag == null && try { FollowUpBind.mustConfirm(cur.turnBind, "$title0 $detail0") } catch (_: Throwable) { false }
+        when (ConfirmGate.decide(always, Modes.destructive(title0, detail0), !always && Autonomy.preApproved(title0, detail0), Modes.autopilot, source != null, unnamed)) {
             ConfirmGate.Decision.STANDING_OK -> { cur.note("Standing OK: $title", false); return true }
             // Autopilot: the user is away, so ordinary confirms pass. Destructive ones still wait for their tap.
             ConfirmGate.Decision.AUTOPILOT_OK -> { (if (tag != null) null else cur)?.note("Autopilot approved: $title0", false); return true }
@@ -1147,6 +1149,7 @@ data class Attachment(val name: String, val parts: List<JSONObject>, val thumb: 
             s("again", "\nIf the user says \"again\", \"do it again\" or \"same for X\", repeat your last actions from this chat (adapted to X) without asking. ")
             // v0.30.6 rapid messages: [m7] ids on user messages, [re:m7] markers on replies (static, so it stays in the cached prefix).
             s("rapid", RapidMessages.PROMPT_RULE)
+            s("yes", FollowUpBind.RULE)   // 0.45.29 (stale "Yes")
             s("ask", "\nIf you're unsure what the user wants, or there are several options (accounts, contacts, items, times), don't guess and don't end your turn: call ask_user with short options, then carry on with the answer. ")
             if (control) {
                 s("control", """
@@ -1494,6 +1497,8 @@ When you finish, say what you did in one short sentence.
         @Volatile var lastPlanKey: String? = null
         /** v0.45.0 context: this task's goal and constraints, pinned into every step's system prompt (GoalPin). */
         @Volatile var turnGoal: GoalPin.Goal? = null
+        /** 0.45.29 (stale "Yes"): what this turn's short "yes" answers (FollowUpBind), or null. */
+        @Volatile var turnBind: FollowUpBind.Binding? = null
         /** v0.45.0 (#12): last time this chat was used (sent, answered, saved), for trimming idle chats from memory. */
         @Volatile var touchedAt: Long = System.currentTimeMillis()
         /** v0.45.0 (#12): the newest save of this chat has reached the disk (no write queued or failed). */
@@ -2747,7 +2752,7 @@ When you finish, say what you did in one short sentence.
                     promptGroups, turnView != null || turnDesignNote.isNotEmpty(), promptTurn) + Modes.promptLine(agentPlan) + (if (isPrivate) PrivateChat.PROMPT_LINE else "") +
                 (if (Settings.longChat) LongChat.PROMPT_LINE + (if (rung == Mind.Rung.SUMMARY) LongChat.summaryBlock(st) else "") else "") +
                 (if (rung == Mind.Rung.LOOKUP) "\n" + Mind.LOOKUP_RULE + "\n" else "") +
-                GoalPin.block(turnGoal) +
+                GoalPin.block(turnGoal) + FollowUpBind.block(turnBind) +
                 (agentId?.let { "\nYou are background agent $it, not the main chat. Work alone and finish with the result only." } ?: BgAgents.leadLine()) +
                 (turnDesignNote.ifEmpty { turnView?.let { ViewRouter.hint(it) } ?: "" }) + SkillMatch.block(turnSkills) + SpecialistMatch.hint(turnSpecs) +
                 // v0.27.x: "how do I install X" → lead with the action and end with one concrete offer to do it.
@@ -2984,7 +2989,14 @@ When you finish, say what you did in one short sentence.
                 lastPlanKey = null
                 // v0.45.0 (#38): a resumed task keeps the goal (and constraints) it was stopped with.
                 val resuming = resumeGoal != null
-                turnGoal = if (bulk) null else resumeGoal ?: GoalPin.of(userNow, GoalPin.userTexts(history).let { l -> if (l.lastOrNull()?.contains(userNow.trim().take(40)) == true) l.dropLast(1) else l })
+                // 0.45.29 (stale "Yes"): a short yes answers only the newest Blaze / Halo message, and only while it is fresh.
+                turnBind = if (bulk || agentId != null || resuming) null else try {
+                    val uid = msgs.lastOrNull { it.role == Role.USER && it.id !in sideIds }?.id ?: Long.MAX_VALUE
+                    val newest = msgs.lastOrNull { it.role == Role.BLAZE && it.id < uid && it.text.isNotBlank() && it.meta != Ack.META }
+                        ?.let { FollowUpBind.Said(it.speaker.ifBlank { "Blaze" }.replaceFirstChar { c -> c.uppercase() }, it.text, it.at) }
+                    FollowUpBind.bind(userNow, newest, System.currentTimeMillis())
+                } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("Agent: FollowUpBind", e); null }
+                turnGoal = if (bulk) null else resumeGoal ?: GoalPin.of(userNow, GoalPin.userTexts(history).let { l -> if (l.lastOrNull()?.contains(userNow.trim().take(40)) == true) l.dropLast(1) else l }, turnBind)
                 resumeGoal = null
                 var nudgeCount = 0
                 var rewroteClaim = false
@@ -4100,6 +4112,11 @@ When you finish, say what you did in one short sentence.
             Modes.block(name, args, agentPlan).takeIf { it.isNotEmpty() }?.let { add(Role.STEP, "Plan mode: skipped ${name.replace('_', ' ')}"); return it }
             if (agentId != null && name in BgAgents.leadOnly) return "Error: background agents can't start or steer other agents. Do the work yourself."
             if (isPrivate && PrivateChat.blocked(name)) return PrivateChat.REFUSAL
+            // 0.45.29 (stale "Yes"): on a short-yes turn, an outbound / destructive tool the newest offer didn't name asks first,
+            // Autopilot or not (FollowUpBind.toolGate). The card always shows (always = true).
+            if (agentId == null) FollowUpBind.toolGate(turnBind, name, args.toString())?.let { (t, d) ->
+                if (!confirm(t, d, "Do it", always = true)) return FollowUpBind.REFUSED
+            }
             // v0.43.0 Bank mode: Blaze has stepped back, so it doesn't look at or act on the screen until the user turns it off.
             if (com.blaze.assistant.bank.BankMode.active && (name in Orient.acting || name in Orient.looking || name == "open_app" || name == "search_in_app"))
                 return "Bank mode is on: Blaze has stepped back so the user's banking app works, and doesn't read or use the screen. " +

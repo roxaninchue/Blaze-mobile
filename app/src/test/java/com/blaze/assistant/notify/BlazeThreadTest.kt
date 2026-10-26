@@ -41,7 +41,7 @@ class BlazeThreadTest {
         assertTrue(n.contains("R.mipmap.ic_launcher") && n.contains("setIcon(it)"))
         assertTrue(n.contains("setLongLived(true).setPerson(blaze())"))
         // reply / proactive / question go through post
-        assertTrue(n.substringAfter("fun reply(").substringBefore("fun wakeHeard").contains("post(raw, kind, chatId)"))
+        assertTrue(n.substringAfter("fun reply(").substringBefore("fun wakeHeard").contains("post(raw, replyKind(raw, isError), chatId)"))
         assertTrue(n.substringAfter("fun proactive(").substringBefore("fun question").contains("post(text, kind, chatId"))
         assertTrue(n.substringAfter("fun question(").substringBefore("fun clearQuestion").contains("post(q, BlazeThread.Kind.QUESTION"))
         // the check-in path and the other senders

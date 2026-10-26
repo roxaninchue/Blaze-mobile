@@ -21,6 +21,8 @@ class WaitNudgeTest {
         assertTrue(p.startsWith(Duo.BLAZE_SOUL))
         assertTrue(p.contains("Halo, your partner") && p.contains("find me the latest AI news") && p.contains("11 seconds"))
         assertTrue(p.contains("first name is Sam") && p.contains("1 or 2 sentences") && p.contains("vary your wording"))
+        assertFalse(p.contains("offer to help") || p.contains("something else meanwhile"))
+        assertTrue(p.contains("Don't offer anything or ask anything"))
         val q = WaitNudge.system(Duo.Who.HALO, Duo.Who.BLAZE, null, "book a table", 10)
         assertTrue(q.startsWith(Duo.HALO_SOUL.take(40)) && q.contains("Blaze, your partner") && q.contains("don't use one"))
     }
@@ -32,8 +34,11 @@ class WaitNudgeTest {
     }
 
     @Test fun cleanKeepsItShortAndPlain() {
-        assertEquals("Halo's pulling the AI news together, Sam. Anything I can sort out for you meanwhile?",
-            WaitNudge.clean("[Blaze] Halo's pulling the AI news together, Sam. Anything I can sort out for you meanwhile? [[done]]"))
+        // 0.45.29: the offer sentence is dropped (a "yes" must never bind to the waiting line).
+        assertEquals("Halo's pulling the AI news together, Sam. Won't be long now.",
+            WaitNudge.clean("[Blaze] Halo's pulling the AI news together, Sam. Anything I can sort out for you meanwhile? Won't be long now. [[done]]"))
+        assertNull(WaitNudge.clean("Want me to find you something to read while you wait?"))
+        assertEquals("Blaze is on it, Sam.", WaitNudge.clean("Blaze is on it, Sam. Let me know if you need anything else."))
         assertEquals("One. Two two two.", WaitNudge.clean("One. Two two two. Three three three."))
         assertNull(WaitNudge.clean(""))
         assertNull(WaitNudge.clean("ok"))

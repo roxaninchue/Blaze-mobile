@@ -62,7 +62,13 @@ object ClaimCheck {
         var rewrote: ActionProof.Action? = null
         for (a in ACTIONS) {
             if (!ActionProof.asked(userText, a, intentTools)) continue
-            if (a.id == "booked" && done.none { it.name in a.tools }) continue
+            // 0.45.29: on a bare "yes" turn a booking claim is checked even when Blaze Phone never ran.
+            if (a.id == "booked" && done.none { it.name in a.tools } && !FollowUpBind.isShortYes(userText)) continue
+            // 0.45.29: a bare "Done." needs any tool that was verified this turn.
+            if (a.id == "done") {
+                if (ActionProof.claims(text, a).isEmpty() || done.any { it.status == ToolVerify.Status.VERIFIED }) continue
+                return if (rewrote != null) Outcome.Rewrite(text, rewrote) else Outcome.Unbacked(a)
+            }
             val bad = ActionProof.claims(text, a) + (if (a.id == "setting") stateClaims(text, userText).filter { it !in ActionProof.claims(text, a) } else emptyList())
             if (bad.isEmpty()) continue
             // v0.45.0 (#4): a verified STRONG tool backs the claim; a weak one (the settings page for "Wi-Fi is on")

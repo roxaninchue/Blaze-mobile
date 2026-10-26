@@ -23,10 +23,18 @@ object GoalPin {
 
     private fun sentences(t: String) = t.split(Regex("""(?<=[.!?;])\s+|\n+""")).map { it.trim() }.filter { it.isNotEmpty() }
 
-    /** [current] = this turn's request; [earlier] = earlier user requests, newest last. */
-    fun of(current: String, earlier: List<String> = emptyList()): Goal {
-        val cur = current.trim()
-        val base = if (isFollowUp(cur)) earlier.lastOrNull { !isFollowUp(it) }?.trim().orEmpty() else ""
+    /**
+     * [current] = this turn's request; [earlier] = earlier user requests, newest last. 0.45.29: [bind] = what a short
+     * "yes" answers (FollowUpBind): a yes to a fresh offer pins THAT offer, and a yes with no fresh offer pins no older
+     * request (the model asks what the user means), so an old offer is never carried into the task.
+     */
+    fun of(current: String, earlier: List<String> = emptyList(), bind: FollowUpBind.Binding? = null): Goal {
+        val cur = FollowUpBind.untag(current)
+        val base = when (bind?.kind) {
+            FollowUpBind.Kind.BOUND -> "${bind.offer?.who ?: "Blaze"} offered: " + bind.offer?.text?.trim()?.take(300).orEmpty()
+            FollowUpBind.Kind.STALE -> ""
+            else -> if (isFollowUp(cur)) earlier.map { FollowUpBind.untag(it) }.lastOrNull { !isFollowUp(it) }?.trim().orEmpty() else ""
+        }
         val request = listOf(base, cur).filter { it.isNotBlank() }.joinToString(" \u2192 ").let { if (it.length > 600) it.take(597) + "\u2026" else it }
         val cons = (sentences(base) + sentences(cur)).filter { constraintRe.containsMatchIn(it) }.distinct().take(6).map { if (it.length > 160) it.take(157) + "\u2026" else it }
         return Goal(request, cons)
@@ -39,7 +47,7 @@ object GoalPin {
             (if (g.constraints.isNotEmpty()) " Constraints the user set: " + g.constraints.joinToString(" | ") { "\u201c$it\u201d" } + "." else "")
     }
 
-    /** User request texts in [history] (plain strings, newest last; Blaze's own bracketed notes skipped). */
+    /** User request texts in [history] (plain strings, newest last, "[m7] " ids taken off; Blaze's own bracketed notes skipped). */
     fun userTexts(history: JSONArray, max: Int = 4): List<String> {
         val out = ArrayList<String>()
         var i = history.length() - 1
@@ -51,7 +59,7 @@ object GoalPin {
                     is String -> c
                     is JSONArray -> (0 until c.length()).mapNotNull { c.optJSONObject(it) }.filter { it.optString("type") == "text" }.joinToString(" ") { it.optString("text") }
                     else -> ""
-                }.trim()
+                }.trim().let { FollowUpBind.untag(it) }   // 0.45.29: "[m7] " ids were making every main-chat message look like a Blaze note
                 if (t.isNotEmpty() && !t.startsWith("[")) out.add(0, t)
             }
             i--

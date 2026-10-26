@@ -19,10 +19,12 @@ object ConfirmGate {
 
     /**
      * [always]: outbound / must-ask action. [destructive]: [Modes.destructive] matched. [preApproved]: a standing OK
-     * covers it. [autopilot]: Autopilot is on. [tainted]: this turn read untrusted content.
+     * covers it. [autopilot]: Autopilot is on. [tainted]: this turn read untrusted content. [unnamed] (0.45.29): the user
+     * only said a short "yes", and the action is outbound / destructive and wasn't named by the newest offer
+     * (FollowUpBind.mustConfirm): the card shows whatever Autopilot or a standing OK say.
      */
-    fun decide(always: Boolean, destructive: Boolean, preApproved: Boolean, autopilot: Boolean, tainted: Boolean): Decision = when {
-        always -> Decision.SHOW
+    fun decide(always: Boolean, destructive: Boolean, preApproved: Boolean, autopilot: Boolean, tainted: Boolean, unnamed: Boolean = false): Decision = when {
+        always || unnamed -> Decision.SHOW
         tainted && (destructive || preApproved) -> Decision.SHOW
         preApproved -> Decision.STANDING_OK
         autopilot && !destructive -> Decision.AUTOPILOT_OK
