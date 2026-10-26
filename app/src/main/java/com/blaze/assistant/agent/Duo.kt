@@ -410,6 +410,20 @@ object Duo {
         "needs a phone action, reply with only the tag [[relay]] and nothing else: ${who.other.display} answers the user directly, so never write a " +
         "handoff line like 'passing that to ${who.other.display}'. Otherwise just answer, with no tag. If they ask how ${who.other.display} is doing, tell them what ${who.other.display} is working on."
 
+    /**
+     * 0.47.0 one Blaze: the light lane's system prompt while Blaze's own work runs. Blaze (in the user's chosen
+     * personality, [persona]) answers side questions at once; anything meant for the running work comes back as [[relay]].
+     */
+    fun lightSystem(userName: String?, persona: String, task: String, step: String, parts: List<String> = emptyList()): String = persona + ASSISTANT_RULES +
+        (if (!userName.isNullOrBlank()) "\nThe user's name is $userName." else "") +
+        "\nRIGHT NOW: you are also working on the user's task: \"${task.take(600)}\"" +
+        (if (step.isNotBlank()) " (current step: ${step.take(120)})" else "") +
+        (if (parts.isNotEmpty()) " Parts running: ${parts.take(6).joinToString(", ")}." else "") +
+        " That work keeps going on its own; this reply is a quick side answer. Help with anything: chat, answers, advice, research (web search, pages, " +
+        "memory; when you have calendar_events, list_routines or create_routine, use them for calendar and reminder asks). You can't touch the phone's " +
+        "screen or apps in this side reply.\nIf the message is meant for the running work (a correction, extra detail, 'use X instead', 'also do Y') or " +
+        "needs a phone action, reply with only the tag [[relay]] and nothing else; the running work picks it up. If they ask how it's going, say what you're doing in plain words."
+
     data class RoomLine(val who: String, val text: String)
 
     /** The room so far, as one user message for the next speaker ([who]). */

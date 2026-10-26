@@ -73,7 +73,8 @@ class Delivery20Test {
         assertEquals(DeliveryState.SENDING, DeliveryView.effective(null, answered = false, busy = true))
         assertEquals("a send left at Sending with nothing running is Not sent", DeliveryState.NOT_SENT, DeliveryView.effective(DeliveryState.SENDING, false, busy = false))
         assertEquals(DeliveryState.NOT_SENT, DeliveryView.effective(DeliveryState.NOT_SENT, false, busy = true))
-        assertEquals(listOf("Sending", "Sent", "Read", "Not sent, tap to retry"), DeliveryState.values().map { Delivery.label(it) })
+        // 0.47.0: no words on the bubble (spinner, then a tick); only "not sent" keeps its line.
+        assertEquals(listOf("", "", "", "Not sent, tap to retry"), DeliveryState.values().map { Delivery.label(it) })
         // Unknown event types are ignored.
         assertNull(Delivery.eventOf(JSONObject().put("type", "something_new")))
     }

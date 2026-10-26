@@ -155,23 +155,30 @@ object Specialists {
         }
     }
 
+    /**
+     * 0.47.0 delegate = the orchestrator (orch/Orchestrator): Blaze hands parts of the task to its own specialists, each
+     * with its own tools, step budget and deadline; independent parts run in parallel, "after" makes one wait for another,
+     * and each returns a short summary to Blaze. background=true keeps the older background card (keeps going after you leave).
+     */
     fun tool(): JSONObject {
-        val list = all().joinToString("; ") { "${it.id} (${it.name})" }
+        val list = com.blaze.assistant.agent.orch.SpecialistKit.all.joinToString("; ") { "${it.id} (${it.label})" } +
+            custom().joinToString("") { "; ${it.id} (${it.name})" }
         return JSONObject().put("type", "function").put("function", JSONObject()
             .put("name", "delegate")
-            .put("description", "Hand work to specialists: $list. It does NOT block: each task starts as a background specialist with its own card (Steer / Stop) and the chat keeps going; " +
-                "each result reaches you on its own as soon as it lands, and you then write a short follow-up. Use it only when it helps: independent parts that can run in parallel, or big research. " +
-                "One task per target (compare 3 shops = 3 Shopper tasks), never two specialists on the same target. Each task is a tight, self-contained brief (they don't see this chat): " +
-                "the goal, what to return, limits, and to stop and report after two failed tries. Small or step-by-step work you do yourself. " +
-                "For two or more tasks give scope: one line telling the user who you're sending and why. wait=true only when you can't continue without the answers (it blocks).")
+            .put("description", "Hand parts of the task to your specialists: $list. Each part runs in its own context with only its tools, a step budget and its own deadline; " +
+                "independent parts run at the same time, and you get each part's summary back (what it did, its proof, what failed). Use it for independent parts or big research; " +
+                "small or step-by-step work you do yourself. One part per target. Each task is a tight, self-contained brief (they don't see this chat): the goal, what to return, limits. " +
+                "\"after\" lists the parts (0-based) it must wait for. For two or more parts give scope: one line telling the user what you're doing. " +
+                "background=true only for long work that should keep going when the user leaves.")
             .put("parameters", JSONObject().put("type", "object").put("properties", JSONObject()
                 .put("tasks", JSONObject().put("type", "array").put("items", JSONObject().put("type", "object").put("properties", JSONObject()
                     .put("specialist", JSONObject().put("type", "string"))
                     .put("task", JSONObject().put("type", "string"))
-                    .put("title", JSONObject().put("type", "string").put("description", "2-5 word card title")))
+                    .put("title", JSONObject().put("type", "string").put("description", "2-5 word title"))
+                    .put("after", JSONObject().put("type", "array").put("items", JSONObject().put("type", "integer"))))
                     .put("required", JSONArray(listOf("specialist", "task")))))
-                .put("scope", JSONObject().put("type", "string").put("description", "One line for the user, e.g. \"Sending Researcher and Shopper to compare solar kits.\""))
-                .put("wait", JSONObject().put("type", "boolean").put("description", "Block until all finish (rarely needed)")))
+                .put("scope", JSONObject().put("type", "string").put("description", "One line for the user, e.g. \"Comparing three shops at once.\""))
+                .put("background", JSONObject().put("type", "boolean").put("description", "Keep going in the background (rare)")))
                 .put("required", JSONArray(listOf("tasks")))))
     }
 }

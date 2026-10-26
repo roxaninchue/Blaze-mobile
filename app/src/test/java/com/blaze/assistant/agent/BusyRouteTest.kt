@@ -85,13 +85,13 @@ class BusyRouteTest {
     }
 
     @Test fun agentRoutesBusyMessagesBeforeTheQueue() {
+        // 0.47.0 one Blaze: the light lane (orch/LightLane, BusyRoute's successor with CHANGE) routes before the queue
         val src = listOf(File("src/main/java"), File("app/src/main/java")).first { it.isDirectory }.resolve("com/blaze/assistant/agent/Agent.kt").readText()
         val send = src.substring(src.indexOf("        fun send(text: String, byVoice: Boolean = false, attachments: List<Attachment> = emptyList(), notificationContext"))
-        val route = send.indexOf("BusyRoute.route(")
+        val route = send.indexOf("LightLane.route(")
         val queue = send.indexOf("RapidMessages.route(")
         assertTrue(route in 1 until queue)
-        assertTrue(send.contains("BusyRoute.Kind.STEER -> { steer(shown); return }"))
-        assertTrue(src.contains("BusyRoute.status(runningTask(), status, currentStep)"))
+        assertTrue(send.contains("LightLane.Kind.STEER -> { orch?.steer(null, shown); steer(shown); return }"))
         assertTrue(src.contains("private fun markSent(id: Long)"))
     }
 }

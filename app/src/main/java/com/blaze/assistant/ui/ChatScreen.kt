@@ -200,6 +200,7 @@ fun ChatScreen() {
     var clearedAt by remember { mutableStateOf(0L) }
     var input by remember { mutableStateOf(TextFieldValue("")) }
     // v0.39.0 Simple mode: who the next message goes to (@blaze / @halo / @all), typed or spoken.
+    // 0.47.0 one Blaze: there is no one else to talk to (no picker); kept as a constant for the callers.
     var talkTo by rememberSaveable { mutableStateOf("blaze") }
     // v0.45.28: "Halo x Blaze" is no longer a pick (it joins in by itself): a restored "all" becomes Blaze.
     if (talkTo != TalkArcMath.normalize(talkTo)) talkTo = TalkArcMath.normalize(talkTo)
@@ -576,8 +577,8 @@ fun ChatScreen() {
                 // v0.24.0: the toggle only switches tabs; there is no conversation list behind it.
                 // v0.28.3: switching tabs keeps your place in Projects; Chat is always the main thread.
                 onMode = { m -> plusOpen = false; showViews = false; go(navNow().switchTab(m)) },
-                onLogo = { exitView(); go(navNow().switchTab(ChatNav.CHAT)); showViews = false; plusOpen = false; arcOpen = !arcOpen },
-                talkTo = talkTo,
+                onLogo = { exitView(); go(navNow().switchTab(ChatNav.CHAT)); showViews = false; plusOpen = false; arcOpen = false },
+                talkTo = "",
                 onSearch = { showSearch = true },
                 routerOk = Settings.ready,
                 onRouter = { settingsPage = "ai" },
@@ -763,7 +764,7 @@ fun ChatScreen() {
                 val bigMic = simpleMode && !typing && input.text.isEmpty() && pending.isEmpty() && quote.isBlank() && !plusOpen
                 // v0.43.0: who the next message goes to (@blaze / @halo / @all), picked on the arc from the header orb.
                 if (arcOpen) BackHandler { arcOpen = false }
-                AnimatedVisibility(arcOpen, enter = MotionTokens.expand(), exit = MotionTokens.collapse()) {
+                AnimatedVisibility(false && arcOpen, enter = MotionTokens.expand(), exit = MotionTokens.collapse()) {
                     TalkArc(talkTo, alignEnd = !bigMic && voiceState == Voice.State.LISTENING) { talkTo = it; arcOpen = false }
                 }
                 // 0.46.0: the reply bar folded into a floating pill by the Stage (never gone): tap for the full bar.
@@ -774,7 +775,7 @@ fun ChatScreen() {
                     onHold = { if (voiceState != Voice.State.LISTENING) onMic() }, onRelease = { Voice.stopListening() },
                     onType = { typing = true }, onPhoto = { plusOpen = true }, onStop = { Agent.stop() })
                 else AcceptImages(onImage = { uri, mime -> addUris(listOf(uri), mime) }) {
-                Composer(input, { input = it; Agent.typing(it.text.isNotEmpty()) }, busy = mood != Mood.IDLE, canSend = input.text.isNotBlank() || pending.isNotEmpty(),
+                Composer(input, { input = it; Agent.typing(it.text.isNotEmpty(), it.text) }, busy = mood != Mood.IDLE, canSend = input.text.isNotBlank() || pending.isNotEmpty(),
                     plusOpen = plusOpen, chip = modeChip(work, approval), agents = bgAgents.count { it.live },
                     listening = voiceState == Voice.State.LISTENING, speaking = voiceState == Voice.State.SPEAKING,
                     onPlus = { plusOpen = !plusOpen; showViews = false }, onMic = { if (simpleMode && input.text.isEmpty()) typing = false; onMic() }, onSend = { send(input.text) }, onStop = { Agent.stop() },
@@ -1012,18 +1013,23 @@ private fun MessageList(mood: Mood, onQuote: (String) -> Unit, onFollowup: (Stri
                 // 0.45.24: the live line sits beside the drop (same row, centred) and goes as soon as the reply starts.
                 val working = mood != Mood.IDLE
                 val lineOn = waitLineOn
-                val dropOn = WaitRow.showDrop(working, streamId >= 0, chip.isNotBlank(), duoLive.isNotEmpty())
+                val workSt by com.blaze.assistant.agent.orch.WorkStatus.current.collectAsState()
+                val workNow = workSt?.takeIf { it.chat == chatNow }
+                // 0.47.0 (reference shots): while the glass pill shows a line, it alone says Blaze is working (no drop beside it).
+                val dropOn = WaitRow.showDrop(working, streamId >= 0, chip.isNotBlank(), duoLive.isNotEmpty()) && workNow == null && pill == null
                 // The step pill first; otherwise what Blaze is doing (the status line that used to sit above in the work card).
                 val liveSteps = (items.lastOrNull() as? Item.Steps)?.takeIf { it.live }
-                val pillText = WaitRow.line(pill?.takeIf { it.chat == chatNow }?.text, if (chip.isBlank()) status else "",
-                    liveSteps?.steps?.lastOrNull()?.text.orEmpty(), simple = simpleUi && liveSteps != null, on = lineOn)
+                // 0.47.0: the orchestrator's live line (WorkStatus: shown within 300 ms of Send, moved by every step) when no
+                // server step pill is up; generic waiting lines are never shown.
+                val pillText = WaitRow.line(pill?.takeIf { it.chat == chatNow }?.text ?: workNow?.line, if (chip.isBlank() && status !in com.blaze.assistant.agent.orch.WorkStatus.GENERIC) status else "",
+                    liveSteps?.steps?.lastOrNull()?.text.orEmpty(), simple = simpleUi && liveSteps != null, on = lineOn || (working && streamId < 0 && workNow != null))
                 // The row moves up with the drop so the drop keeps its spot on the reply's first line.
                 Row(Modifier.fillMaxWidth().padding(top = if (dropOn && !(hasLiveSteps || items.lastOrNull()?.side == Side.BLAZE)) 13.dp else 0.dp)
                     .offset(y = if (dropOn) OrbAnchor.thinkingOffsetY else 0.dp), verticalAlignment = Alignment.CenterVertically) {
                 AnimatedVisibility(dropOn, enter = MotionTokens.enterUp(), exit = androidx.compose.animation.ExitTransition.None) {
                     Box(Modifier.padding(top = 3.dp)) {
                         val label = com.blaze.assistant.agent.ThinkingLabel.label(live = true, hasThought = live.isNotBlank(), show = Settings.showReasoning)
-                            ?: status.ifBlank { "Blaze is thinking" }
+                            ?: status.ifBlank { "Working on it" }
                         // v0.32.0 split: while Halo talks with you, the drop works alone (its halo went with her).
                         val ring by androidx.compose.animation.core.animateFloatAsState(if (split) 0f else 1f, androidx.compose.animation.core.tween(520), label = "ring")
                         ThinkingOrb(if (split) "Blaze is working" else label, size = OrbAnchor.SIZE, ring = ring)
@@ -1031,8 +1037,17 @@ private fun MessageList(mood: Mood, onQuote: (String) -> Unit, onFollowup: (Stri
                 }
                 // Ack-and-background: an acknowledged task shows its small chip instead of the drop.
                 if (chip.isNotBlank() && working && streamId < 0) TaskChip(chip)
-                StepPillRow(pillText, pill?.specialist == true, Modifier.weight(1f, fill = false), inline = true)
+                WorkPill(pillText, workNow?.steps.orEmpty(), Modifier.weight(1f, fill = false))
                 }
+                // 0.47.0: the one-time Butler offer for people whose personality was kept (never a silent override).
+                var butlerCard by remember { mutableStateOf(try { com.blaze.assistant.agent.orch.ButlerIntro.shouldShow(Settings.orchPrefs) } catch (_: Throwable) { false }) }
+                if (butlerCard && !working) ButlerIntroCard({ tryIt ->
+                    try {
+                        com.blaze.assistant.agent.orch.ButlerIntro.answer(Settings.orchPrefs, tryIt)
+                        if (tryIt) Settings.personaId = com.blaze.assistant.agent.orch.Butler.ID
+                    } catch (_: Throwable) { }
+                    butlerCard = false
+                })
                 // v0.26.0: no "this chat is getting long" banner; long chats compact themselves (AutoCompact).
             }
         }

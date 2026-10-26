@@ -95,9 +95,9 @@ class ChatUi20Test {
         val src = listOf(File("src/main/java/com/blaze/assistant/ui/ChatScreen.kt"), File("app/src/main/java/com/blaze/assistant/ui/ChatScreen.kt")).first { it.exists() }.readText()
         assertTrue("delivery only under the latest user bubble", src.contains("delivery = if (item.m.id == lastUserId)"))
         assertTrue("action row only on the latest Blaze reply", src.contains("showActs = item.m.id == lastBlazeId && mood == Mood.IDLE"))
-        assertTrue(src.contains("StepPillRow(") && src.contains("DayChip(") && src.contains("BubbleMenu("))
-        // No ticks anywhere in the label.
+        // 0.47.0: the glass work pill replaced the step pill row; the label is a spinner then a tick (drawn, no glyph).
+        assertTrue(src.contains("WorkPill(") && src.contains("DayChip(") && src.contains("BubbleMenu("))
         val label = listOf(File("src/main/java/com/blaze/assistant/ui/DeliveryStatus.kt"), File("app/src/main/java/com/blaze/assistant/ui/DeliveryStatus.kt")).first { it.exists() }.readText()
-        assertTrue(!label.contains("\u2713") && !label.contains("Icons.") && label.contains("LiveRegionMode.Polite"))
+        assertTrue(!label.contains("\u2713") && !label.contains("Icons.") && label.contains("LiveRegionMode.Polite") && label.contains("SendTick("))
     }
 }

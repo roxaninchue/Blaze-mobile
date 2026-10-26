@@ -260,8 +260,17 @@ object Settings {
         set(v) = prefs.edit().putBoolean("wake_word", v).apply()
 
     var personaId: String
-        get() = s("persona", "blaze") ?: "blaze"
-        set(v) = prefs.edit().putString("persona", v).apply()
+        get() = s("persona", Personas.DEFAULT) ?: Personas.DEFAULT
+        // 0.47.0: an explicit pick is remembered as the user's (HaloMerge never moves it to the new default).
+        set(v) = prefs.edit().putString("persona", v).putBoolean("persona_picked", true).apply()
+
+    /** 0.47.0: a small key/value view for the pure one-time migrations (orch/HaloMerge, orch/ButlerIntro). */
+    val orchPrefs: com.blaze.assistant.agent.orch.HaloMerge.Prefs = object : com.blaze.assistant.agent.orch.HaloMerge.Prefs {
+        override fun str(k: String): String? = try { if (prefs.contains(k)) prefs.getString(k, null) else null } catch (_: Throwable) { null }
+        override fun put(k: String, v: String) = prefs.edit().putString(k, v).apply()
+        override fun bool(k: String): Boolean? = try { if (prefs.contains(k)) prefs.getBoolean(k, false) else null } catch (_: Throwable) { null }
+        override fun putBool(k: String, v: Boolean) = prefs.edit().putBoolean(k, v).apply()
+    }
 
     var customPersona: String
         get() = s("persona_custom", "") ?: ""

@@ -37,7 +37,8 @@ class WaitRowTest {
             .map { java.io.File(it) }.first { it.isFile }.readText()
         val row = src.substringAfter("0.45.24: the live line sits beside the drop").substringBefore("// v0.26.0:")
         assertTrue(row.contains("verticalAlignment = Alignment.CenterVertically"))
-        assertTrue(row.indexOf("ThinkingOrb(") < row.indexOf("StepPillRow("))
-        assertTrue(row.contains("inline = true"))
+        // 0.47.0: the glass work pill follows the drop (and replaces it while it shows a line).
+        assertTrue(row.indexOf("ThinkingOrb(") < row.indexOf("WorkPill("))
+        assertTrue(row.contains("workNow == null"))
     }
 }

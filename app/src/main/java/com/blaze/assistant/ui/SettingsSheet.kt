@@ -82,6 +82,8 @@ val topPages = listOf(
     SettingsPage("doing", "Things Blaze is doing", "Routines and reminders, on or off, and today's diary"),
     // v0.43.0: Bank mode, where non-technical users look for it (not under Advanced).
     SettingsPage("bank", "Bank mode", "Use banking apps: Blaze steps back while they're open"),
+    SettingsPage("persona", "Personality", "How Blaze talks, and what it calls you"),
+    SettingsPage("audit", "What Blaze did", "Every action, what you approved, undo and Stop"),
     SettingsPage("voice", "Voice", "Hey Blaze, spoken replies, default assistant"),
     SettingsPage("permissions", "Permissions", "Phone control, notifications, mic, overlay"),
     SettingsPage("account", "Account", "Blaze account and connected apps"),
@@ -95,7 +97,6 @@ val advancedPages = listOf(
     SettingsPage("connections", "Connected accounts", "Google, GitHub, Spotify, Notion, Slack"),
     SettingsPage("desktop", "Blaze Desktop", "Pair with Blaze on your computer"),
     SettingsPage("control", "Phone control", "Accessibility, skills, the pointer"),
-    SettingsPage("persona", "Personality", "How Blaze talks"),
     SettingsPage("feel", "Taps, sounds & panel", "Tap highlights, sounds, compact panel"),
     SettingsPage("privacy", "Privacy & safety", "App lock, approvals"),
     SettingsPage("watches", "Watches", "Values Magic Hand is watching for you"),
@@ -179,6 +180,7 @@ fun SettingsScreen(start: String?, a11yOn: Boolean, onOpenAccessibility: () -> U
                 "connections" -> ConnectionsPage()
                 "desktop" -> DesktopPage()
                 "persona" -> PersonaSection()
+                "audit" -> AuditLogPage()
                 "control" -> ControlPage(a11yOn, onOpenAccessibility)
                 "commands" -> CommandsSection()
                 "skills" -> SkillLibraryPage()
@@ -628,6 +630,10 @@ private fun PersonaSection() {
             }
         }
     }
+    // 0.47.0: the name Blaze calls you (asked once in chat; "call me …" changes it too).
+    var nick by remember { mutableStateOf(Settings.userName) }
+    Spacer(Modifier.height(10.dp))
+    Field("What Blaze calls you", nick, { nick = it; Settings.userName = it; Settings.setBool("nick_asked", true) }, "Your name or a nickname")
     if (pid == com.blaze.assistant.agent.Personas.CUSTOM) {
         Spacer(Modifier.height(10.dp))
         Field("Describe Blaze's personality", custom, { custom = it; Settings.customPersona = it },
@@ -637,7 +643,7 @@ private fun PersonaSection() {
     var dots by remember { mutableStateOf(Settings.particles) }
     ToggleRow("Background particles", "Drifting dots. Turn off for the smoothest, lightest feel", dots) { dots = !dots; Settings.particles = dots }
     ToggleRow("Stream replies", "Words appear as Blaze writes them", stream) { stream = !stream; Settings.streamReplies = stream }
-    HaloStudioSection()   // v0.33.0
+    // 0.47.0 one Blaze: Halo Persona Studio is gone (its voice notes were kept for Blaze by the merge).
 }
 
 @Composable

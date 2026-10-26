@@ -62,6 +62,17 @@ object Delivery {
         else -> Verdict.OTHER
     }
 
+    /** 0.47.0 optimistic tick: the longest message that is marked delivered on the tap itself (no attachments). */
+    const val OPTIMISTIC_MAX_CHARS = 280
+
+    /**
+     * 0.47.0 (spec §4): a short text-only message shows its tick at once, on the tap (the message is committed locally and
+     * Blaze has it; the turn picks it up from the same queue). Long messages and attachments keep the spinner until the
+     * real pick-up / 2xx. An optimistic tick is not a lie that sticks: if the gateway later refuses it (4xx) or Stop lands
+     * before anything had it, the bubble still goes to "Not sent" ([Tracker.apply]).
+     */
+    fun optimistic(text: String, attachments: Int): Boolean = attachments == 0 && text.isNotBlank() && text.trim().length <= OPTIMISTIC_MAX_CHARS
+
     /** Things that move a bubble's state. */
     enum class Ev { POSTED, RECEIVED, READ, NET_ERROR, REJECTED, STOPPED, USER_RETRY, LOCAL_PICKUP, LOCAL_READ }
 
@@ -80,17 +91,18 @@ object Delivery {
 
     /** The label under the bubble (the dots of Sending are drawn by the UI). */
     fun label(s: DeliveryState): String = when (s) {
-        DeliveryState.SENDING -> "Sending"
-        DeliveryState.SENT -> "Sent"
-        DeliveryState.READ -> "Read"
+        // 0.47.0: no words on the bubble (spinner, then a tick); only "not sent" keeps its line (for TalkBack and the retry).
+        DeliveryState.SENDING -> ""
+        DeliveryState.SENT -> ""
+        DeliveryState.READ -> ""
         DeliveryState.NOT_SENT -> "Not sent, tap to retry"
     }
 
     /** What TalkBack says (politely) when the state changes. */
     fun spoken(s: DeliveryState): String = when (s) {
         DeliveryState.SENDING -> "Sending your message"
-        DeliveryState.SENT -> "Message sent"
-        DeliveryState.READ -> "Blaze read your message"
+        DeliveryState.SENT -> "Message delivered"
+        DeliveryState.READ -> "Delivered, Blaze has it"
         DeliveryState.NOT_SENT -> "Message not sent. Double tap to retry"
     }
 
@@ -166,7 +178,8 @@ object Delivery {
      * restart still shows the right label and a tap-to-retry after a restart reuses the same id.
      */
     class Tracker(private val kvGet: (String) -> String?, private val kvPut: (String, String) -> Unit) {
-        data class Entry(val state: DeliveryState, val cid: String, val gen: Int = 0)
+        /** [opt] = ticked optimistically on the tap, not yet confirmed by a pick-up or a 2xx. */
+        data class Entry(val state: DeliveryState, val cid: String, val gen: Int = 0, val opt: Boolean = false)
 
         private val _states = MutableStateFlow<Map<String, DeliveryState>>(emptyMap())
         /** gid -> state, for the UI. */
@@ -183,7 +196,7 @@ object Delivery {
                 o.keys().forEach { g ->
                     val e = o.optJSONObject(g) ?: return@forEach
                     val st = try { DeliveryState.valueOf(e.optString("s")) } catch (_: Exception) { DeliveryState.SENT }
-                    map[g] = Entry(st, e.optString("c"), e.optInt("g"))
+                    map[g] = Entry(st, e.optString("c"), e.optInt("g"), e.optBoolean("o"))
                 }
             } catch (_: Exception) { }
             _states.value = map.mapValues { it.value.state }
@@ -192,7 +205,7 @@ object Delivery {
         private fun save() {
             while (map.size > KEEP) map.remove(map.keys.first())
             val o = JSONObject()
-            map.forEach { (g, e) -> o.put(g, JSONObject().put("s", e.state.name).put("c", e.cid).put("g", e.gen)) }
+            map.forEach { (g, e) -> o.put(g, JSONObject().put("s", e.state.name).put("c", e.cid).put("g", e.gen).also { if (e.opt) it.put("o", true) }) }
             try { kvPut(KEY, o.toString()) } catch (_: Throwable) { }
             _states.value = map.mapValues { it.value.state }
         }
@@ -208,7 +221,9 @@ object Delivery {
             val e = map[gid]
             val out = when {
                 e == null -> Entry(DeliveryState.SENDING, cidFor(gid))
-                e.state == DeliveryState.SENDING || e.state == DeliveryState.NOT_SENT -> e.copy(state = DeliveryState.SENDING, cid = e.cid.ifBlank { cidFor(gid, e.gen) })
+                e.state == DeliveryState.SENDING || e.state == DeliveryState.NOT_SENT -> e.copy(state = DeliveryState.SENDING, cid = e.cid.ifBlank { cidFor(gid, e.gen) }, opt = false)
+                // 0.47.0: an optimistic tick is the same first send (same id), the tick stays while it goes out
+                e.opt -> e.copy(cid = e.cid.ifBlank { cidFor(gid, e.gen) })
                 else -> (e.gen + 1).let { g -> Entry(DeliveryState.SENDING, cidFor(gid, g), g) }
             }
             map.remove(gid); map[gid] = out; save()
@@ -221,10 +236,26 @@ object Delivery {
             var changed = false
             gids.forEach { g ->
                 val e = map[g] ?: Entry(DeliveryState.SENDING, cidFor(g))
-                val n = next(e.state, ev)
-                if (n != e.state || g !in map) { map[g] = e.copy(state = n); changed = true }
+                val n = if (e.opt) nextOptimistic(ev) else next(e.state, ev)
+                val opt = e.opt && n == DeliveryState.SENT && ev != Ev.POSTED && ev != Ev.RECEIVED && ev != Ev.LOCAL_PICKUP
+                if (n != e.state || opt != e.opt || g !in map) { map[g] = e.copy(state = n, opt = opt); changed = true }
             }
             if (changed) save()
+        }
+
+        /** 0.47.0: ticks a fresh short bubble on the tap ([Delivery.optimistic]); a later refusal still says Not sent. */
+        fun optimistic(gid: String) = synchronized(lock) {
+            load()
+            val e = map[gid]
+            if (e == null || e.state == DeliveryState.SENDING) { map.remove(gid); map[gid] = (e ?: Entry(DeliveryState.SENDING, cidFor(gid))).copy(state = DeliveryState.SENT, opt = true); save() }
+        }
+
+        /** An optimistic tick: confirmed by a pick-up / 2xx / read; a refusal or a Stop before anything had it = Not sent. */
+        private fun nextOptimistic(ev: Ev): DeliveryState = when (ev) {
+            Ev.REJECTED, Ev.STOPPED -> DeliveryState.NOT_SENT
+            Ev.READ, Ev.LOCAL_READ -> DeliveryState.READ
+            Ev.USER_RETRY -> DeliveryState.SENT
+            else -> DeliveryState.SENT
         }
 
         /** Marks [gid] as sending (a fresh bubble, before any network). */

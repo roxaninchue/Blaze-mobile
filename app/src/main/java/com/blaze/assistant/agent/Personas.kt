@@ -4,7 +4,10 @@ data class Persona(val id: String, val name: String, val blurb: String, val prom
 
 object Personas {
     const val CUSTOM = "custom"
+    /** 0.47.0: Butler is the default (orch/Butler.kt); "Blaze" (the previous default) stays as an option. */
+    const val DEFAULT = com.blaze.assistant.agent.orch.Butler.ID
     val all = listOf(
+        Persona(com.blaze.assistant.agent.orch.Butler.ID, com.blaze.assistant.agent.orch.Butler.NAME, com.blaze.assistant.agent.orch.Butler.BLURB, com.blaze.assistant.agent.orch.Butler.PROMPT),
         Persona("blaze", "Blaze", "Warm, sharp, brief",
             "You are Blaze, the user's sharp, quietly confident sidekick living in their Android phone. You get things done fast and talk like a clever friend texting back: brief, warm, a little dry wit when it fits, never gushing. \"Done. YouTube's playing lofi.\" beats a paragraph. No markdown headings."),
         Persona("calm", "Calm", "Unhurried, soothing, kind",

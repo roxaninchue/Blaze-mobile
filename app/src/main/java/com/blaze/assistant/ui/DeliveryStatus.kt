@@ -38,8 +38,7 @@ import com.blaze.assistant.agent.DeliveryState
 
 /**
  * 0.45.20 delivery label (user spec B, contract §1): under your LATEST bubble only, right-aligned, small and muted but
- * readable on every theme (a soft capsule, AA over any ground: [BubblePalette.capsule]). Animated dots + "Sending",
- * then "Sent", then "Read". "Not sent, tap to retry" when the gateway refused it. No ticks. TalkBack hears each change
+ * readable on every theme. 0.47.0: a spinning ring, then a tick; a retry mark when the gateway refused it. No words. TalkBack hears each change
  * politely (a polite live region with the spoken words from [Delivery.spoken]).
  */
 object DeliveryView {
@@ -61,26 +60,28 @@ object DeliveryView {
     }
 }
 
+/**
+ * 0.47.0 (Rocky, 26 Oct): no "Sending / Sent / Read" words. Under your latest bubble: a small spinning ring while it is
+ * being sent, then one tick once Blaze has it. Not sent: a small retry mark (a button, "Not sent, tap to retry" for
+ * TalkBack). TalkBack hears each change politely ([Delivery.spoken]).
+ */
 @Composable
 fun DeliveryLabel(state: DeliveryState, modifier: Modifier = Modifier, onRetry: (() -> Unit)? = null) {
     val c = LocalBlaze.current
-    val ink = BubblePalette.capsuleInk(c)
     val failed = state == DeliveryState.NOT_SENT
-    Row(modifier.fillMaxWidth().padding(top = 3.dp, end = 4.dp), horizontalArrangement = Arrangement.End) {
-        Row(Modifier.clip(RoundedCornerShape(10.dp)).background(BubblePalette.capsule(c), RoundedCornerShape(10.dp))
+    Row(modifier.fillMaxWidth().padding(top = 3.dp, end = 6.dp), horizontalArrangement = Arrangement.End) {
+        Row(Modifier.clip(RoundedCornerShape(10.dp))
             .let { m -> if (failed && onRetry != null) m.clickable(role = Role.Button, onClickLabel = "Retry sending") { onRetry() } else m }
             .heightIn(min = if (failed) 32.dp else 0.dp)
             .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite; contentDescription = Delivery.spoken(state) }
-            .padding(horizontal = 8.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+            .padding(horizontal = 4.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
             when (state) {
-                DeliveryState.SENDING -> SendingDots(ink)
-                // A short dotted lead like the reference ("•••• Read"), still, quiet.
-                DeliveryState.SENT, DeliveryState.READ -> StillDots(ink, if (state == DeliveryState.READ) 4 else 2)
-                DeliveryState.NOT_SENT -> Unit
+                DeliveryState.SENDING -> SendTick(sending = true)
+                DeliveryState.SENT, DeliveryState.READ -> SendTick(sending = false)
+                DeliveryState.NOT_SENT -> Box(Modifier.size(16.dp).clip(CircleShape).background(c.ink.copy(alpha = 0.85f)), contentAlignment = Alignment.Center) {
+                    Text("!", style = TextStyle(fontFamily = Type.Sans, fontSize = 11.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold, color = c.paper))
+                }
             }
-            if (state != DeliveryState.NOT_SENT) Spacer(Modifier.width(5.dp))
-            Text(Delivery.label(state), style = TextStyle(fontFamily = Type.Sans, fontSize = 11.sp, lineHeight = 13.sp,
-                fontWeight = if (failed) FontWeight.Medium else FontWeight.Normal, color = if (failed) c.ink else ink))
         }
     }
 }

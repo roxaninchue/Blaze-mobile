@@ -59,7 +59,7 @@ class PromptCacheBenchTest {
             s("names", GreetName.RULE)   // v0.45.9
             s("lang", ReplyLanguage.line("auto"))   // v0.45.7
             slow("connectors", "\nConnected accounts you can use with tools: Gmail (mail), Google Calendar (events), Spotify (music).\n")
-            s("talk", lit("s", "talk")); s("voice", VoiceFiller.RULE); s("style", AnswerStyle.RULE); s("format", AnswerStyle.FORMAT)
+            s("talk", lit("s", "talk")); s("voice", VoiceFiller.RULE); live("tone", "\nMOOD: " + com.blaze.assistant.agent.orch.Mood.rule(com.blaze.assistant.agent.orch.Mood.Tone.NEUTRAL)); s("style", AnswerStyle.RULE); s("format", AnswerStyle.FORMAT)
             s("self", lit("s", "self")); s("remember", lit("s", "remember")); s("again", lit("s", "again"))
             s("rapid", RapidMessages.PROMPT_RULE); s("yes", FollowUpBind.RULE); s("ask", lit("s", "ask"))   // 0.45.29
             s("control", lit("s", "control").trimIndent())

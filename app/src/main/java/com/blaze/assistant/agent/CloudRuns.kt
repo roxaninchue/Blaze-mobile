@@ -43,8 +43,9 @@ object CloudRuns {
 
     // Plain lines (the quiet working line in Simple mode, the step card's title in Advanced).
     const val SENDING = "Sending\u2026"
-    const val QUEUED = "Sent. Waiting for Blaze\u2026"
-    const val RUNNING = "Blaze is thinking\u2026"
+    // 0.47.0: no "Sent. Waiting…" / "thinking" chrome; the glass pill shows the real step instead of these.
+    const val QUEUED = "Working on it\u2026"
+    const val RUNNING = "Working on it\u2026"
     const val ON_PHONE = "Doing that on your phone\u2026"
     const val OFFLINE = "Waiting for internet \u2014 your reply is safe\u2026"
     const val SAFE = "Connection lost. Your reply is safe and will show up here when you're back online."
