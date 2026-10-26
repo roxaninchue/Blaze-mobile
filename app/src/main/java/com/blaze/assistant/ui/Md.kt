@@ -22,7 +22,9 @@ object Md {
         """|<(b|strong|i|em|u|ins|s|del|strike|code|kbd|tt|mark|sub|sup|small|big|q|cite|var|samp|abbr)(?:\s[^<>]*)?>(.+?)</\9\s*>""" +
         """|<a\s[^<>]*?href\s*=\s*["']([^"']*)["'][^<>]*>(.+?)</a\s*>""" +
         """|<span\s[^<>]*?style\s*=\s*["'][^"']*?(?<![-\w])color\s*:\s*([^;"']+)[^"']*["'][^<>]*>(.+?)</span\s*>""" +
-        """|<font\s[^<>]*?color\s*=\s*["']?([#\w(),. ]+?)["']?(?:\s[^<>]*)?>(.+?)</font\s*>""")
+        """|<font\s[^<>]*?color\s*=\s*["']?([#\w(),. ]+?)["']?(?:\s[^<>]*)?>(.+?)</font\s*>""" +
+        // v0.45.28: a bare web address (group 17), so _ and * inside it are never read as italics.
+        """|(https?://[^\s<>"'`\[\]{}|\\^]+)""")
     // v0.31.1 perf: compiled once (they were compiled per line on every streamed frame).
     private val headingRe = Regex("^\\s{0,3}(#{1,6})\\s+(.*)$")
     private val headingTightRe = Regex("^\\s{0,3}(#{2,6})(?=[^#\\s])(.*)$")
@@ -74,13 +76,27 @@ object Md {
         }
     }
 
-    private fun AnnotatedString.Builder.plain(s: String) { append(HtmlLite.decodeDisplay(HtmlLite.stripTags(s))) }
+    /** v0.45.28: plain text, with bare web addresses marked as links (ChatLinks). */
+    private fun AnnotatedString.Builder.plain(s: String, accent: Color = Color.Unspecified) {
+        val t = HtmlLite.decodeDisplay(HtmlLite.stripTags(s))
+        val links = if (t.contains("://")) ChatLinks.find(t) else emptyList()
+        if (links.isEmpty()) { append(t); return }
+        var at = 0
+        for ((a, b, url) in links) {
+            append(t.substring(at, a))
+            pushStringAnnotation(ChatLinks.TAG, url)
+            withStyle(SpanStyle(color = accent, textDecoration = TextDecoration.Underline)) { append(t.substring(a, b)) }
+            pop()
+            at = b
+        }
+        append(t.substring(at))
+    }
 
     private fun AnnotatedString.Builder.inlines(s: String, accent: Color, codeBg: Color) {
         var last = 0
         val dark = accent.isUnspecified() || accent.luminance() > 0.5f
         for (m in inline.findAll(s)) {
-            plain(s.substring(last, m.range.first))
+            plain(s.substring(last, m.range.first), accent)
             val g = m.groupValues
             when {
                 g[1].isNotEmpty() -> withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { inlines(g[1], accent, codeBg) }
@@ -90,7 +106,7 @@ object Md {
                 g[5].isNotEmpty() -> withStyle(SpanStyle(fontFamily = Type.Mono, fontSize = 13.sp, background = codeBg)) { append(" " + g[5] + " ") }
                 g[6].isNotEmpty() -> withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) { append(g[6]) }
                 g[8].isNotEmpty() -> {
-                    pushStringAnnotation("URL", g[8])
+                    pushStringAnnotation(ChatLinks.TAG, g[8])
                     withStyle(SpanStyle(color = accent, textDecoration = TextDecoration.Underline)) { append(g[7]) }
                     pop()
                 }
@@ -106,18 +122,27 @@ object Md {
                     val href = HtmlLite.decodeAll(g[11]).trim()
                     // only real web / mail links; javascript:, data: and the rest show as plain text
                     if (Regex("^(https?://|mailto:)\\S+$", RegexOption.IGNORE_CASE).matches(href)) {
-                        pushStringAnnotation("URL", href)
+                        pushStringAnnotation(ChatLinks.TAG, href)
                         withStyle(SpanStyle(color = accent, textDecoration = TextDecoration.Underline)) { inlines(g[12], accent, codeBg) }
                         pop()
                     } else inlines(g[12], accent, codeBg)
                 }
                 g[14].isNotEmpty() -> { val t = HtmlLite.tint(g[13], dark); if (t != null) withStyle(SpanStyle(color = t, fontWeight = FontWeight.Medium)) { inlines(g[14], accent, codeBg) } else inlines(g[14], accent, codeBg) }
                 g[16].isNotEmpty() -> { val t = HtmlLite.tint(g[15], dark); if (t != null) withStyle(SpanStyle(color = t, fontWeight = FontWeight.Medium)) { inlines(g[16], accent, codeBg) } else inlines(g[16], accent, codeBg) }
-                else -> plain(m.value)
+                g[17].isNotEmpty() -> {
+                    val hit = ChatLinks.find(g[17]).firstOrNull()
+                    if (hit == null) append(g[17]) else {
+                        pushStringAnnotation(ChatLinks.TAG, hit.third)
+                        withStyle(SpanStyle(color = accent, textDecoration = TextDecoration.Underline)) { append(hit.third) }
+                        pop()
+                        append(g[17].substring(hit.second))
+                    }
+                }
+                else -> plain(m.value, accent)
             }
             last = m.range.last + 1
         }
-        plain(s.substring(last))
+        plain(s.substring(last), accent)
     }
 
     private fun Color.isUnspecified() = this == Color.Unspecified

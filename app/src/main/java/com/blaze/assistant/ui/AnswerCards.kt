@@ -1,5 +1,6 @@
 package com.blaze.assistant.ui
 
+import androidx.compose.ui.input.pointer.pointerInput
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -242,8 +243,18 @@ private fun MdText(md: String, tail: Boolean = false, live: Boolean = false) {
     val mod0 = if (tracking && orb != null) Modifier.onGloballyPositioned { holder[0] = it; aim() } else Modifier
     // v0.31.2 Halo x Blaze: the newest words shimmer in the speaker's colour (blue Blaze, gold Halo), then one band sweeps and fades.
     val mod = mod0.duoShimmer(LocalSpeaker.current, tracking) { holder[1] as? androidx.compose.ui.text.TextLayoutResult }
+    // v0.45.28: a tap on a link opens it (the chat's glass window, LocalOpenLink); long-press still selects and copies.
+    val openLink = LocalOpenLink.current
+    val hasLink = remember(shown) { ChatLinks.hasLinks(shown) }
+    val linked = openLink != null && hasLink
+    val mod2 = if (!linked) mod else mod.pointerInput(shown) {
+        androidx.compose.foundation.gestures.detectTapGestures(onTap = { p ->
+            val l = holder[1] as? androidx.compose.ui.text.TextLayoutResult ?: return@detectTapGestures
+            ChatLinks.at(shown, l.getOffsetForPosition(p))?.let { openLink?.invoke(it) }
+        })
+    }
     SelectionContainer {
-        Text(text, modifier = mod, onTextLayout = { holder[1] = it; if (tracking) aim() },
+        Text(text, modifier = mod2, onTextLayout = { holder[1] = it; if (tracking) aim() },
             style = TextStyle(fontFamily = Type.sansFor(md), fontSize = 15.sp, lineHeight = 23.sp, color = c.body, shadow = halo))
     }
 }

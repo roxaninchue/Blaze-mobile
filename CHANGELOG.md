@@ -4,6 +4,7 @@
 - Listening: tap the mic (or the Listening strip) to stop and send what you said. Holding to talk and letting go still sends, and a quick tap still starts listening. A tap while listening used to throw away what was heard in the chat bar; it now sends it.
 - Blaze Camera, focus at high zoom: once you stop zooming it refocuses on the middle of what you see, with a smaller focus and exposure spot the further you zoom; tap-to-focus also uses the smaller spot and sets white balance. On phones whose camera is one "logical" camera, Blaze opens that one, so zooming moves to the telephoto lens (and the ultrawide) by itself.
 - Blaze Camera, zoom out below 1x: on phones with an ultrawide, the 0.5x / 0.6x button and the dial go below 1x; when the main camera can't do that itself, Blaze switches to the ultrawide lens for it and back at 1x. No ultrawide: no button.
+- Links in Blaze's replies are tappable: web addresses, markdown links and HTML links are underlined, and a tap opens the page in the same glass window Home uses for links (Ask / Quote work there too). Long-press still selects and copies. mailto: links go to your mail app.
 
 ## v0.45.27: the backup brain downloads itself on Wi-Fi, and a clear next step when Blaze Cloud is down (versionCode 174)
 - The one-time backup brain download (about 78 MB) now also starts as soon as the phone gets onto Wi-Fi, not only a minute after Blaze starts. It still needs a 64-bit phone with Alpine Linux installed and the backup brain on ("backup_brain"); nothing to set.
