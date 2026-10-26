@@ -63,11 +63,10 @@ class ProviderSandbox(private val http: SandboxHttp = DefaultSandboxHttp, privat
                 q.memoryLimit = limits.memoryBytes
                 q.maxStackSize = limits.stackBytes
                 // 0.46.5: QuickJS's own out-of-memory paths can crash the whole app natively (SIGSEGV in JS_DefineProperty,
-                // CI run 40381571120; the likely "sudden crash while browsing Video" on 0.46.4). The prelude checks this soft
-                // cap (half the hard one) from the allocating builtins and throws a normal JS error long before the hard cap.
-                val qq = q
-                val soft = limits.memoryBytes / 2
-                q.function("__mem") { _ -> if (runCatching { qq.memoryUsage.mallocSize }.getOrDefault(0L) > soft) 1 else 0 }
+                // CI run 40381571120; the likely "sudden crash while browsing Video" on 0.46.4). The prelude counts what the
+                // big allocating builtins produce and throws a normal JS error at 60 % of the hard cap, long before the engine
+                // reaches it. (Asking the engine for its memory use from inside a host call blocks: CI run 40386741834.)
+                q.function("__membudget") { _ -> (limits.memoryBytes * 6 / 10).toDouble() }
                 val dom = Dom()
                 val requests = AtomicInteger(0)
                 var out: String? = null; var fail: String? = null

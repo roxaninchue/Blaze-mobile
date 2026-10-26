@@ -109,7 +109,7 @@ class VideoCrashHardeningTest {
         // the same engine instance type still works afterwards
         val ok = sb.invoke("""exports.getPosts = async function(){ return [1, 2]; };""", "getPosts", JSONObject())
         assertTrue(ok.error, ok.ok)
-        assertTrue(src("movies/SandboxPrelude.kt").contains("function memChk(){ if (__mem() > 0)"))
+        assertTrue(src("movies/SandboxPrelude.kt").contains("if (memUsed > memBudget) throw new RangeError('The source used too much memory')"))
     }
 
     @Test fun hugeOrOddPostersAreDownsampledOrSkipped() {
