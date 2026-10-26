@@ -1529,7 +1529,7 @@ When you finish, say what you did in one short sentence.
         private var _msgs: List<ChatMessage> = emptyList()
         var msgs: List<ChatMessage>
             get() = _msgs
-            set(v) { _msgs = v; if (this === cur) _messages.value = v }
+            set(v) { _msgs = v; screenAt = System.currentTimeMillis(); if (this === cur) _messages.value = v }
         private var _mood = Mood.IDLE
         var mood: Mood
             get() = _mood
@@ -1548,7 +1548,7 @@ When you finish, say what you did in one short sentence.
         /** The plain-words status line for this chat (see [Agent.status]). */
         var status: String
             get() = _status
-            set(v) { _status = v; if (this === cur) Agent._status.value = v }
+            set(v) { if (v != _status) screenAt = System.currentTimeMillis(); _status = v; if (this === cur) Agent._status.value = v }
         /** v0.31.0: the reply streaming in on this chat (-1 = none), mirrored to [Agent.streamingId] while on screen. */
         private var _streamId = -1L
         var streamId: Long
@@ -1597,6 +1597,10 @@ When you finish, say what you did in one short sentence.
         @Volatile private var sideStep: ((String) -> Unit)? = null
         /** v0.32.0: a solo Blaze turn is running its tool loop (Halo is free to take the conversation). */
         @Volatile var soloRunning = false
+        /** v0.45.28: who is working on the running solo task (the other one is free for side talk and the wait line). */
+        @Volatile var soloWho = Duo.Who.BLAZE
+        /** v0.45.28: when the chat on screen last changed (messages, streaming text or the status line), for [WaitNudge]. */
+        @Volatile var screenAt = 0L
         /** v0.32.0: when the duo last handed the floor to the user in a CHAT (0 = not waiting); untagged replies go back to them. */
         @Volatile var duoChatOpenAt = 0L
 
@@ -1923,10 +1927,12 @@ When you finish, say what you did in one short sentence.
             val shown = text.trim().ifEmpty { "Take a look at this." }
             val busyNow = job?.isActive == true
             // v0.32.0 split: Blaze is busy with a task, so Halo takes this one (unless it's "@blaze …": that steers Blaze).
+            // v0.45.28: and the other way round: while Halo works on a task, Blaze takes your messages ("@halo …" steers Halo).
             if (busyNow && soloRunning && attachments.isEmpty() && notificationContext.isNullOrBlank() && agentId == null && specialistId == null &&
                 Settings.bool("duo_on", true) && Settings.bool("duo_split", true) && SelfControl.match(shown) == null) {
                 val r = Duo.route(shown, false)
-                if (!(r.explicit && r.mode == Duo.Mode.BLAZE)) { sideSend(shown, r.text); return }
+                val steer = if (soloWho == Duo.Who.HALO) Duo.Mode.HALO else Duo.Mode.BLAZE
+                if (!(r.explicit && r.mode == steer)) { sideSend(shown, r.text); return }
             }
             when (RapidMessages.route(busyNow, !busyNow && waiting, burst && notificationContext.isNullOrBlank())) {
                 // v0.45.8: the working state is set before anything else, so it is drawn on the frame after Send.
@@ -2138,12 +2144,53 @@ When you finish, say what you did in one short sentence.
                     add(Role.ERROR, "You're offline. I can still do direct commands like \u201copen WhatsApp\u201d, \u201cflashlight on\u201d or \u201cset a timer for 5 minutes\u201d.")
                     mood = Mood.IDLE; persist(); return@launch
                 }
-                soloRunning = voice == Duo.Who.BLAZE
-                try { runLoop() } finally { soloRunning = false }
+                // v0.45.28: either one working leaves the other free (side talk, and the wait line below).
+                soloRunning = true; soloWho = voice
+                val nudge = if (notificationContext.isNullOrBlank() && agentId == null && specialistId == null && Settings.bool("duo_on", true) &&
+                    Settings.bool("duo_wait_line", true)) startWaitNudge(voice, shown, turnFrom) else null
+                try { runLoop() } finally { soloRunning = false; nudge?.cancel() }
                 // v0.31.2: Halo's solo answer is marked as Halo's in the history, so Blaze knows who said it.
                 if (voice == Duo.Who.HALO) tagLast(Duo.Who.HALO)
             }
             job?.invokeOnCompletion { scope.launch { flushSide() } }   // v0.32.0: Halo's side talk joins the history after
+        }
+
+        /**
+         * v0.45.28 ([WaitNudge]): while [worker] works on [task] and the screen has shown nothing new for 10 s (no reply
+         * streaming, no step or status change), the free one writes the user one short line of its own, live with its own
+         * persona: who is on it, maybe an offer to help meanwhile. Once per task; skipped when the result came first, when
+         * the user is already talking to the free one, or when the line isn't ready within [WaitNudge.GEN_MS].
+         */
+        private fun startWaitNudge(worker: Duo.Who, task: String, fromId: Long): Job {
+            val t0 = System.currentTimeMillis()
+            screenAt = t0
+            fun answered() = msgs.any { it.id > fromId && ((it.role == Role.BLAZE && it.meta != Ack.META) || it.role == Role.ERROR) }
+            return scope.launch(ctxTag + Agent.sideFlag.asContextElement(true) + CallState().element()) {
+                while (true) {
+                    kotlinx.coroutines.delay(500)
+                    if (job?.isActive != true || answered()) return@launch
+                    if (!WaitNudge.due(System.currentTimeMillis(), t0, screenAt, streamId >= 0 || duoLive.isNotEmpty())) continue
+                    if (sideJob?.isActive == true) return@launch
+                    val idle = worker.other
+                    val elapsed = ((System.currentTimeMillis() - t0) / 1000).toInt()
+                    val req = JSONArray().put(JSONObject().put("role", "system").put("content",
+                        WaitNudge.system(idle, worker, WaitNudge.firstName(Settings.greetName()), task, elapsed)))
+                    try { val c = duoContext(idle, 6); for (i in 0 until c.length()) req.put(c.get(i)) } catch (_: Exception) { }
+                    req.put(JSONObject().put("role", "user").put("content", WaitNudge.CUE))
+                    LlmClient.liteTurn = true
+                    val raw = try {
+                        kotlinx.coroutines.withTimeoutOrNull(WaitNudge.GEN_MS) { LlmClient.complete(req, null, null, null, LlmClient.Lane.BACKGROUND) }
+                    } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
+                    val line = WaitNudge.clean((raw?.opt("content") as? String).orEmpty()) ?: return@launch
+                    // The result may have come in while the line was being written: then it isn't needed.
+                    if (job?.isActive != true || answered() || streamId >= 0 || sideJob?.isActive == true) return@launch
+                    val wid = ids.getAndIncrement()
+                    msgs = msgs + ChatMessage(wid, Role.BLAZE, line, speaker = speakerOf(idle), meta = Ack.META)
+                    synchronized(sideHist) { sideHist.add(JSONObject().put("role", "assistant").put("content", Duo.tag(idle) + line)) }
+                    persist()
+                    return@launch
+                }
+            }
         }
 
         /** v0.31.2: prefixes the newest plain assistant line in the history with [Halo] / [Blaze] (once). */
@@ -2345,20 +2392,21 @@ When you finish, say what you did in one short sentence.
             sideJob = scope.launch(ctxTag + Agent.sideFlag.asContextElement(true) + CallState().element()) {
                 split = true
                 try {
-                    while (true) { val (mid, t) = sideQueue.poll() ?: break; haloSide(mid, t) }
+                    while (true) { val (mid, t) = sideQueue.poll() ?: break; haloSide(mid, t, soloWho.other) }
                 } finally { split = false; sideLive = emptySet(); sideStep = null; persist() }
             }
             sideJob?.invokeOnCompletion { scope.launch { flushSide() } }
         }
 
-        private suspend fun haloSide(mid: Long, text: String) {
+        /** v0.45.28: [who] = the free one (Halo while Blaze works, Blaze while Halo works). */
+        private suspend fun haloSide(mid: Long, text: String, who: Duo.Who = Duo.Who.HALO) {
             val user = JSONObject().put("role", "user").put("content", text)
             synchronized(sideHist) { sideHist.add(user) }
             val req = JSONArray().put(JSONObject().put("role", "system").put("content",
-                Duo.sideSystem(Settings.greetName(), lastUserText(), status) + TurnContext.RULE + "\n" + TurnContextSource.block(text)))
-            try { val c = duoContext(Duo.Who.HALO, 12); for (i in 0 until c.length()) req.put(c.get(i)) } catch (e: Exception) { com.blaze.assistant.device.CrashLog.quiet("Agent: val c duoContextDuo.Who.HALO 12 for i in", e) }
+                Duo.sideSystem(Settings.greetName(), lastUserText(), status, who) + TurnContext.RULE + "\n" + TurnContextSource.block(text)))
+            try { val c = duoContext(who, 12); for (i in 0 until c.length()) req.put(c.get(i)) } catch (e: Exception) { com.blaze.assistant.device.CrashLog.quiet("Agent: val c duoContextDuo.Who.HALO 12 for i in", e) }
             synchronized(sideHist) { sideHist.forEach { req.put(it) } }
-            val live = LiveMsg(Duo.Who.HALO, -1L, side = true)
+            val live = LiveMsg(who, -1L, side = true)
             sideStep = { st -> live.hint(st) }
             // v0.45.9: a schedule ask, or a yes to Halo's / Blaze's schedule offer ("@halo Yes"), gets the calendar and reminder tools.
             val lastReply = msgs.lastOrNull { it.role == Role.BLAZE && it.id < mid }?.text.orEmpty()
@@ -2375,11 +2423,11 @@ When you finish, say what you did in one short sentence.
                 persist()
                 return
             }
-            val raw = try { duoCall(Duo.Who.HALO, req, roomTools(if (sched) Duo.SIDE_SCHEDULE_TOOLS else emptySet()), -1L, side = true) {
+            val raw = try { duoCall(who, req, roomTools(if (sched) Duo.SIDE_SCHEDULE_TOOLS else emptySet()), -1L, side = true) {
                 // 0.45.19: a handoff line ("Passed to Blaze, let me know…") never shows, not even while it streams.
                 if (!Ack.isGeneric(it)) live.show(it) } }
                 catch (e: CancellationException) { live.end(""); throw e }
-                catch (e: Exception) { live.end(""); add(Role.ERROR, e.message ?: "Halo lost the connection."); return }
+                catch (e: Exception) { live.end(""); add(Role.ERROR, e.message ?: "${who.display} lost the connection."); return }
             val relay = Duo.isRelay(raw)
             // 0.45.19: a relay is Blaze's job, so Halo's handoff line ("passing that straight to Blaze") is never kept: Blaze's
             // answer is the one clean reply (it used to sit glued under Halo's name with "Done ✓").
@@ -2393,7 +2441,7 @@ When you finish, say what you did in one short sentence.
                 focus = focus + mid
                 scope.launch { job?.join(); drain() }
             }
-            if (shownText.isNotEmpty()) synchronized(sideHist) { sideHist.add(JSONObject().put("role", "assistant").put("content", Duo.tag(Duo.Who.HALO) + shownText)) }
+            if (shownText.isNotEmpty()) synchronized(sideHist) { sideHist.add(JSONObject().put("role", "assistant").put("content", Duo.tag(who) + shownText)) }
             persist()
         }
 

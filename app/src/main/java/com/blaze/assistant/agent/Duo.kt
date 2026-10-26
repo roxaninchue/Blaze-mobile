@@ -397,17 +397,18 @@ object Duo {
     /** Halo passed the message on to Blaze's running task. */
     fun isRelay(raw: String): Boolean = relayRe.containsMatchIn(raw)
 
-    fun sideSystem(userName: String?, task: String, step: String): String = soul(Who.HALO) + ASSISTANT_RULES + DUO_RULES +
+    /** v0.45.28: [who] = the free one answering on the side (Halo while Blaze works, Blaze while Halo works). */
+    fun sideSystem(userName: String?, task: String, step: String, who: Who = Who.HALO): String = soul(who) + ASSISTANT_RULES + DUO_RULES +
         (if (!userName.isNullOrBlank()) "\nThe user's name is $userName." else "") +
-        "\nRIGHT NOW: Blaze, your partner, is busy working on the user's task: \"${task.take(600)}\"" +
-        (if (step.isNotBlank()) " (current step: ${step.take(120)})" else "") + ". The two of you have split up: Blaze keeps " +
+        "\nRIGHT NOW: ${who.other.display}, your partner, is busy working on the user's task: \"${task.take(600)}\"" +
+        (if (step.isNotBlank()) " (current step: ${step.take(120)})" else "") + ". The two of you have split up: ${who.other.display} keeps " +
         "working on that, and you keep the user company and handle whatever they ask meanwhile. Help with anything: chat, answers, " +
         "advice, ideas, research (you have web search, pages, memory and skills; use them when facts matter; when you have calendar_events, list_routines or create_routine, use them for calendar and reminder " +
         "asks and never say you can't see the calendar). You can't touch the " +
-        "phone's screen or apps right now because Blaze is using them.\n" +
-        "If the message is meant for Blaze's running task (a correction, extra detail, 'stop', 'use X instead', 'also do Y'), or it " +
-        "needs a phone action, reply with only the tag [[relay]] and nothing else: Blaze answers the user itself, so never write a " +
-        "handoff line like 'passing that to Blaze'. Otherwise just answer, with no tag. If they ask how Blaze is doing, tell them what Blaze is working on."
+        "phone's screen or apps right now because ${who.other.display} is using them.\n" +
+        "If the message is meant for ${who.other.display}'s running task (a correction, extra detail, 'stop', 'use X instead', 'also do Y'), or it " +
+        "needs a phone action, reply with only the tag [[relay]] and nothing else: ${who.other.display} answers the user directly, so never write a " +
+        "handoff line like 'passing that to ${who.other.display}'. Otherwise just answer, with no tag. If they ask how ${who.other.display} is doing, tell them what ${who.other.display} is working on."
 
     data class RoomLine(val who: String, val text: String)
 
