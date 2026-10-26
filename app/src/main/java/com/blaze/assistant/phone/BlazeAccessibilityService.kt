@@ -171,9 +171,15 @@ class BlazeAccessibilityService : AccessibilityService() {
     // ---------- Seeing ----------
 
     /** Screenshot of the default display, downscaled, as a data:image/jpeg URL. Android 11+. */
+    @Volatile private var lastShotAt = 0L
     suspend fun screenshot(): String? {
         if (android.os.Build.VERSION.SDK_INT < 30) return null
         if (bankInFront()) return null
+        // 0.46.4 heat audit: at most one capture per ScreenHeat.SHOT_GAP_MS (a phone task only; each one is a full-screen
+        // hardware copy + scale + JPEG)
+        val now0 = android.os.SystemClock.uptimeMillis()
+        ScreenHeat.shotWait(lastShotAt, now0).takeIf { it > 0 }?.let { kotlinx.coroutines.delay(it) }
+        lastShotAt = android.os.SystemClock.uptimeMillis(); lastUseAt = lastShotAt
         // v0.33.3: the hardware buffer is copied, scaled (720 px long side) and compressed (JPEG 60) off the main thread.
         val buf = suspendCancellableCoroutine<ScreenshotResult?> { cont ->
             try {
@@ -276,7 +282,14 @@ class BlazeAccessibilityService : AccessibilityService() {
     /** Cached-tree counters (speed_stats). */
     val treeStats: String get() = "tree full ${tree.fullWalks}, partial ${tree.partialWalks}, subtrees reused ${tree.reusedSubtrees}, fetches ${tree.childFetches}"
 
+    /** 0.46.4 heat audit: when Blaze last read or acted on the screen (a phone task is active for [TASK_IDLE_MS] after). */
+    @Volatile var lastUseAt = 0L
+    private fun taskActive(now: Long = android.os.SystemClock.uptimeMillis()) = lastUseAt > 0 && now - lastUseAt < com.blaze.assistant.phone.ScreenHeat.TASK_IDLE_MS
+
     private fun treeEvent(e: AccessibilityEvent) {
+        // 0.46.4: outside a phone task the cached tree is just dropped once; no per-event e.source binder calls
+        // (they ran for every content change of the last-read app, forever after a task)
+        if (!taskActive()) { if (treeWindow >= 0) { treeWindow = -1; tree.onWindowChanged() }; return }
         when (e.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, AccessibilityEvent.TYPE_WINDOWS_CHANGED -> tree.onWindowChanged()
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED, AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED, AccessibilityEvent.TYPE_VIEW_SCROLLED,
@@ -291,6 +304,7 @@ class BlazeAccessibilityService : AccessibilityService() {
 
     /** Full read. With [diff], a read of the same screen returns only what changed. */
     fun readScreen(diff: Boolean = false): String {
+        lastUseAt = android.os.SystemClock.uptimeMillis()
         val root = rootInActiveWindow ?: run { elements.clear(); return "I can't see the screen right now (no active window)." }
         if (bankInFront()) { elements.clear(); lastWalk = null; tree.clear(); return com.blaze.assistant.bank.BankModeLogic.REFUSE }
         val pkg = root.packageName?.toString() ?: "unknown"

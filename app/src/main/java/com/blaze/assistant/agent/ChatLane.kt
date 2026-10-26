@@ -27,6 +27,9 @@ object ChatLane {
         if (!Settings.bool("chat_lane", true)) return false
         val t = text.trim()
         if (t.isEmpty() || t.length > 300 || t.startsWith("[") || t.startsWith("/")) return false
+        // 0.46.4: small talk always takes the chat lane (no tools, no search, no sources), except a yes to a schedule offer
+        // (a bare "yes" / "ok" answering Blaze's own question is part of that task and keeps the full lane)
+        if (SmallTalk.chitChat(t) && !TurnContext.scheduleFollowUp(t, lastAssistant) && !(SmallTalk.ack(t) && lastAssistant.trim().endsWith("?"))) return true
         if (ToolRouter.guess(t).isNotEmpty()) return false
         // v0.45.9 (ToolTruth): this lane sends no tools, so anything tool-shaped goes to the full lane.
         if (ToolTruth.toolShaped(t) || SaveFile.wantsSave(t)) return false
@@ -57,8 +60,9 @@ object ChatLane {
             append(AnswerStyle.FORMAT.trimStart()).append(' ')
             append("You are Blaze: you CAN generate images, make beats and music, run Python in your own Linux terminal, browse, and use the user's phone, just not in this short reply. ")
             append("You run on the user's phone: never give desktop or text-editor advice and never say you can't save, run, open or check something. ")
+            if (SmallTalk.chitChat(userText)) append(SmallTalk.RULE).append(' ') else {
             append("You have NO tools in this reply. If answering properly needs live or current information (news, weather, prices, scores, anything about today), ")
-            append("anything on the user's phone, apps, messages, files, calendar or settings, or doing or making anything (an image, a beat, a file, any action), or if they ask whether you can do something, reply with exactly $ESCAPE and nothing else. ")
+            append("anything on the user's phone, apps, messages, files, calendar or settings, or doing or making anything (an image, a beat, a file, any action), or if they ask whether you can do something, reply with exactly $ESCAPE and nothing else. ") }
             if (Settings.followups) append(QuickReplies.RULE).append(' ')
             append(Memory.promptBlock(userText).take(1500))
             // v0.45.9: the assistant rules and the [context] block, last (Site persona v1.0.1 `context_block`).

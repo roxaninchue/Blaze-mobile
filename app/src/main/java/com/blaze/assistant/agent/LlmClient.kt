@@ -124,10 +124,10 @@ object LlmClient {
         val task = pick.task
         var trimmed = false
         val cloudLabel = { "Blaze Cloud" + (if (lastServedBy.isNotBlank()) " · $lastServedBy" else "") + ModelRoute.label(pick) + if (trimmed) " · trimmed" else "" }
-        val gateway: suspend (String, JSONArray, JSONArray?) -> JSONObject = { reserve, m, tl ->
-            Cloud.drive(onText != null, call = { a ->
-                call(t, if (a.nudge) EmptyReply.withNudge(m) else m, tl, if (a.stream) onText else null,
-                    if (lane == Lane.MAIN) onThink else null, false, task = task, avoid = ModelRoute.avoid(a.avoid, pick.strong), idemKey = a.key, reserve = reserve)
+        val gateway: suspend (String, JSONArray, JSONArray?, ((String) -> Unit)?, ((String) -> Unit)?) -> JSONObject = { reserve, m, tl, txt, thk ->
+            Cloud.drive(txt != null, call = { a ->
+                call(t, if (a.nudge) EmptyReply.withNudge(m) else m, tl, if (a.stream) txt else null,
+                    if (lane == Lane.MAIN) thk else null, false, task = task, avoid = ModelRoute.avoid(a.avoid, pick.strong), idemKey = a.key, reserve = reserve)
                     .also { lastRoute = cloudLabel() }
             }, served = { lastServedKey },
                 trim = { e -> lastCloudError = e.message.orEmpty().take(300); CallState.current().errors.add(lastCloudError); if (!trimmed && tooLarge(e)) { trimmed = true; msgs = shrink(msgs); true } else false },
@@ -138,42 +138,78 @@ object LlmClient {
         val gdata = BrainOrder.googleData(msgs)
         // A3: once the gateway Worker looks killed (Cloudflare 1102, CPU limit), later gateway calls go slim, after a short pause.
         var workerKilled = false
-        suspend fun viaGateway(reserve: String): JSONObject {
-            if (!workerKilled) try { return gateway(reserve, msgs, tools) } catch (e: LlmException) {
+        suspend fun viaGatewayWith(reserve: String, txt: ((String) -> Unit)?, thk: ((String) -> Unit)?): JSONObject {
+            if (!workerKilled) try { return gateway(reserve, msgs, tools, txt, thk) } catch (e: LlmException) {
                 if (!ReserveBody.looksLikeWorkerKill(e.code, lastCloudError.ifBlank { e.message.orEmpty() })) throw e
                 workerKilled = true
                 CallState.current().errors.add("gateway worker killed (1102?): sending a slim request")
             }
             kotlinx.coroutines.delay(ReserveBody.PAUSE_MS)
-            return gateway(reserve, shrink(msgs, keep = ReserveBody.KEEP), ReserveBody.slimForReserve(tools, msgs))
+            return gateway(reserve, shrink(msgs, keep = ReserveBody.KEEP), ReserveBody.slimForReserve(tools, msgs), txt, thk)
         }
-        val steps = BrainOrder.plan(backupReady, token.isNotBlank())
+        // 0.46.4 hotfix (BrainRace): brains in order by kind, each with hard deadlines, the next one hedged in parallel when
+        // the first is slow to show anything; the on-phone brain only when it is warm (never waits on its setup or start).
+        val parent = CallState.current()
+        val kind = BrainRace.kind(liteTurn, heavyTurn, tools?.length() ?: 0, coding, BrainRace.userChars(msgs), parent.raceKind)
+        val warm = backupReady && try { BackupBrain.warm() } catch (_: Throwable) { false }
+        if (backupReady && !warm) try { BackupBrain.prewarm() } catch (_: Throwable) { }
+        // signed out with only the on-phone brain: it may still have to start (the one case that waits for it)
+        val cold = token.isBlank() && backupReady && !warm
+        val steps = if (cold) listOf(BackupRoute.Step.BACKUP) else BrainRace.order(kind, warm, token.isNotBlank()) { BrainLedger.app.ttft(it) }
+        val chatThink = if (lane == Lane.MAIN && kind != BrainRace.Kind.CHAT) onThink else null   // chat: thinking stays hidden
+        var cloudErr: Throwable? = null
         val out = try {
-            Failover.run(steps,
-                call = { step -> val t0 = System.currentTimeMillis(); when (step) {
-                    // The on-device brain: same messages, same tools; its tool calls come back as real tool_calls for the agent loop.
-                    BackupRoute.Step.BACKUP -> BackupBrain.complete(msgs, tools, onText, if (lane == Lane.MAIN) onThink else null, coding, gdata).also {
-                        lastServedBy = ""; lastServedKey = ""; lastRoute = "On-phone brain" + (if (coding) " · coder" else "")
-                    }
-                    // Nous (the gateway's reserve, free models only)
-                    BackupRoute.Step.RESERVE -> viaGateway(BackupRoute.reserveHeader(BackupRoute.Step.RESERVE, true)).also { lastRoute = "Nous reserve" }
-                    // Blaze Cloud last; its own reserve was already asked, so the gateway skips it
-                    BackupRoute.Step.CLOUD -> viaGateway("skip")
-                }.also { BrainLedger.app.ok(step, System.currentTimeMillis() - t0) } },
-                shapeError = { e -> e is LlmException && ToolCalls.isShapeError(e) },
-                onSwitch = { line -> try { switchListener?.invoke(line) } catch (_: Throwable) { } },
+            // the cold on-phone brain (the only brain when signed out) gets its start time on top
+            val lim0 = BrainRace.limits(kind)
+            val lim = if (cold) lim0.copy(firstMs = 45_000L, thinkMs = 60_000L, wholeMs = 120_000L) else lim0
+            HedgeRace.run(steps, lim, onText != null,
+                call = { a ->
+                    val st = parent.fork()
+                    st.progress = { vis -> if (vis) a.visible() else a.think() }
+                    val gText: ((String) -> Unit)? = onText?.let { f -> { p: String -> if (a.visible()) f(p) } }
+                    val gThink: ((String) -> Unit)? = chatThink?.let { f -> { p: String -> a.think(); if (a.shows()) f(p) } }
+                    val t0 = System.currentTimeMillis()
+                    val v = withContext(st.element()) { when (a.step) {
+                        // The on-phone brain: same messages, same tools; its tool calls come back as real tool_calls for the agent loop.
+                        BackupRoute.Step.BACKUP -> BackupBrain.complete(msgs, tools, gText, gThink, coding, gdata, chat = kind == BrainRace.Kind.CHAT, cold = cold).also {
+                            lastServedBy = ""; lastServedKey = ""; lastRoute = "On-phone brain" + (if (coding) " · coder" else "")
+                        }
+                        // Nous (the gateway's reserve, free models only)
+                        BackupRoute.Step.RESERVE -> viaGatewayWith(BackupRoute.reserveHeader(BackupRoute.Step.RESERVE, true), gText, gThink).also { lastRoute = "Nous reserve" }
+                        // Blaze Cloud; its own reserve is asked separately, so the gateway skips it
+                        BackupRoute.Step.CLOUD -> viaGatewayWith("skip", gText, gThink)
+                    } }
+                    BrainLedger.app.ok(a.step, System.currentTimeMillis() - t0)
+                    if (a.visibleAt > 0) BrainLedger.app.ttft(a.step, a.visibleAt - a.startedAt)
+                    v to st
+                },
+                onStatus = { line -> try { switchListener?.invoke(line) } catch (_: Throwable) { } },
                 onFail = { step, e ->
                     BrainLedger.app.fail(step, e.message.orEmpty())
-                    CallState.current().errors.add(step.name.lowercase() + ": " + e.message.orEmpty().take(200))
-                    if (step == BackupRoute.Step.CLOUD && (e as? LlmException)?.code != 401) try { com.blaze.assistant.device.CrashLog.write("Blaze Cloud failed: ${lastCloudError}") } catch (_: Throwable) { }
+                    // a brain dropped for slowness counts as at least that slow next time (the router puts it later)
+                    if (e is HedgeRace.TooSlow && onText != null) BrainLedger.app.ttft(step, BrainRace.limits(kind).firstMs)
+                    if (step == BackupRoute.Step.CLOUD) cloudErr = e
+                    parent.errors.add(step.name.lowercase() + ": " + e.message.orEmpty().take(200))
+                    if (step == BackupRoute.Step.CLOUD && (e as? LlmException)?.code != 401) try { com.blaze.assistant.device.CrashLog.write("Blaze Cloud failed: ${lastCloudError.ifBlank { e.message.orEmpty() }}") } catch (_: Throwable) { }
                     if (step == BackupRoute.Step.BACKUP) try { com.blaze.assistant.device.CrashLog.write("Backup brain failed: ${e.message.orEmpty().take(200)}") } catch (_: Throwable) { }
-                })
+                },
+                // a brain that lost the race without a word is at least that slow (the chat router learns the faster one)
+                onLose = { step, ms -> if (onText != null) BrainLedger.app.ttft(step, ms) },
+                // what no other brain fixes (sign-in, allowance, a refused request shape) ends it once nobody else is running
+                fatal = { step, e -> step == BackupRoute.Step.CLOUD && (!Failover.fixable(e) || (e is LlmException && ToolCalls.isShapeError(e))) },
+                allFailed = { last, fatal ->
+                    val err = fatal ?: cloudErr ?: last
+                    if (err is LlmException && err !is TooSlow) err else LlmException(Cloud.BUSY, 503)
+                },
+                switching = BrainRace.SWITCHING)
         } catch (e: LlmException) {
             // A4: every final failure leaves a line on whether the on-device brain could run
             try { com.blaze.assistant.device.CrashLog.write("All brains failed (${e.code}): " + BackupBrain.diag()) } catch (_: Throwable) { }
             throw e
         } finally { BrainLedger.save() }
-        return out.value
+        out.value.second.publish()
+        if (out.hedged || out.index > 0) parent.errors.add("answered by ${out.step.name.lowercase()} (first token ${out.firstVisibleMs} ms${if (out.hedged) ", hedged" else ""})")
+        return out.value.first
     }
 
     /** A6: the message for gateway 0.8.56's blaze_stream_broken frame (BackupRoute.brokeMidReply matches it). */
@@ -185,30 +221,7 @@ object LlmClient {
     /** Thrown inside [watchFirstChunk] when Blaze Cloud showed no sign of life in time (the backup takes over). */
     class TooSlow(ms: Long) : LlmException("Blaze Cloud too slow (no first chunk in ${ms / 1000}s)", 0)
 
-    /**
-     * v0.45.26: runs [block] (the Blaze Cloud call) and gives up on it when no chunk at all (text, thinking or a tool call)
-     * arrived within [BackupRoute.ttftMs] (Settings "backup_ttft_ms"). Halfway there the backup brain is warmed so the
-     * switch is quick. Once anything arrived, the call runs to its end as before.
-     */
-    private suspend fun watchFirstChunk(streaming: Boolean, block: suspend () -> JSONObject): JSONObject = kotlinx.coroutines.coroutineScope {
-        val st = CallState.current()
-        val ttft = BackupRoute.ttftMs(streaming, Settings.str("backup_ttft_ms").trim().toLongOrNull())
-        val started = System.currentTimeMillis()
-        val job = async { block() }
-        var warmed = false
-        while (!job.isCompleted) {
-            kotlinx.coroutines.delay(250)
-            val now = System.currentTimeMillis()
-            val alive = BackupRoute.alive(started, st.chunkAt.get(), st.gotFirst, st.callStart)
-            if (!alive && !warmed && ttft > 0 && now - started >= ttft / 2) { warmed = true; try { BackupBrain.prewarm() } catch (_: Throwable) { } }
-            if (BackupRoute.tooSlow(started, now, alive, ttft)) {
-                job.cancel()
-                lastCloudError = "no first chunk in ${ttft / 1000}s"; st.errors.add(lastCloudError)
-                throw TooSlow(ttft)
-            }
-        }
-        try { job.await() } catch (e: LlmException) { try { BackupBrain.prewarm() } catch (_: Throwable) { }; throw e }
-    }
+    // 0.46.4: watchFirstChunk (never called in 0.46.3, so no gateway call had a first-token cap) is replaced by HedgeRace.
 
     /** Why the optional steps model last failed (shown in diagnostics); the main model took over. */
     @Volatile var lastStepsError: String = ""
@@ -533,10 +546,10 @@ object LlmClient {
                 val delta = obj.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("delta") ?: continue
                 val rp = listOf("reasoning_content", "reasoning").firstNotNullOfOrNull { k ->
                     delta.optString(k, "").takeIf { delta.has(k) && !delta.isNull(k) && it.isNotEmpty() } }
-                if (rp != null) { markFirst(); think.append(rp); onThink?.invoke(think.toString()) }
+                if (rp != null) { markFirst(); CallState.current().progress?.invoke(false); think.append(rp); onThink?.invoke(think.toString()) }
                 val piece = delta.optString("content", "").takeIf { delta.has("content") && !delta.isNull("content") }
                 if (!piece.isNullOrEmpty()) {
-                    markFirst(); markText()
+                    markFirst(); markText(); CallState.current().progress?.invoke(true)
                     content.append(piece)
                     onText(content.toString()); emitted = content.length
                     val now = System.currentTimeMillis()
@@ -544,7 +557,7 @@ object LlmClient {
                     lastText = now
                 }
                 val tc = delta.optJSONArray("tool_calls") ?: continue
-                markFirst()
+                markFirst(); CallState.current().progress?.invoke(true)
                 for (i in 0 until tc.length()) {
                     val d = tc.getJSONObject(i)
                     // Providers disagree on "index": Gemini sends each parallel call whole, in its own

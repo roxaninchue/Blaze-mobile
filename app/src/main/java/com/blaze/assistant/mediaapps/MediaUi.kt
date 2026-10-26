@@ -912,9 +912,10 @@ fun PlayerSheet(expanded: Boolean, onCollapse: () -> Unit, modifier: Modifier = 
  */
 @Composable
 fun MiniBar(t: Track?, subtitle: String, playing: Boolean, progress: Float, onOpen: () -> Unit, onPlayPause: () -> Unit, onClose: () -> Unit,
-            artRatio: Float = 1f, extra: @Composable () -> Unit = {}) {
+            artRatio: Float = 1f, insets: Boolean = true, extra: @Composable () -> Unit = {}) {
     val c = LocalBlaze.current
-    Column(Modifier.navigationBarsPadding().padding(10.dp).widthIn(max = 560.dp).fillMaxWidth().clip(BlazeShapes.medium)
+    // 0.46.4: docked above the Music / Video bottom nav ([insets] = false), the nav takes the gesture-bar inset instead.
+    Column((if (insets) Modifier.navigationBarsPadding() else Modifier).padding(10.dp).widthIn(max = 560.dp).fillMaxWidth().clip(BlazeShapes.medium)
         .background(if (c.dark) Color(0xFF1C1C20) else Color(0xFFF1F1F3)).clickable(onClickLabel = "Open player", onClick = onOpen)) {
         Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Art(t, Modifier.height(44.dp).aspectRatio(artRatio), target = 160)

@@ -117,6 +117,8 @@ class ProviderSandbox(private val http: SandboxHttp = DefaultSandboxHttp, privat
 
     private fun friendly(e: Throwable): String {
         val m = (e.message ?: e.javaClass.simpleName).lineSequence().firstOrNull().orEmpty().removePrefix("Error: ").take(300)
+        // 0.46.5: when the heap is exhausted QuickJS can't even build the message and throws a bare InternalError (CI runs 40367470857, 40368792061).
+        if (Regex("""^InternalError:?\s*(?:<NO_MESSAGE>)?\s*$""").matches(m.trim())) return "The source used too much memory or stack"
         return if (m.contains("out of memory", true)) "The source used too much memory" else if (m.contains("stack overflow", true)) "The source overflowed its stack" else m
     }
 

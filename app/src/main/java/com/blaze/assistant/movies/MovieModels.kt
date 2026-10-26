@@ -32,8 +32,12 @@ data class MovieCatalog(val title: String, val filter: String)
 data class MoviePlay(val key: String, val title: String, val url: String, val image: String = "", val source: String = "",
                      val subtitles: List<MovieSubtitle> = emptyList(), val headers: Map<String, String> = emptyMap(), val postLink: String = "",
                      /** The source's own link for this video (re-resolved when [url] isn't kept, e.g. Jellyfin's signed URLs). */
-                     val ref: String = "") {
-    fun toJson(): JSONObject = JSONObject().put("key", key).put("title", title).put("url", url).put("image", image).put("source", source)
+                     val ref: String = "",
+                     /** 0.46.5: the stream type the source gave (m3u8 / dash / mp4…), so the player picks HLS / DASH / a file. */
+                     val type: String = "",
+                     /** 0.46.5: the other streams the source returned, tried in order when this one doesn't play (not saved). */
+                     val alternates: List<MovieStream> = emptyList()) {
+    fun toJson(): JSONObject = JSONObject().put("key", key).put("title", title).put("url", url).put("image", image).put("source", source).put("type", type)
         .put("post", postLink).put("ref", ref).put("subs", JSONArray(subtitles.map { MovieJson.sub(it) })).put("headers", JSONObject(headers as Map<*, *>))
     companion object {
         fun from(o: JSONObject?): MoviePlay? {
@@ -41,7 +45,7 @@ data class MoviePlay(val key: String, val title: String, val url: String, val im
             val url = o.optString("url"); val ref = o.optString("ref")
             if (url.isBlank() && ref.isBlank()) return null
             return MoviePlay(o.optString("key").ifBlank { url.ifBlank { ref } }, o.optString("title").ifBlank { "Video" }, url, o.optString("image"), o.optString("source"),
-                MovieJson.subs(o.optJSONArray("subs")), MovieJson.headers(o.optJSONObject("headers")), o.optString("post"), ref)
+                MovieJson.subs(o.optJSONArray("subs")), MovieJson.headers(o.optJSONObject("headers")), o.optString("post"), ref, o.optString("type"))
         }
         fun parse(s: String?): MoviePlay? = try { from(JSONObject(s ?: "")) } catch (_: Exception) { null }
     }

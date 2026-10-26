@@ -13,8 +13,8 @@ android {
         applicationId = "com.blaze.assistant"
         minSdk = 26
         targetSdk = 34
-        versionCode = 180
-        versionName = "0.46.3"
+        versionCode = 182
+        versionName = "0.46.5"
         // v0.30.1 Music Store: Jamendo client_id, from the environment or -Pjamendo.clientId at build time. Never hard-coded;
         // empty = "not configured" (the user can paste one in the Music Store instead).
         buildConfigField("String", "JAMENDO_CLIENT_ID", "\"" + (System.getenv("JAMENDO_CLIENT_ID") ?: (project.findProperty("jamendo.clientId") as String?) ?: "").replace("\"", "") + "\"")
@@ -244,6 +244,9 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:$media3")
     implementation("androidx.media3:media3-session:$media3")
     implementation("androidx.media3:media3-ui:$media3")
+    // 0.46.5: streams from user-added sources are mostly HLS (some DASH); without these modules they could never play.
+    implementation("androidx.media3:media3-exoplayer-hls:$media3")
+    implementation("androidx.media3:media3-exoplayer-dash:$media3")
     implementation("androidx.media3:media3-transformer:$media3")   // v0.33.0 Clip Studio
     implementation("androidx.media3:media3-effect:$media3")
     implementation("com.google.mediapipe:tasks-genai:0.10.24")   // v0.33.0 Offline Brain

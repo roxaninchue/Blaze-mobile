@@ -16,7 +16,8 @@ class MoviesLegalTest {
     private val okHosts = setOf("archive.org", "blazeinchue.pages.dev", "github.com", "raw.githubusercontent.com", "gitlab.com", "192.168.1.20", "schemas.android.com")
 
     private fun scanned(): List<File> = (listOf(File(app, "java/com/blaze/assistant/movies"), File(app, "assets/movies"), File(app, "assets/skills/reverse-engineer-anything"))
-        .flatMap { d -> d.walkTopDown().filter { it.isFile }.toList() } + File(app, "java/com/blaze/assistant/mediaapps/MoviesUi.kt") + File(app, "AndroidManifest.xml"))
+        .flatMap { d -> d.walkTopDown().filter { it.isFile }.toList() } + File(app, "java/com/blaze/assistant/mediaapps/MoviesUi.kt") + File(app, "java/com/blaze/assistant/mediaapps/VideoShell.kt") +
+        File(app, "java/com/blaze/assistant/mediaapps/VideoHub.kt") + File(app, "AndroidManifest.xml"))
 
     @Test fun noThirdPartyProviderNamesOrUrls() {
         val files = scanned()

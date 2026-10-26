@@ -27,6 +27,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.ClosedCaption
+import androidx.compose.ui.graphics.Brush
+import com.blaze.assistant.movies.MovieLibrary
+import com.blaze.assistant.movies.ReleaseTitle
+import com.blaze.assistant.movies.StreamPlan
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Bookmark
@@ -186,7 +192,7 @@ private fun SourceRows(s: MovieSource, open: (MovieSource, MoviePost) -> Unit, p
         if (pre == null) value = withContext(Dispatchers.IO) { runCatching { s.rows() } }.also { Movies.note(s, it.exceptionOrNull()?.message) }
     }
     val r = rows ?: return
-    r.exceptionOrNull()?.let { Text("${s.name} didn't answer", color = LocalBlaze.current.sub, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)); return }
+    if (r.isFailure) return   // 0.46.5: a source that failed is hidden, never listed
     r.getOrNull().orEmpty().filter { it.second.isNotEmpty() }.forEach { (title, posts) ->
         RowTitle(if (title == s.name) title else "$title \u00b7 ${s.name}")
         LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) { items(posts) { p -> Poster(p.title, p.image) { open(s, p) } } }
@@ -201,7 +207,8 @@ private fun RowTitle(t: String) = Text(t, color = LocalBlaze.current.ink, fontSi
 internal fun Poster(title: String, image: String, progress: Float = -1f, onClick: () -> Unit) {
     val c = LocalBlaze.current
     Column(Modifier.width(112.dp).clip(RoundedCornerShape(12.dp)).clickable(role = Role.Button, onClickLabel = "Open $title") { onClick() }) {
-        NetThumb(image, Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(12.dp))) {
+        Box(Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(12.dp))) {
+            PosterArt(title, image, Modifier.fillMaxSize())
             if (progress >= 0f) Box(Modifier.align(Alignment.BottomStart).fillMaxWidth(progress.coerceIn(0.02f, 1f)).height(3.dp).background(c.accent))
         }
         Text(title, color = c.ink, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
@@ -213,7 +220,6 @@ internal fun SearchResults(s: MovieHub.Search?, sources: List<MovieSource>, open
     val c = LocalBlaze.current
     if (s == null) { Text("Searching\u2026", color = c.sub, fontSize = 13.sp, modifier = Modifier.padding(16.dp)); return }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 90.dp)) {
-        if (s.failed.isNotEmpty()) item { Text("Didn't answer: " + s.failed.joinToString(", ") { it.source.name + " (" + it.error + ")" }, color = c.sub, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) }
         if (s.posts.isEmpty()) item { EmptyState("Nothing found", "Try other words, or another source.", mark = false) }
         s.results.filter { it.posts.isNotEmpty() }.forEach { r -> item(key = r.source.id) {
             RowTitle(r.source.name)
@@ -225,26 +231,40 @@ internal fun SearchResults(s: MovieHub.Search?, sources: List<MovieSource>, open
 // ---------------------------------------------------------------- details
 
 @Composable
-private fun MovieDetailsLoader(src: MovieSource, post: MoviePost, saved: Boolean, onBack: () -> Unit, onWatchlist: () -> Unit, onPlay: (MoviePlay) -> Unit) {
+internal fun MovieDetailsLoader(src: MovieSource, post: MoviePost, saved: Boolean, onBack: () -> Unit, onWatchlist: () -> Unit, onPlay: (MoviePlay) -> Unit,
+                                more: List<MoviePost> = emptyList(), onMore: (MoviePost) -> Unit = {}) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
+    val lib by Movies.lib.collectAsState()
     val info by produceState<Result<MovieInfo>?>(null, post.link) { value = withContext(Dispatchers.IO) { runCatching { src.info(post) } }.also { Movies.note(src, it.exceptionOrNull()?.message) } }
     var choose by remember { mutableStateOf<Pair<MovieLink, List<MovieStream>>?>(null) }
     var msg by remember { mutableStateOf("") }
-    val pick: (MovieLink) -> Unit = { link -> scope.launch {
+    fun find(link: MovieLink, download: Boolean) { scope.launch {
         msg = "Finding streams\u2026"
         val r = withContext(Dispatchers.IO) { runCatching { src.streams(link) } }
         Movies.note(src, r.exceptionOrNull()?.message)
-        val list = r.getOrNull().orEmpty().filter { it.type.lowercase() in MovieHub.PLAYABLE || it.type.isBlank() }
-        msg = r.exceptionOrNull()?.message ?: if (list.isEmpty()) "No playable stream" else ""
-        if (list.size == 1) onPlay(MovieHub.play(src, post, info?.getOrNull(), link, list[0])) else if (list.isNotEmpty()) choose = link to list
+        // 0.46.5: every stream the source gave, best first; the player tries them in order (StreamPlan).
+        val list = StreamPlan.order(r.getOrNull().orEmpty(), Movies.maxHeight(ctx), MediaPrefs.int(ctx, "movie_pref_height", 0))
+        if (r.isFailure) com.blaze.assistant.device.CrashLog.write(StreamPlan.logLine(src.id, 0, 0, StreamPlan.Kind.PROGRESSIVE, "extract: " + (r.exceptionOrNull()?.javaClass?.simpleName ?: "error")))
+        msg = if (list.isEmpty()) StreamPlan.FAIL_TEXT else ""
+        if (list.isNotEmpty() && !download) onPlay(MovieHub.play(src, post, info?.getOrNull(), link, list[0], list.drop(1)))
+        else if (list.size == 1 && MovieDownloads.why(list[0]) == null) msg = MovieDownloads.start(ctx, src, MovieHub.play(src, post, info?.getOrNull(), link, list[0]), list[0])
+        else if (list.isNotEmpty()) choose = link to list
     } }
+    val pick: (MovieLink) -> Unit = { link -> find(link, false) }
     val i = info
+    val resume = remember(lib, post.link) { lib.progress.firstOrNull { it.play.postLink == post.link && MovieLibrary.unfinished(it.posMs, it.durMs) } }
     when {
         i == null -> Column(Modifier.fillMaxSize()) { DetailsTop(post.title, saved, onBack, onWatchlist); Text("Loading\u2026", color = LocalBlaze.current.sub, modifier = Modifier.padding(16.dp)) }
-        i.isFailure -> Column(Modifier.fillMaxSize()) { DetailsTop(post.title, saved, onBack, onWatchlist); EmptyState("${src.name} didn't answer", i.exceptionOrNull()?.message.orEmpty(), mark = false) }
+        i.isFailure -> Column(Modifier.fillMaxSize()) { DetailsTop(post.title, saved, onBack, onWatchlist); EmptyState("Couldn't open this right now", "Check your connection and try again.", mark = false) }
         else -> MovieDetails(i.getOrThrow(), src.name, saved, msg, onBack, onWatchlist, pick,
-            loadEpisodes = { link -> withContext(Dispatchers.IO) { runCatching { src.episodes(link) }.getOrDefault(emptyList()) } })
+            loadEpisodes = { link -> withContext(Dispatchers.IO) { runCatching { src.episodes(link) }.getOrDefault(emptyList()) } },
+            more = more, onMore = onMore, resumeMs = resume?.posMs ?: 0L,
+            onResume = resume?.let { pr -> { scope.launch { try { onPlay(resumePlay(ctx, pr)) } catch (e: Exception) { msg = e.message ?: "Couldn't continue" } }; Unit } },
+            onDownload = { l -> find(l, true) },
+            progressOf = { l -> lib.progress.firstOrNull { it.play.key == src.id + ":" + l.link }?.fraction ?: -1f },
+            onShare = { runCatching { ctx.startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+                .putExtra(android.content.Intent.EXTRA_TEXT, post.title + (if (post.link.startsWith("http")) "\n" + post.link else "")), "Share").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) } })
     }
     choose?.let { (link, streams) ->
         StreamChooser(streams, onDismiss = { choose = null },
@@ -262,35 +282,134 @@ private fun DetailsTop(title: String, saved: Boolean, onBack: () -> Unit, onWatc
     }
 }
 
-/** Poster, plot, tags; each group (a season or quality) with its episodes / links, each a play row. */
+/**
+ * 0.46.5 details, friendly for any source: the backdrop fading into the Blaze background, poster, title, year / runtime / rating
+ * chips, a 2-line synopsis (tap for more), a season picker, one big Play / Resume, a small quality / language chip (best quality
+ * that fits by default, the choice is remembered), the episode list (number, title, thumbnail, progress), icon actions
+ * (watchlist, download, share, subtitles), "More like this", and a Details expander that is the only place raw names show.
+ */
 @Composable
 internal fun MovieDetails(info: MovieInfo, sourceName: String, saved: Boolean, msg: String, onBack: () -> Unit, onWatchlist: () -> Unit,
-                          onPick: (MovieLink) -> Unit, loadEpisodes: suspend (String) -> List<MovieLink>) {
+                          onPick: (MovieLink) -> Unit, loadEpisodes: suspend (String) -> List<MovieLink>,
+                          more: List<MoviePost> = emptyList(), onMore: (MoviePost) -> Unit = {}, resumeMs: Long = 0L, onResume: (() -> Unit)? = null,
+                          onDownload: ((MovieLink) -> Unit)? = null, onShare: (() -> Unit)? = null, progressOf: (MovieLink) -> Float = { -1f }) {
     val c = LocalBlaze.current
-    Column(Modifier.fillMaxSize()) {
-        DetailsTop(info.title, saved, onBack, onWatchlist)
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 90.dp)) {
-            item {
-                Row {
-                    NetThumb(info.image, Modifier.width(120.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(12.dp)))
-                    Column(Modifier.padding(start = 12.dp)) {
-                        Text(listOf(sourceName, info.licence).filter { it.isNotBlank() }.joinToString(" \u00b7 "), color = c.sub, fontSize = 12.sp)
-                        if (info.tags.isNotEmpty()) Text(info.tags.joinToString(" \u00b7 "), color = c.sub, fontSize = 12.sp, maxLines = 2)
-                        if (info.rating.isNotBlank()) Text(info.rating, color = c.sub, fontSize = 12.sp)
-                        Spacer(Modifier.height(8.dp))
-                        info.groups.firstNotNullOfOrNull { it.direct.firstOrNull() }?.let { first ->
-                            StageIconButton(Icons.Rounded.PlayArrow, "Play ${info.title}", primary = true, size = 52.dp) { onPick(first) } }
+    val ctx = LocalContext.current
+    var full by remember(info.title) { mutableStateOf(false) }
+    var raw by remember(info.title) { mutableStateOf(false) }
+    var subsMenu by remember { mutableStateOf(false) }
+    var qualityMenu by remember { mutableStateOf(false) }
+    val seasons = remember(info) { ReleaseTitle.seasons(info.groups) }
+    var seasonIx by remember(info.title) { mutableStateOf(0) }
+    val season = seasons.getOrNull(seasonIx.coerceIn(0, (seasons.size - 1).coerceAtLeast(0)))
+    val maxH = remember { Movies.maxHeight(ctx) }
+    var prefH by remember { mutableStateOf(MediaPrefs.int(ctx, "movie_pref_height", 0)) }
+    var prefLang by remember { mutableStateOf(MediaPrefs.str(ctx, "movie_pref_lang", "")) }
+    val variant = remember(season, prefH, prefLang) { season?.let { ReleaseTitle.pick(it.variants, maxH, prefH, prefLang) } }
+    val links by produceState(variant?.group?.direct.orEmpty(), variant?.group) {
+        val g = variant?.group
+        value = g?.direct.orEmpty()
+        if (g != null && g.direct.isEmpty() && g.episodesLink.isNotBlank()) value = loadEpisodes(g.episodesLink)
+    }
+    val eps = remember(links) { ReleaseTitle.episodes(links) }
+    val first = eps.firstOrNull()?.link
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 150.dp)) {
+        item {
+            Box(Modifier.fillMaxWidth().height(230.dp)) {
+                NetThumb(info.image, Modifier.fillMaxSize())
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.15f), if (com.blaze.assistant.ui.themeOn()) Color.Transparent else c.paper))))
+                StageIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", size = 40.dp, modifier = Modifier.padding(6.dp)) { onBack() }
+                Row(Modifier.align(Alignment.BottomStart).padding(start = 16.dp, end = 16.dp), verticalAlignment = Alignment.Bottom) {
+                    PosterArt(info.title, info.image, Modifier.width(96.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(10.dp)))
+                    Column(Modifier.padding(start = 12.dp, bottom = 4.dp).weight(1f)) {
+                        Text(info.title, color = c.ink, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text(sourceName, color = c.sub, fontSize = 12.sp, maxLines = 1)
+                    }
+                }
+            }
+        }
+        item {
+            Column(Modifier.padding(horizontal = 16.dp)) {
+                val chips = VideoDetailsLogic.chips(info)
+                if (chips.isNotEmpty()) Row(Modifier.padding(top = 10.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    chips.forEach { t -> Box(Modifier.clip(RoundedCornerShape(50)).background(c.faint).padding(horizontal = 10.dp, vertical = 4.dp)) { Text(t, color = c.ink, fontSize = 12.sp, maxLines = 1) } }
+                }
+                if (info.synopsis.isNotBlank()) Text(info.synopsis, color = c.body, fontSize = 14.sp, lineHeight = 20.sp, maxLines = if (full) 40 else 2, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 10.dp).clickable(role = Role.Button, onClickLabel = if (full) "Show less" else "Show more") { full = !full })
+                // Season picker.
+                if (seasons.count { it.number != null } > 0 && seasons.size > 1) Row(Modifier.padding(top = 12.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    seasons.forEachIndexed { i, s -> MovieChip(s.label, i == seasonIx) { seasonIx = i } }
+                }
+                Spacer(Modifier.height(12.dp))
+                // One big Play / Resume.
+                val canPlay = onResume != null || first != null
+                Row(Modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(50)).background(if (canPlay) c.ink else c.faint)
+                    .clickable(enabled = canPlay, role = Role.Button, onClickLabel = VideoDetailsLogic.playLabel(resumeMs) + " " + info.title) { if (onResume != null) onResume() else first?.let(onPick) },
+                    horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.PlayArrow, contentDescription = null, tint = if (canPlay) c.paper else c.sub, modifier = Modifier.size(26.dp))
+                    Text(if (canPlay) VideoDetailsLogic.playLabel(resumeMs) else "Loading\u2026", color = if (canPlay) c.paper else c.sub, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                }
+                Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+                    StageIconButton(if (saved) Icons.Rounded.Bookmark else Icons.Rounded.BookmarkBorder, if (saved) "Remove from watchlist" else "Add to watchlist", on = saved, size = 44.dp) { onWatchlist() }
+                    if (onDownload != null && first != null) StageIconButton(Icons.Rounded.Download, "Download", size = 44.dp) { onDownload(first) }
+                    if (onShare != null) StageIconButton(Icons.Rounded.Share, "Share", size = 44.dp) { onShare() }
+                    Box {
+                        StageIconButton(Icons.Rounded.ClosedCaption, "Subtitles", size = 44.dp) { subsMenu = true }
+                        com.blaze.assistant.ui.BlazeMenu(subsMenu, { subsMenu = false }, listOf("Off" to "", "English" to "en", "French" to "fr", "Portuguese" to "pt", "Spanish" to "es", "Swahili" to "sw").map { (n, code) ->
+                            (if (SubsLoader.pref(ctx) == code) "$n  \u2713" else n) to { SubsLoader.setPref(ctx, code); subsMenu = false } })
+                    }
+                    // Quality / language: a small chip; the sheet lists the season's variants.
+                    if (season != null && season.variants.size > 1 && variant != null) Box {
+                        MovieChip(listOf(ReleaseTitle.qualityLabel(variant.height), variant.languages.take(2).joinToString("/")).filter { it.isNotBlank() }.joinToString(" \u00b7 ").ifBlank { "Quality" }, false) { qualityMenu = true }
+                        com.blaze.assistant.ui.BlazeMenu(qualityMenu, { qualityMenu = false }, season.variants.map { v ->
+                            (v.label + if (v == variant) "  \u2713" else "") to {
+                                prefH = v.height; prefLang = v.languages.firstOrNull().orEmpty()
+                                MediaPrefs.setInt(ctx, "movie_pref_height", prefH); MediaPrefs.setStr(ctx, "movie_pref_lang", prefLang); qualityMenu = false } })
                     }
                 }
                 if (msg.isNotBlank()) Text(msg, color = c.sub, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
-                if (info.synopsis.isNotBlank()) Text(info.synopsis, color = c.ink, fontSize = 14.sp, lineHeight = 20.sp, modifier = Modifier.padding(top = 10.dp))
             }
-            info.groups.forEach { g -> item {
-                Text(listOf(g.title, g.quality).filter { it.isNotBlank() }.joinToString(" \u00b7 "), color = c.ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp))
-                val eps by produceState(g.direct, g.episodesLink) { if (g.direct.isEmpty() && g.episodesLink.isNotBlank()) value = loadEpisodes(g.episodesLink) }
-                eps.forEach { l -> LinkRow(l.title) { onPick(l) } }
-            } }
         }
+        // Episodes: number, readable title, thumbnail, progress.
+        if (eps.size > 1) items(eps, key = { "ep-" + it.link.link }) { e ->
+            val pr = progressOf(e.link)
+            Row(Modifier.fillMaxWidth().clickable(role = Role.Button, onClickLabel = "Play ${e.title}") { onPick(e.link) }.padding(horizontal = 16.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.width(112.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp))) {
+                    PosterArt(e.title, e.link.image, Modifier.fillMaxSize(), initial = e.number?.toString())
+                    if (pr > 0f) Box(Modifier.align(Alignment.BottomStart).fillMaxWidth(pr.coerceIn(0.03f, 1f)).height(3.dp).background(c.accent))
+                }
+                Column(Modifier.padding(start = 12.dp).weight(1f)) {
+                    if (e.number != null) Text("Episode ${e.number}", color = c.sub, fontSize = 11.5.sp)
+                    Text(e.title, color = c.ink, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+                Icon(Icons.Rounded.PlayArrow, contentDescription = null, tint = c.sub, modifier = Modifier.size(22.dp))
+            }
+        }
+        if (more.isNotEmpty()) item {
+            Text("More like this", color = c.ink, fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp))
+            LazyRow(contentPadding = PaddingValues(horizontal = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) { items(more) { p -> Poster(p.title, p.image) { onMore(p) } } }
+        }
+        // Raw names only here, behind "Details".
+        if (info.groups.isNotEmpty()) item {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                Text(if (raw) "Hide details" else "Details", color = c.sub, fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                    modifier = Modifier.clickable(role = Role.Button, onClickLabel = "Details") { raw = !raw }.padding(vertical = 6.dp))
+                if (raw) info.groups.forEach { g -> Text(listOf(g.title, g.quality).filter { it.isNotBlank() }.joinToString(" \u00b7 "), color = c.sub, fontSize = 11.5.sp, modifier = Modifier.padding(vertical = 2.dp)) }
+            }
+        }
+    }
+}
+
+/** A poster that is never an empty grey tile: the picture when it loads, else a soft gradient from the title with its initial. */
+@Composable
+internal fun PosterArt(title: String, image: String, modifier: Modifier, initial: String? = null) {
+    val img = if (image.isBlank()) null else com.blaze.assistant.ui.rememberHomeImage(image)
+    val hue = remember(title) { ((title.hashCode() and 0x7fffffff) % 360).toFloat() }
+    Box(modifier.background(Brush.linearGradient(listOf(Color.hsv(hue, 0.35f, 0.42f), Color.hsv((hue + 40f) % 360f, 0.30f, 0.22f)))), contentAlignment = Alignment.Center) {
+        if (img != null) androidx.compose.foundation.Image(img, contentDescription = null, contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        else Text(initial ?: title.trim().firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString().orEmpty(), color = Color.White.copy(alpha = 0.85f),
+            fontSize = 30.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -323,7 +442,7 @@ internal fun StreamChooser(streams: List<MovieStream>, onDismiss: () -> Unit, on
 // ---------------------------------------------------------------- Jellyfin
 
 @Composable
-private fun JellyfinDialog(onDone: (String) -> Unit) {
+internal fun JellyfinDialog(onDone: (String) -> Unit) {
     val scope = rememberCoroutineScope()
     val acct = remember { Movies.jellyfinAccount() }
     if (acct != null) {
@@ -351,7 +470,7 @@ private fun JellyfinDialog(onDone: (String) -> Unit) {
 // ---------------------------------------------------------------- Providers
 
 @Composable
-private fun ProvidersScreen(onBack: () -> Unit) {
+internal fun ProvidersScreen(onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     val store = remember { Movies.providers() }
     var st by remember { mutableStateOf(store.state) }
@@ -438,7 +557,7 @@ internal fun AddSourceDialog(onCancel: () -> Unit, onAdd: (String) -> Unit) {
 
 /** An add-source link: find the repo's manifest, then show [LinkInstallCard]; Install adds every provider in one tap. */
 @Composable
-private fun LinkInstallFlow(url: String, onDone: (String) -> Unit) {
+internal fun LinkInstallFlow(url: String, onDone: (String) -> Unit) {
     val scope = rememberCoroutineScope()
     val store = remember { Movies.providers() }
     val found by produceState<Result<Pair<String, List<ProviderRepo.Entry>>>?>(null, url) { value = withContext(Dispatchers.IO) { runCatching { store.resolve(url) } } }

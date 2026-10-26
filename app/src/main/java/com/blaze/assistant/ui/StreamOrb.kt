@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -186,10 +187,12 @@ fun DrawScope.drawSplash(at: Offset, r: Float, p: Float) {
 @Composable
 private fun orbClock(running: Boolean): androidx.compose.runtime.State<Float> {
     val t = remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(running) {
-        if (!running) return@LaunchedEffect
+    // 0.46.4 heat audit: ~30 fps, frozen while the phone is warm (Thermal)
+    val hot by com.blaze.assistant.device.Thermal.hot.collectAsState()
+    LaunchedEffect(running, hot) {
+        if (!running || hot) return@LaunchedEffect
         var last = 0L
-        while (true) withFrameNanos { now -> if (last != 0L) t.floatValue += (now - last) / 1_000_000_000f; last = now }
+        while (true) { withFrameNanos { now -> if (last != 0L) t.floatValue += (now - last) / 1_000_000_000f; last = now }; kotlinx.coroutines.delay(16) }
     }
     return t
 }

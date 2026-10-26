@@ -168,6 +168,7 @@ class MusicService : MediaLibraryService() {
                 var v = if (cf > 0 && player.isPlaying) MusicSmart.fadeVolume(player.currentPosition, player.duration, cf) else 1f
                 val at = sleepAt.value
                 if (at > 0 && MediaPrefs.bool(this@MusicService, MediaPrefs.SLEEP_FADE, true)) v *= MusicSmart.sleepVolume(at - System.currentTimeMillis())
+                v *= BlazeDj.duck   // 0.46.4: the DJ's spoken intro ducks the music
                 if (kotlin.math.abs(player.volume - v) > 0.01f) player.volume = v
             } catch (_: Exception) { }
             main.postDelayed(this, 200)
@@ -177,12 +178,36 @@ class MusicService : MediaLibraryService() {
     /** Blaze DJ: keeps the music going with songs you play most (and liked ones), never the last 20 again. */
     fun startDj(on: Boolean = true) {
         MediaPrefs.setBool(this, MediaPrefs.DJ, on)
-        if (!on) return
+        BlazeDj.on.value = on
+        if (!on) { BlazeDj.release(); return }
         if (player.mediaItemCount == 0) {
-            val picks = MusicSmart.djPicks(MediaLib.songs.value, MediaLib.plays.value, MediaLib.liked.value.toSet(), MediaLib.recent.value, 10, System.nanoTime())
+            val picks = BlazeDj.picks(10)
             if (picks.isEmpty()) return
             player.setMediaItems(picks.map { item(it) }); player.prepare(); player.play()
+            MusicContext.set("Blaze DJ")
+            BlazeDj.say(this, DjSpeech.start(picks[0], BlazeDj.vibe.value, BlazeDj.hour()))
         } else { djTopUp(force = true); if (!player.isPlaying) { player.prepare(); player.play() } }
+    }
+
+    /** 0.46.4 Blaze DJ from the Music screen: a fresh DJ set now (replaces the queue), in the chosen vibe. */
+    fun djFresh(v: DjPlan.Vibe? = null) {
+        if (v != null) BlazeDj.setVibe(this, v)
+        MediaPrefs.setBool(this, MediaPrefs.DJ, true); BlazeDj.on.value = true
+        val picks = BlazeDj.picks(12)
+        if (picks.isEmpty()) return
+        player.setMediaItems(picks.map { item(it) }); player.shuffleModeEnabled = false; player.prepare(); player.play()
+        MusicContext.set("Blaze DJ")
+        BlazeDj.say(this, if (v != null) DjSpeech.changed(v) + " " + DjSpeech.next(picks[0]) else DjSpeech.start(picks[0], BlazeDj.vibe.value, BlazeDj.hour()))
+    }
+
+    /** 0.46.4 "More like this": songs like the one playing go next (same artist, same album, then often played). */
+    fun djMoreLikeThis() {
+        val cur = player.currentMediaItem?.mediaId?.let { MediaLib.find(it) } ?: return
+        val have = (0 until player.mediaItemCount).map { player.getMediaItemAt(it).mediaId }.toSet()
+        val more = DjPlan.moreLikeThis(cur, MediaLib.songs.value.filter { it.key !in have }, MediaLib.plays.value, MediaLib.recent.value, 6)
+        if (more.isEmpty()) return
+        player.addMediaItems(player.currentMediaItemIndex + 1, more.map { item(it) })
+        BlazeDj.say(this, DjSpeech.moreLike(cur))
     }
 
     private fun djTopUp(force: Boolean = false) {
@@ -190,7 +215,7 @@ class MusicService : MediaLibraryService() {
         val left = player.mediaItemCount - 1 - player.currentMediaItemIndex
         if (left >= 2 && !force) return
         val have = (0 until player.mediaItemCount).map { player.getMediaItemAt(it).mediaId }.toSet()
-        val picks = MusicSmart.djPicks(MediaLib.songs.value.filter { it.key !in have }, MediaLib.plays.value, MediaLib.liked.value.toSet(), MediaLib.recent.value, 8, System.nanoTime())
+        val picks = BlazeDj.picks(8, have)
         if (picks.isNotEmpty()) player.addMediaItems(picks.map { item(it) })
     }
 
@@ -219,6 +244,7 @@ class MusicService : MediaLibraryService() {
     override fun onCreate() {
         super.onCreate()
         MediaLib.ensure(this)
+        BlazeDj.load(this)
         player = ExoPlayer.Builder(this)
             .setMediaSourceFactory(androidx.media3.exoplayer.source.DefaultMediaSourceFactory(StreamCache.factory(this, http))
                 .setLoadErrorHandlingPolicy(StreamCache.dropPolicy()))   // 0.45.19: drops play on from buffer + cache
@@ -235,6 +261,9 @@ class MusicService : MediaLibraryService() {
                 item?.mediaId?.let { id -> MediaLib.find(id)?.let { MediaLib.played(it) } }
                 startPlay()
                 djTopUp()
+                // 0.46.4 Blaze DJ: a short plain intro for the next song (only when it moved on by itself, voice on, no battery saver).
+                if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO && MediaPrefs.bool(this@MusicService, MediaPrefs.DJ, false))
+                    item?.mediaId?.let { id -> MediaLib.find(id) }?.let { BlazeDj.say(this@MusicService, DjSpeech.next(it)) }
                 prefetchNext()
                 offlineSkip(false)
                 com.blaze.assistant.agent.AwarenessHooks.music(player, songChanged = true)
@@ -470,6 +499,7 @@ class MusicService : MediaLibraryService() {
 
     override fun onDestroy() {
         com.blaze.assistant.agent.AwarenessHooks.musicStopped()
+        BlazeDj.release()
         saveQueue(); flushPlay()
         main.removeCallbacks(sleepTick); main.removeCallbacks(saver); main.removeCallbacks(fadeTick)
         try { eq?.release() } catch (_: Exception) { }

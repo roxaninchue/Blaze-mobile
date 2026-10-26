@@ -83,6 +83,9 @@ object MediaLib {
         saveTracks(); refresh()
     }
 
+    /** Screenshot / unit tests only: put songs and videos in the library without files. */
+    internal fun seedForTests(songs: List<Track>, videos: List<Track> = emptyList()) { _songs.value = songs; _videos.value = videos }
+
     fun find(key: String): Track? = _songs.value.firstOrNull { it.key == key } ?: _videos.value.firstOrNull { it.key == key }
 
     fun addDownload(t: Track) {

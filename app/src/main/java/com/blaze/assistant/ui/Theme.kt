@@ -296,8 +296,10 @@ fun ParticleField(mood: Mood, modifier: Modifier = Modifier, overlay: Boolean = 
     // A slow clock instead of 60/120 fps: ~12 fps when idle, ~30 fps while working.
     var time by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
     val busy = mood != Mood.IDLE
-    LaunchedEffect(busy, paused) {
-        if (paused) return@LaunchedEffect
+    // 0.46.4 heat audit: a still frame while idle or while the phone is warm / saving battery (Thermal); moves only while Blaze works
+    val hot by com.blaze.assistant.device.Thermal.hot.collectAsState()
+    LaunchedEffect(busy, paused, hot) {
+        if (paused || hot || !busy) return@LaunchedEffect
         var last = 0L
         val gap = if (busy) 33L else 85L
         while (true) {

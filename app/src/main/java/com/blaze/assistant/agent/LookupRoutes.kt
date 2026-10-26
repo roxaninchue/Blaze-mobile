@@ -28,7 +28,9 @@ object LookupRoutes {
             try {
                 val r = kotlinx.coroutines.withTimeoutOrNull(30_000L) { LlmClient.complete(msgs, null, null, null, LlmClient.Lane.STEPS) }
                     ?: throw LlmClient.LlmException(Cloud.BUSY, 503)
-                return LookupLane.parse(r.optString("content").substringAfterLast("</think>"), pages)
+                val ans = LookupLane.parse(r.optString("content").substringAfterLast("</think>"), pages)
+                // 0.46.4: never an answer that describes a search result when the question wasn't about a page
+                return if (SmallTalk.describesPage(ans.text, q)) ans.copy(text = SmallTalk.stripPageLead(ans.text)) else ans
             } finally { LlmClient.liteTurn = keep }
         }
     }

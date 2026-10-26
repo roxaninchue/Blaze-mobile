@@ -26,6 +26,24 @@ object Lyrics {
             o.optString("plainLyrics").takeIf { it != "null" }.orEmpty(), o.optBoolean("instrumental"))
     }
 
+    /**
+     * 0.46.4: lyrics already on the phone, no network: a .lrc next to the song file ([LocalLyrics.lrcPathFor]), else lyrics
+     * saved earlier. Null when there are none (the player's lyrics card stays hidden).
+     */
+    fun local(dir: File, t: Track): Result? {
+        LocalLyrics.lrcPathFor(t.uri)?.let { p -> val f = File(p); if (f.isFile && f.length() in 1..512_000) {
+            val text = runCatching { f.readText() }.getOrDefault("")
+            val synced = Lrc.parse(text)
+            val r = Result(synced, if (synced.isEmpty()) text else "")
+            if (!r.empty) return r
+        } }
+        val k = key(t)
+        mem[k]?.let { return if (it.empty) null else it }
+        val f = File(File(dir, "mediaapps/lyrics"), "$k.json")
+        if (!f.isFile || f.length() <= 2) return null
+        return runCatching { parse(f.readText()) }.getOrNull()?.takeIf { !it.empty }
+    }
+
     suspend fun get(dir: File, t: Track): Result {
         val k = key(t)
         mem[k]?.let { return it }

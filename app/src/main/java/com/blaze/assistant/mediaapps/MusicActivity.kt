@@ -47,6 +47,13 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.material.icons.automirrored.rounded.QueueMusic
+import androidx.compose.material.icons.rounded.*
+import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.BlurOn
@@ -92,8 +99,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asAndroidBitmap
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -142,7 +147,7 @@ class MusicActivity : ComponentActivity() {
 
     private val controller = mutableStateOf<MediaController?>(null)
     private var future: com.google.common.util.concurrent.ListenableFuture<MediaController>? = null
-    private val tab = mutableStateOf("library")
+    private val tab = mutableStateOf("home")
     private val storagePerm = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
     private val notifPerm = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
@@ -257,8 +262,18 @@ fun trackOf(m: MediaItem?): Track? {
 @Composable
 fun MusicApp(ctl: MediaController?, tab: String, onTab: (String) -> Unit, onClose: () -> Unit) {
     val c = LocalBlaze.current
+    val ctx = LocalContext.current
     val np = remember { NowPlaying() }
     val store = remember { StoreState("audio") }
+    // 0.46.4 revamp: Home · Search · Library · Create in a bottom nav; the full player is a sheet over the page [under] it.
+    var under by remember { mutableStateOf(MusicNav.normalize(tab).let { if (it == "player") "home" else it }) }
+    var open by remember { mutableStateOf<MusicHome.Tile?>(null) }
+    var djOpen by remember { mutableStateOf(false) }
+    var account by remember { mutableStateOf(false) }
+    var addSongsTo by remember { mutableStateOf<String?>(null) }
+    val djOn by BlazeDj.on.collectAsState()
+    LaunchedEffect(tab) { if (tab != "player") under = MusicNav.normalize(tab) }
+    LaunchedEffect(Unit) { BlazeDj.load(ctx) }
     DisposableEffect(ctl) {
         val l = object : Player.Listener { override fun onEvents(player: Player, events: Player.Events) { np.read(player) } }
         ctl?.addListener(l); ctl?.let { np.read(it) }
@@ -268,9 +283,11 @@ fun MusicApp(ctl: MediaController?, tab: String, onTab: (String) -> Unit, onClos
         while (ctl != null && np.playing) { np.pos = ctl.currentPosition.coerceAtLeast(0); np.dur = ctl.duration.coerceAtLeast(0); delay(250) }
     }
     // v0.34.1: Back collapses the player sheet into the mini-player (it keeps playing).
-    BackHandler(tab == "player") { onTab("library") }
+    BackHandler(tab == "player") { onTab(under) }
     // Wave A item 26: Back from the library or the store goes to the agent chat; the music keeps playing in its service.
     BackHandler(BackToChat.step(false, tab) == BackToChat.Step.TO_CHAT) { onClose() }
+    // 0.46.4: the online store is part of Search; Back there returns to Search.
+    BackHandler(tab == "store") { onTab("search") }
 
     fun playList(list: List<Track>, start: Int, shuffle: Boolean = false) {
         val p = ctl ?: return
@@ -278,34 +295,99 @@ fun MusicApp(ctl: MediaController?, tab: String, onTab: (String) -> Unit, onClos
         p.shuffleModeEnabled = shuffle
         p.prepare(); p.play()
     }
+    fun go(id: String) { open = null; onTab(id) }
+    fun askBlaze(text: String) {
+        com.blaze.assistant.agent.Agent.sharedDraft.value = com.blaze.assistant.agent.Agent.SharedDraft(text)
+        onClose()
+    }
 
     // v0.45.8: Music shows the picked theme (its scene behind everything) and has the shared theme switcher.
     com.blaze.assistant.ui.ThemedScreen(Modifier.fillMaxSize(), own = { background(c.paper) }) {
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
-            Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                BackButton(onClose, desc = "Close Music")
-                Spacer(Modifier.weight(1f))
-                // v0.34.1: one Library entry (the player is a sheet over it now, not a tab).
-                AppPill(listOf("library" to "Library", "store" to "Store"), if (tab == "store") "store" else "library", onPick = onTab)
-                Spacer(Modifier.weight(1f))
-                com.blaze.assistant.ui.ThemeSwitch(Modifier.width(48.dp))
+            val page = if (tab == "player") under else MusicNav.normalize(tab)
+            MediaTopBar(when (page) { "search", "store" -> "Search"; "library" -> "Your library"; "create" -> "Create"; else -> "Music" },
+                onAccount = { account = true }, onClose = onClose) {
+                RoundIcon(Icons.Rounded.Headphones, if (djOn) "Blaze DJ is on" else "Blaze DJ", tint = if (djOn) c.accent else c.ink) { djOpen = true }
+                com.blaze.assistant.ui.ThemeSwitch(Modifier.width(44.dp))
             }
-            AnimatedContent(if (tab == "store") "store" else "library", Modifier.weight(1f), transitionSpec = {
-                if (MotionTokens.enabled) fadeIn(tween(MotionTokens.MEDIUM)) togetherWith fadeOut(tween(MotionTokens.SHORT)) else fadeIn(tween(0)) togetherWith fadeOut(tween(0))
-            }, label = "musicTab") { t ->
-                when (t) {
-                    "store" -> StoreView("audio", store) { item, d, src -> playStream(ctl, item, d, src); onTab("player") }
-                    else -> LibraryPage(np, ::playList)
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                val o = open
+                if (o != null) PlaylistPage(o, np, ::playList, onBack = { open = null },
+                    onQueueNext = { t -> ctl?.let { p -> p.addMediaItem((p.currentMediaItemIndex + 1).coerceAtMost(p.mediaItemCount), MusicService.item(t)) } },
+                    onAddSongs = { addSongsTo = it })
+                else AnimatedContent(page, Modifier.fillMaxSize(), transitionSpec = {
+                    if (MotionTokens.enabled) fadeIn(tween(MotionTokens.MEDIUM)) togetherWith fadeOut(tween(MotionTokens.SHORT)) else fadeIn(tween(0)) togetherWith fadeOut(tween(0))
+                }, label = "musicTab") { t ->
+                    when (t) {
+                        "store" -> StoreView("audio", store) { item, d, src -> playStream(ctl, item, d, src); MusicContext.set("Search"); onTab("player") }
+                        "search" -> MusicSearchPage(::playList, openTile = { open = it }, onStore = { go("store") },
+                            onVibe = { v -> MusicService.current?.djFresh(v) ?: run { BlazeDj.setVibe(ctx, v); djOpen = true } })
+                        "library" -> LibraryPage(np, ::playList, openTile = { open = it })
+                        "create" -> MusicCreatePage(onCreated = { open = it }, onAskBlaze = ::askBlaze)
+                        else -> MusicHomePage(np, openTile = { open = it }, playList = ::playList, onDj = { djOpen = true })
+                    }
+                }
+                // Mini-player docked above the nav; tap re-opens the full player.
+                androidx.compose.animation.AnimatedVisibility(MusicNav.showMini(tab, np.item != null), Modifier.align(Alignment.BottomCenter),
+                    enter = MotionTokens.enterUp(), exit = MotionTokens.exitDown()) {
+                    MiniPlayer(ctl, np) { onTab("player") }
+                }
+            }
+            MediaBottomNav(MusicNav.tabs.map { NavItem(it.id, it.label, when (it) {
+                MusicNav.Tab.HOME -> Icons.Rounded.Home; MusicNav.Tab.SEARCH -> Icons.Rounded.Search
+                MusicNav.Tab.LIBRARY -> Icons.Rounded.LibraryMusic; MusicNav.Tab.CREATE -> Icons.Rounded.AddCircleOutline }) },
+                MusicNav.lit(tab, under).id) { go(it) }
+        }
+        // The full player: a sheet over the page with a grab handle; swipe it down to collapse.
+        PlayerSheet(tab == "player", onCollapse = { onTab(under) }) { PlayerPage(ctl, np, ::playList, onCollapse = { onTab(under) }) }
+        if (djOpen) DjSheet { djOpen = false }
+        if (account) AccountDialog { account = false }
+        addSongsTo?.let { id -> AddSongsDialog(id) { addSongsTo = null } }
+    }
+}
+
+/** The account badge's sheet: who's signed in to Blaze, and the Music settings that matter. */
+@Composable
+private fun AccountDialog(onDismiss: () -> Unit) {
+    val c = LocalBlaze.current
+    val ctx = LocalContext.current
+    val name = remember { runCatching { com.blaze.assistant.agent.Settings.userName }.getOrDefault("") }
+    var saver by remember { mutableStateOf(MediaPrefs.dataSaver(ctx)) }
+    var voice by remember { mutableStateOf(BlazeDj.voiceOn(ctx)) }
+    BlazeDialog(title = name.ifBlank { "Your account" }, confirm = "Done", onConfirm = onDismiss, onDismiss = onDismiss) {
+        Row(Modifier.fillMaxWidth().clickable { saver = !saver; MediaPrefs.setBool(ctx, MediaPrefs.DATA_SAVER, saver) }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.material3.Icon(Icons.Rounded.DataSaverOn, contentDescription = null, tint = c.ink)
+            MText(if (saver) "Data saver on mobile data: on" else "Data saver on mobile data: off", 14.sp, c.ink, modifier = Modifier.padding(start = 10.dp))
+        }
+        Row(Modifier.fillMaxWidth().clickable { voice = !voice; BlazeDj.setVoice(ctx, voice) }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.material3.Icon(Icons.Rounded.RecordVoiceOver, contentDescription = null, tint = c.ink)
+            MText(if (voice) "Blaze DJ spoken intros: on" else "Blaze DJ spoken intros: off", 14.sp, c.ink, modifier = Modifier.padding(start = 10.dp))
+        }
+    }
+}
+
+/** Playlist › Add: tap songs to add them (each tap adds one; already added ones are left out). */
+@Composable
+private fun AddSongsDialog(playlistId: String, onDismiss: () -> Unit) {
+    val c = LocalBlaze.current
+    val songs by MediaLib.songs.collectAsState()
+    val lists by MediaLib.playlists.collectAsState()
+    var q by remember { mutableStateOf("") }
+    val inList = lists.firstOrNull { it.id == playlistId }?.keys?.toSet() ?: emptySet()
+    val pool = remember(songs, q, inList) { LibraryGroups.search(songs, q).filter { it.key !in inList } }
+    BlazeDialog(title = "Add songs", confirm = "Done", onConfirm = onDismiss, onDismiss = onDismiss) {
+        KitSearch(q, { q = it }, "Search your music")
+        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 380.dp)) {
+            items(pool.take(200), key = { "add-" + it.key }) { t ->
+                Row(Modifier.fillMaxWidth().clickable(onClickLabel = "Add ${t.title}") {
+                    MediaLib.setPlaylists(PlaylistOps.add(MediaLib.playlists.value, playlistId, listOf(t.key), System.currentTimeMillis()))
+                }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Art(t, Modifier.size(40.dp), target = 120)
+                    Column(Modifier.padding(start = 10.dp).weight(1f)) { MText(t.title, 14.sp, c.ink); MText(t.artist, 12.sp, c.sub) }
+                    androidx.compose.material3.Icon(Icons.Rounded.AddCircleOutline, contentDescription = null, tint = c.sub)
                 }
             }
         }
-        // Mini-player: on Library and Store while the player sheet is collapsed; tap re-opens the full player.
-        AnimatedVisibility(tab != "player" && np.item != null, Modifier.align(Alignment.BottomCenter),
-            enter = MotionTokens.enterUp(), exit = MotionTokens.exitDown()) {
-            MiniPlayer(ctl, np) { onTab("player") }
-        }
-        // The full player: a sheet over the Library with a grab handle; swipe it down to collapse.
-        PlayerSheet(tab == "player", onCollapse = { onTab("library") }) { PlayerPage(ctl, np, ::playList) }
     }
 }
 
@@ -328,7 +410,7 @@ private fun MiniPlayer(ctl: MediaController?, np: NowPlaying, onOpen: () -> Unit
     MiniBar(t, np.error.ifBlank { skipped }.ifBlank { NetHonesty.playText(net, online) }.ifBlank { t?.artist.orEmpty() }, np.playing, if (np.dur > 0) np.pos.toFloat() / np.dur else 0f, onOpen,
         onPlayPause = { ctl?.let { if (it.isPlaying) it.pause() else { if (it.playbackState == Player.STATE_IDLE) it.prepare(); it.play() } } },
         // v0.34.1 close: stops the music and empties the queue (the mini-player goes away with it).
-        onClose = { ctl?.let { it.stop(); it.clearMediaItems() } }) {
+        onClose = { ctl?.let { it.stop(); it.clearMediaItems() } }, insets = false) {
         RoundIcon(Icons.Rounded.SkipNext, "Next") { ctl?.seekToNext() }
     }
 }
@@ -336,7 +418,7 @@ private fun MiniPlayer(ctl: MediaController?, np: NowPlaying, onOpen: () -> Unit
 // ---------------- Player (now playing) ----------------
 
 @Composable
-private fun PlayerPage(ctl: MediaController?, np: NowPlaying, playList: (List<Track>, Int, Boolean) -> Unit) {
+internal fun PlayerPage(ctl: MediaController?, np: NowPlaying, playList: (List<Track>, Int, Boolean) -> Unit, onCollapse: () -> Unit = {}) {
     val c = LocalBlaze.current
     val ctx = LocalContext.current
     val t = trackOf(np.item)
@@ -364,104 +446,138 @@ private fun PlayerPage(ctl: MediaController?, np: NowPlaying, playList: (List<Tr
     val glow by animateColorAsState(tint, MotionTokens.slow(), label = "artTint")
 
     if (t == null) {
-        EmptyState("Nothing playing", "Pick a song in Library, or find one in the Store.")
+        EmptyState("Nothing playing", "Pick a song in Library, or find one in Search.")
         return
     }
-    Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(glow.copy(alpha = if (c.dark) 0.45f else 0.30f), if (com.blaze.assistant.ui.themeOn()) Color.Transparent else c.paper)))
-        .navigationBarsPadding().padding(horizontal = 22.dp)) {
-        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-            AnimatedContent(view, label = "npView", transitionSpec = { MotionTokens.fade() togetherWith MotionTokens.fadeAway() }) { v ->
-                when (v) {
+    val from by MusicContext.from.collectAsState()
+    var more by remember { mutableStateOf(false) }
+    val density = LocalDensity.current
+    Box(Modifier.fillMaxSize()) {
+        // 0.46.4: the cover, tiny and stretched (reads as a blur, costs one 64 px bitmap), faint over the theme; then the colour tint.
+        ArtBackdrop(t, Modifier.fillMaxSize())
+        Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(glow.copy(alpha = if (c.dark) 0.45f else 0.30f), if (com.blaze.assistant.ui.themeOn()) Color.Transparent else c.paper.copy(alpha = 0.85f))))
+            .navigationBarsPadding().padding(horizontal = 22.dp).verticalScroll(rememberScrollState())) {
+            // Header: down chevron · Playing from <playlist> · ⋮
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                RoundIcon(Icons.Rounded.KeyboardArrowDown, "Close the player", onClick = onCollapse)
+                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                    MText(if (from.isBlank()) "Now playing" else "Playing from", 11.sp, c.sub)
+                    if (from.isNotBlank()) MText(from, 13.sp, c.ink, FontWeight.SemiBold)
+                }
+                Box {
+                    RoundIcon(Icons.Rounded.MoreVert, "More") { more = true }
+                    BlazeMenu(more, { more = false }, buildList {
+                        add(("Repeat: " + when (np.repeat) { Repeat.OFF -> "off"; Repeat.ALL -> "all"; Repeat.ONE -> "one" }) to {
+                            ctl?.repeatMode = when (np.repeat.next()) { Repeat.ALL -> Player.REPEAT_MODE_ALL; Repeat.ONE -> Player.REPEAT_MODE_ONE; Repeat.OFF -> Player.REPEAT_MODE_OFF }; Unit })
+                        add(("Speed: " + Speeds.label(np.speed)) to { ctl?.setPlaybackSpeed(Speeds.next(np.speed)); Unit })
+                        add(("Equaliser: " + eqName) to { eqMenu = true })
+                        add((if (fadeS == 0) "Fade between songs: off" else "Fade between songs: $fadeS s") to { fadeMenu = true })
+                        add("Lyrics" to { view = if (view == "lyrics") "art" else "lyrics" })
+                        add("Karaoke" to { view = if (view == "karaoke") "art" else "karaoke" })
+                        if (BlazeDj.on.value) add("Blaze DJ: more like this" to { MusicService.current?.djMoreLikeThis(); Unit })
+                    }.map { (l, f) -> l to { more = false; f() } })
+                    BlazeMenu(eqMenu, { eqMenu = false }, MusicSmart.presets.keys.map { n ->
+                        (n + if (n == eqName) "  \u2713" else "") to { eqName = n; MediaPrefs.setStr(ctx, MediaPrefs.EQ, n); MusicService.current?.applyEq(n); eqMenu = false } })
+                    BlazeMenu(fadeMenu, { fadeMenu = false }, listOf(0, 3, 6, 10).map { sec ->
+                        ((if (sec == 0) "No fade between songs" else "Fade $sec s between songs") + if (sec == fadeS) "  \u2713" else "") to {
+                            fadeS = sec; MediaPrefs.setInt(ctx, MediaPrefs.CROSSFADE, sec); fadeMenu = false } })
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            // Large art; swipe it sideways to skip (left = next, right = previous).
+            var dx by remember { mutableFloatStateOf(0f) }
+            Box(Modifier.fillMaxWidth().aspectRatio(1f), contentAlignment = Alignment.Center) {
+                when (view) {
                     "queue" -> QueueList(ctl, np)
                     "lyrics" -> LyricsView(t, np.pos)
                     "karaoke" -> LyricsView(t, np.pos, karaoke = true)
-                    else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Art(t, Modifier.widthIn(max = 380.dp).fillMaxWidth().aspectRatio(1f), BlazeShapes.large, target = 720)
-                    }
+                    else -> Art(t, Modifier.widthIn(max = 380.dp).fillMaxWidth().aspectRatio(1f)
+                        .graphicsLayer { translationX = dx * 0.4f }
+                        .pointerInput(t.key) {
+                            detectHorizontalDragGestures(onDragStart = { dx = 0f }, onDragCancel = { dx = 0f },
+                                onDragEnd = {
+                                    when (NowPlayingGestures.skip(dx, size.width.toFloat())) { 1 -> ctl?.seekToNext(); -1 -> ctl?.seekToPrevious() }
+                                    dx = 0f
+                                }, onHorizontalDrag = { ch, d -> ch.consume(); dx += d })
+                        }, BlazeShapes.large, target = 720)
                 }
             }
-        }
-        Spacer(Modifier.height(16.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                MText(t.title, 20.sp, c.ink, FontWeight.SemiBold, maxLines = 2)
-                MText(listOf(t.artist, t.licence).filter { it.isNotBlank() }.joinToString(" \u00b7 "), 14.sp, c.sub)
-            }
-            val on = t.key in liked
-            RoundIcon(if (on) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, if (on) "Unlike" else "Like",
-                tint = if (on) Color(0xFFE5484D) else c.ink) {
-                if (t.source == "stream") Toast.makeText(ctx, "Download it first to keep it in Liked.", Toast.LENGTH_SHORT).show() else MediaLib.toggleLike(t.key)
-            }
-        }
-        if (np.error.isNotBlank()) {
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(18.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                MText(np.error, 12.5.sp, com.blaze.assistant.ui.BlazeBrush.orange, maxLines = 3, modifier = Modifier.weight(1f))
-                PillButton("Skip", primary = false) { ctl?.let { it.seekToNext(); it.prepare(); it.play() } }
+                Column(Modifier.weight(1f)) {
+                    MText(t.title, 21.sp, c.ink, FontWeight.Bold, maxLines = 2)
+                    MText(t.artist, 14.sp, c.sub)
+                }
+                val on = t.key in liked
+                RoundIcon(if (on) Icons.Rounded.CheckCircle else Icons.Rounded.AddCircleOutline, if (on) "Remove from Liked" else "Add to Liked",
+                    tint = if (on) c.accent else c.ink) {
+                    if (t.source == "stream") Toast.makeText(ctx, "Download it first to keep it in Liked.", Toast.LENGTH_SHORT).show() else MediaLib.toggleLike(t.key)
+                }
             }
+            if (np.error.isNotBlank()) {
+                Spacer(Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    MText(np.error, 12.5.sp, com.blaze.assistant.ui.BlazeBrush.orange, maxLines = 3, modifier = Modifier.weight(1f))
+                    PillButton("Skip", primary = false) { ctl?.let { it.seekToNext(); it.prepare(); it.play() } }
+                }
+            }
+            // 0.45.20: honest network line (weak network / retrying with Retry / offline from saved) and the offline skip chip.
+            val (net, online) = rememberMusicNet(np)
+            val skipped by MusicService.offlineNote.collectAsState()
+            if (np.error.isBlank() && (net != NetHonesty.Play.NONE || skipped.isNotBlank())) {
+                Spacer(Modifier.height(6.dp))
+                if (skipped.isNotBlank()) MText(skipped, 12.5.sp, c.sub, FontWeight.Medium)
+                else NetNote(net, online, onRetry = { ctl?.let { it.seekTo(it.currentPosition); it.prepare(); it.play() } })
+            }
+            // Seek bar: drag shows the target time; the player jumps on release.
+            var dragging by remember { mutableStateOf<Float?>(null) }
+            val frac = dragging ?: if (np.dur > 0) (np.pos.toFloat() / np.dur).coerceIn(0f, 1f) else 0f
+            ScrubBar(frac, { dragging = it }, { dragging?.let { f -> ctl?.seekTo((f * np.dur).toLong()) }; dragging = null },
+                active = c.ink, rest = c.hair, knob = c.ink, label = "Seek song")
+            Row {
+                MText(TimeText.clock(if (dragging != null) (frac * np.dur).toLong() else np.pos), 12.sp, c.sub)
+                Spacer(Modifier.weight(1f))
+                MText(if (np.dur > 0) TimeText.clock(np.dur) else "", 12.sp, c.sub)
+            }
+            // shuffle · previous · play / pause · next · sleep timer
+            Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                RoundIcon(Icons.Rounded.Shuffle, if (np.shuffle) "Shuffle on" else "Shuffle off", tint = if (np.shuffle) c.accent else c.sub) { ctl?.shuffleModeEnabled = !np.shuffle }
+                RoundIcon(Icons.Rounded.SkipPrevious, "Previous", size = 52) { ctl?.seekToPrevious() }
+                Box(Modifier.size(70.dp).clip(BlazeShapes.pill).background(c.ink).clickable(onClickLabel = if (np.playing) "Pause" else "Play") {
+                    ctl?.let { if (it.isPlaying) it.pause() else { if (it.playbackState == Player.STATE_IDLE) it.prepare(); if (it.playbackState == Player.STATE_ENDED) it.seekTo(0, 0); it.play() } }
+                }, contentAlignment = Alignment.Center) {
+                    androidx.compose.material3.Icon(if (np.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, contentDescription = null, tint = c.paper, modifier = Modifier.size(38.dp))
+                }
+                RoundIcon(Icons.Rounded.SkipNext, "Next", size = 52) { ctl?.seekToNext() }
+                Box {
+                    val left = if (np.pos >= 0) SleepTimer.left(sleepAt, System.currentTimeMillis()) else 0L   // re-read as the position ticks
+                    RoundIcon(Icons.Rounded.Bedtime, when { sleepAt == -1L -> "Sleep timer: end of song"; left > 0 -> "Sleep timer: " + TimeText.clock(left); else -> "Sleep timer" },
+                        tint = if (sleepAt != 0L) c.accent else c.sub) { sleepMenu = true }
+                    BlazeMenu(sleepMenu, { sleepMenu = false }, buildList {
+                        if (sleepAt != 0L) add("Turn off" to { MusicService.sleepAt.value = 0L })
+                        SleepTimer.presetsMin.forEach { m -> add("$m minutes" to { MusicService.sleepAt.value = System.currentTimeMillis() + m * 60_000L }) }
+                        add("End of this song" to { MusicService.sleepAt.value = -1L })
+                        add((if (sleepFade) "Fade out at the end: on" else "Fade out at the end: off") to { sleepFade = !sleepFade; MediaPrefs.setBool(ctx, MediaPrefs.SLEEP_FADE, sleepFade) })
+                    })
+                }
+            }
+            // output device · share · queue
+            Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                RoundIcon(Icons.Rounded.Speaker, "Choose where it plays", tint = c.sub) { openOutputPicker(ctx) }
+                Spacer(Modifier.weight(1f))
+                RoundIcon(Icons.Rounded.Share, "Share", tint = c.sub) {
+                    val text = listOf(t.title, t.artist).filter { it.isNotBlank() }.joinToString(" - ")
+                    runCatching { ctx.startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+                        .putExtra(android.content.Intent.EXTRA_TEXT, text), "Share").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                }
+                RoundIcon(Icons.AutoMirrored.Rounded.QueueMusic, if (view == "queue") "Hide queue" else "Queue", tint = if (view == "queue") c.accent else c.sub) {
+                    view = if (view == "queue") "art" else "queue"
+                }
+            }
+            // Lyrics card when lyrics are on the phone; nothing otherwise.
+            if (view == "art") LyricsCard(t, np.pos) { view = "lyrics" }
+            Spacer(Modifier.height(24.dp))
         }
-        // 0.45.20: honest network line (weak network / retrying with Retry / offline from saved) and the offline skip chip.
-        val (net, online) = rememberMusicNet(np)
-        val skipped by MusicService.offlineNote.collectAsState()
-        if (np.error.isBlank() && (net != NetHonesty.Play.NONE || skipped.isNotBlank())) {
-            Spacer(Modifier.height(6.dp))
-            if (skipped.isNotBlank()) MText(skipped, 12.5.sp, c.sub, FontWeight.Medium)
-            else NetNote(net, online, onRetry = { ctl?.let { it.seekTo(it.currentPosition); it.prepare(); it.play() } })
-        }
-        // Seek bar: drag shows the target time; the player jumps on release.
-        var dragging by remember { mutableStateOf<Float?>(null) }
-        val frac = dragging ?: if (np.dur > 0) (np.pos.toFloat() / np.dur).coerceIn(0f, 1f) else 0f
-        ScrubBar(frac, { dragging = it }, { dragging?.let { f -> ctl?.seekTo((f * np.dur).toLong()) }; dragging = null },
-            active = c.ink, rest = c.hair, knob = c.ink, label = "Seek song")
-        Row {
-            MText(TimeText.clock(if (dragging != null) (frac * np.dur).toLong() else np.pos), 12.sp, c.sub)
-            Spacer(Modifier.weight(1f))
-            MText(if (np.dur > 0) TimeText.clock(np.dur) else "", 12.sp, c.sub)
-        }
-        Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            RoundIcon(Icons.Rounded.Shuffle, if (np.shuffle) "Shuffle on" else "Shuffle off", tint = if (np.shuffle) c.accent else c.sub) { ctl?.shuffleModeEnabled = !np.shuffle }
-            RoundIcon(Icons.Rounded.SkipPrevious, "Previous", size = 52) { ctl?.seekToPrevious() }
-            Box(Modifier.size(70.dp).clip(BlazeShapes.pill).background(c.ink).clickable(onClickLabel = if (np.playing) "Pause" else "Play") {
-                ctl?.let { if (it.isPlaying) it.pause() else { if (it.playbackState == Player.STATE_IDLE) it.prepare(); if (it.playbackState == Player.STATE_ENDED) it.seekTo(0, 0); it.play() } }
-            }, contentAlignment = Alignment.Center) {
-                androidx.compose.material3.Icon(if (np.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, contentDescription = null, tint = c.paper, modifier = Modifier.size(38.dp))
-            }
-            RoundIcon(Icons.Rounded.SkipNext, "Next", size = 52) { ctl?.seekToNext() }
-            RoundIcon(if (np.repeat == Repeat.ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
-                when (np.repeat) { Repeat.OFF -> "Repeat off"; Repeat.ALL -> "Repeat all"; Repeat.ONE -> "Repeat one" },
-                tint = if (np.repeat == Repeat.OFF) c.sub else c.accent) {
-                ctl?.repeatMode = when (np.repeat.next()) { Repeat.ALL -> Player.REPEAT_MODE_ALL; Repeat.ONE -> Player.REPEAT_MODE_ONE; Repeat.OFF -> Player.REPEAT_MODE_OFF }
-            }
-        }
-        Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-            Chip(Speeds.label(np.speed), Icons.Rounded.Speed, np.speed != 1f) { ctl?.setPlaybackSpeed(Speeds.next(np.speed)) }
-            Box {
-                val left = if (np.pos >= 0) SleepTimer.left(sleepAt, System.currentTimeMillis()) else 0L   // re-read as the position ticks
-                Chip(when { sleepAt == -1L -> "End of song"; left > 0 -> TimeText.clock(left); else -> "Sleep" }, Icons.Rounded.Bedtime, sleepAt != 0L) { sleepMenu = true }
-                BlazeMenu(sleepMenu, { sleepMenu = false }, buildList {
-                    if (sleepAt != 0L) add("Turn off" to { MusicService.sleepAt.value = 0L })
-                    SleepTimer.presetsMin.forEach { m -> add("$m minutes" to { MusicService.sleepAt.value = System.currentTimeMillis() + m * 60_000L }) }
-                    add("End of this song" to { MusicService.sleepAt.value = -1L })
-                    add((if (sleepFade) "Fade out at the end: on" else "Fade out at the end: off") to { sleepFade = !sleepFade; MediaPrefs.setBool(ctx, MediaPrefs.SLEEP_FADE, sleepFade) })
-                })
-            }
-            Box {
-                Chip(if (eqName == "Flat") "EQ" else eqName, Icons.Rounded.GraphicEq, eqName != "Flat") { eqMenu = true }
-                BlazeMenu(eqMenu, { eqMenu = false }, MusicSmart.presets.keys.map { n ->
-                    (n + if (n == eqName) "  \u2713" else "") to { eqName = n; MediaPrefs.setStr(ctx, MediaPrefs.EQ, n); MusicService.current?.applyEq(n); Unit } })
-            }
-            Box {
-                Chip(if (fadeS == 0) "Fade" else "Fade ${fadeS} s", Icons.Rounded.BlurOn, fadeS > 0) { fadeMenu = true }
-                BlazeMenu(fadeMenu, { fadeMenu = false }, listOf(0, 3, 6, 10).map { sec ->
-                    ((if (sec == 0) "No fade between songs" else "Fade $sec s between songs") + if (sec == fadeS) "  \u2713" else "") to {
-                        fadeS = sec; MediaPrefs.setInt(ctx, MediaPrefs.CROSSFADE, sec); Unit } })
-            }
-            Chip("Lyrics", Icons.Rounded.FormatQuote, view == "lyrics") { view = if (view == "lyrics") "art" else "lyrics" }
-            Chip("Karaoke", Icons.Rounded.Mic, view == "karaoke") { view = if (view == "karaoke") "art" else "karaoke" }
-            Chip("Queue", Icons.Rounded.KeyboardArrowDown, view == "queue") { view = if (view == "queue") "art" else "queue" }
-        }
-        // v0.34.1: the rest of the library under the controls, so the bottom is never blank and switching is one tap.
-        MoreFromLibrary(np, playList)
     }
 }
 
@@ -588,14 +704,17 @@ private fun LyricsView(t: Track, pos: Long, karaoke: Boolean = false) {
 // ---------------- Library ----------------
 
 @Composable
-private fun LibraryPage(np: NowPlaying, playList: (List<Track>, Int, Boolean) -> Unit) {
+private fun LibraryPage(np: NowPlaying, playList: (List<Track>, Int, Boolean) -> Unit, openTile: (MusicHome.Tile) -> Unit = {}) {
     val c = LocalBlaze.current
     val ctx = LocalContext.current
     val songs by MediaLib.songs.collectAsState()
     val liked by MediaLib.liked.collectAsState()
     val recent by MediaLib.recent.collectAsState()
     val lists by MediaLib.playlists.collectAsState()
-    var section by remember { mutableStateOf("foryou") }
+    var section by remember { mutableStateOf("playlists") }   // 0.46.4: Library opens on Playlists (For you moved to Home)
+    var grid by remember { mutableStateOf(false) }
+    var sortBy by remember { mutableStateOf(PlaylistMeta.Sort.ADDED) }
+    var sortMenu by remember { mutableStateOf(false) }
     var q by remember { mutableStateOf("") }
     var group by remember { mutableStateOf<String?>(null) }
     var openList by remember { mutableStateOf<String?>(null) }
@@ -611,11 +730,14 @@ private fun LibraryPage(np: NowPlaying, playList: (List<Track>, Int, Boolean) ->
     val scope = rememberCoroutineScope()
     val selecting = LibrarySelection.active(sel)
     val found = remember(songs, q) { LibraryGroups.search(songs, q) }
+    val sortedSongs = remember(songs, sortBy) { PlaylistMeta.sort(songs, sortBy) }
+    val downloaded = remember(sortedSongs) { LibraryView.downloaded(sortedSongs) }
     // What Select all picks: the songs on screen in the current section.
     val shown: List<Track> = remember(songs, liked, lists, section, q, group, openList, found) {
         when {
             q.isNotBlank() -> found
-            section == "songs" -> songs
+            section == "songs" -> sortedSongs
+            section == "downloaded" -> downloaded
             section == "liked" -> liked.mapNotNull { byKey[it] }
             section == "artists" || section == "albums" -> group?.let { g ->
                 (if (section == "artists") LibraryGroups.artists(songs) else LibraryGroups.albums(songs)).firstOrNull { it.first == g }?.second } ?: emptyList()
@@ -686,20 +808,39 @@ private fun LibraryPage(np: NowPlaying, playList: (List<Track>, Int, Boolean) ->
         else KitSearch(q, { q = it; group = null; openList = null }, "Search your music")
         Spacer(Modifier.height(8.dp))
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            listOf("foryou" to "For you", "songs" to "Songs", "liked" to "Liked", "artists" to "Artists", "albums" to "Albums", "playlists" to "Playlists").forEach { (id, label) ->
+            (LibraryView.chips + listOf("liked" to "Liked", "foryou" to "For you")).forEach { (id, label) ->
                 val on = section == id
                 Box(Modifier.clip(BlazeShapes.pill).background(if (on) c.ink else c.faint).clickable { section = id; group = null; openList = null; sel = LibrarySelection.clear() }
                     .padding(horizontal = 14.dp, vertical = 7.dp)) { MText(label, 13.sp, if (on) c.paper else c.sub, FontWeight.Medium) }
             }
         }
-        Spacer(Modifier.height(6.dp))
-        LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(bottom = 110.dp)) {
+        // 0.46.4: list / grid and sort.
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Spacer(Modifier.weight(1f))
+            Box {
+                RoundIcon(Icons.Rounded.SwapVert, "Sort: ${sortBy.label}", size = 40, tint = c.sub) { sortMenu = true }
+                BlazeMenu(sortMenu, { sortMenu = false }, PlaylistMeta.Sort.values().filter { it != PlaylistMeta.Sort.CUSTOM }.map { o -> o.label to { sortBy = o; sortMenu = false } })
+            }
+            RoundIcon(if (grid) Icons.Rounded.ViewAgenda else Icons.Rounded.GridView, if (grid) "Show as list" else "Show as grid", size = 40, tint = c.sub) { grid = !grid }
+        }
+        LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(bottom = 150.dp)) {
             when {
                 q.isNotBlank() -> {
                     if (found.isEmpty()) item { EmptyState("No match", "Nothing in your library matches \u201c$q\u201d. Try the Store.") }
                     itemsIndexed(found, key = { _, t -> "q" + t.key }) { i, t -> SongRow(t, found, i) }
                 }
                 section == "foryou" -> item { ForYou(songs, liked, playList) }
+                section == "downloaded" -> {
+                    if (downloaded.isEmpty()) item { EmptyState("Nothing downloaded yet", "Songs you save from Search play offline and show up here.", mark = false) }
+                    else if (grid) items(downloaded.chunked(3), key = { "dg" + it.first().key }) { row ->
+                        Row(Modifier.padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            row.forEach { t -> Column(Modifier.weight(1f).clip(BlazeShapes.small).clickable { MusicContext.set("Downloaded"); playList(downloaded, downloaded.indexOf(t), false) }) {
+                                Art(t, Modifier.fillMaxWidth().aspectRatio(1f), target = 240); MText(t.title, 12.sp, c.ink, modifier = Modifier.padding(top = 4.dp)) } }
+                            repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+                        }
+                    }
+                    else itemsIndexed(downloaded, key = { _, t -> "d" + t.key }) { i, t -> SongRow(t, downloaded, i) }
+                }
                 section == "songs" -> {
                     val rec = recent.mapNotNull { byKey[it] }.take(15)
                     if (rec.isNotEmpty()) {
@@ -726,7 +867,7 @@ private fun LibraryPage(np: NowPlaying, playList: (List<Track>, Int, Boolean) ->
                     if (songs.isEmpty()) item {
                         EmptyState("No songs yet", "Songs you download in the Store, and music in Blaze's Gallery, show up here and play offline.")
                     }
-                    itemsIndexed(songs, key = { _, t -> t.key }) { i, t -> SongRow(t, songs, i) }
+                    itemsIndexed(sortedSongs, key = { _, t -> t.key }) { i, t -> SongRow(t, sortedSongs, i) }
                 }
                 section == "liked" -> {
                     val l = liked.mapNotNull { byKey[it] }
@@ -772,9 +913,17 @@ private fun LibraryPage(np: NowPlaying, playList: (List<Track>, Int, Boolean) ->
                                 Spacer(Modifier.width(12.dp)); MText("New playlist", 14.5.sp, c.ink, FontWeight.Medium)
                             }
                         }
-                        items(lists, key = { "p" + it.id }) { p ->
-                            Row(Modifier.fillMaxWidth().clip(BlazeShapes.small).clickable { openList = p.id }.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Art(p.keys.firstNotNullOfOrNull { byKey[it] }, Modifier.size(52.dp), target = 140)
+                        if (grid) items(lists.chunked(2), key = { "pg" + it.first().id }) { row ->
+                            Row(Modifier.padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                row.forEach { p -> Column(Modifier.weight(1f).clip(BlazeShapes.small).clickable { openTile(MusicHome.Tile(p.id, p.name, p.keys, "playlist")) }) {
+                                    CoverTile(p.id, p.keys.take(8).mapNotNull { byKey[it] }, Modifier.fillMaxWidth().aspectRatio(1f))
+                                    MText(p.name, 13.sp, c.ink, FontWeight.Medium, modifier = Modifier.padding(top = 4.dp)) } }
+                                if (row.size == 1) Spacer(Modifier.weight(1f))
+                            }
+                        }
+                        else items(lists, key = { "p" + it.id }) { p ->
+                            Row(Modifier.fillMaxWidth().clip(BlazeShapes.small).clickable { openTile(MusicHome.Tile(p.id, p.name, p.keys, "playlist")) }.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                CoverTile(p.id, p.keys.take(8).mapNotNull { byKey[it] }, Modifier.size(52.dp))
                                 Spacer(Modifier.width(12.dp))
                                 Column(Modifier.weight(1f)) {
                                     MText(p.name, 14.5.sp, c.ink, FontWeight.Medium)

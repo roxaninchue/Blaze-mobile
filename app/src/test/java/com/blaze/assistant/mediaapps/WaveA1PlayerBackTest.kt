@@ -48,7 +48,8 @@ class WaveA1PlayerBackTest {
 
     @Test fun backGoesToChatFromVideoAndMusic() {
         val v = src("mediaapps/VideoActivity.kt")
-        assertTrue("Video back arrow", "BackButton({ a.leaveToChat() }" in v)
+        // 0.46.4: the top bar's close (X) replaced the back arrow; it still lands on the chat.
+        assertTrue("Video close", "onClose = { a.leaveToChat() }" in v)
         assertTrue("Video system back at library/store", "BackToChat.Step.TO_CHAT) { a.leaveToChat() }" in v)
         assertFalse("Video back arrow still just finishes", "BackButton({ a.finish() }" in v)
         val m = src("mediaapps/MusicActivity.kt")

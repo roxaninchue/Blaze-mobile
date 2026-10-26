@@ -22,6 +22,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -46,6 +49,13 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.VideoLibrary
+import androidx.compose.material.icons.rounded.Extension
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.LockOpen
+import androidx.compose.material.icons.rounded.AspectRatio
 import androidx.compose.material.icons.rounded.ClosedCaption
 import androidx.compose.material.icons.rounded.Forward10
 import androidx.compose.material.icons.rounded.Fullscreen
@@ -63,6 +73,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -300,7 +311,7 @@ class VideoActivity : ComponentActivity(), com.blaze.assistant.ui.BackRule.ToCha
         i?.getStringExtra(EXTRA_ADD_SOURCE)?.let { u ->
             i.removeExtra(EXTRA_ADD_SOURCE)
             com.blaze.assistant.movies.AddSourceLink.parse(com.blaze.assistant.movies.AddSourceLink.make(u, https = false))?.let { ok ->
-                pendingSource.value = ok; tab.value = "movies"; browse.value = "movies" }
+                pendingSource.value = ok; tab.value = "sources"; browse.value = "sources" }
             return
         }
         i?.getStringExtra(EXTRA_MOVIE)?.let { j ->
@@ -319,7 +330,7 @@ class VideoActivity : ComponentActivity(), com.blaze.assistant.ui.BackRule.ToCha
 
     lateinit var player: ExoPlayer
     private val http = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true).setConnectTimeoutMs(15_000).setReadTimeoutMs(20_000)
-    val tab = mutableStateOf("library")
+    val tab = mutableStateOf("home")
     val pip = mutableStateOf(false)
     val fullscreen = mutableStateOf(false)
     /** The video loaded now (library track, or a Store stream). */
@@ -344,7 +355,7 @@ class VideoActivity : ComponentActivity(), com.blaze.assistant.ui.BackRule.ToCha
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        intent?.getStringExtra(MusicActivity.EXTRA_TAB)?.takeIf { it.isNotBlank() }?.let { tab.value = it }
+        intent?.getStringExtra(MusicActivity.EXTRA_TAB)?.takeIf { it.isNotBlank() }?.let { tab.value = VideoNav.normalize(it); if (tab.value != "player") browse.value = tab.value }
         com.blaze.assistant.mediaapps.store.JamendoSource.init(this)
         com.blaze.assistant.movies.Movies.init(this)
         lifecycleScope.launch(Dispatchers.IO) { MediaLib.ensure(this@VideoActivity); Downloads.resumePending(this@VideoActivity); smartCleanup() }
@@ -380,7 +391,7 @@ class VideoActivity : ComponentActivity(), com.blaze.assistant.ui.BackRule.ToCha
                 val learned = VideoSmart.learnIntro(known, old.positionMs, new.positionMs)
                 if (learned != known) { intros[k] = learned; MediaPrefs.setIntro(this@VideoActivity, k, learned) }
             }
-            override fun onPlayerError(error: PlaybackException) { retryStream(error) }
+            override fun onPlayerError(error: PlaybackException) { if (!movieFailed(error.errorCodeName)) retryStream(error) }
             override fun onTracksChanged(t: Tracks) {
                 tracks.value = t
                 pendingSub?.let { id -> if (selectSubtitle(id)) pendingSub = null }
@@ -392,7 +403,7 @@ class VideoActivity : ComponentActivity(), com.blaze.assistant.ui.BackRule.ToCha
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        intent.getStringExtra(MusicActivity.EXTRA_TAB)?.takeIf { it.isNotBlank() }?.let { tab.value = it }
+        intent.getStringExtra(MusicActivity.EXTRA_TAB)?.takeIf { it.isNotBlank() }?.let { tab.value = VideoNav.normalize(it); if (tab.value != "player") browse.value = tab.value }
         handlePlay(intent)
     }
 
@@ -410,13 +421,48 @@ class VideoActivity : ComponentActivity(), com.blaze.assistant.ui.BackRule.ToCha
         private set
 
     /** Plays a movie from any Movies source: its stream (with the source's request headers) and subtitles, resumed where it was left. */
+    // 0.46.5: every stream the source returned, tried in order (StreamPlan); movieTry = the one playing now.
+    private var movieTries: List<com.blaze.assistant.movies.MoviePlay> = emptyList()
+    private var movieTry = 0
+    private var movieWatch: kotlinx.coroutines.Job? = null
+    /** Shown in the player when no stream from the source played (one plain line); "" otherwise. */
+    val movieMsg = mutableStateOf("")
+    /** Still trying another stream: the player hides intermediate errors. */
+    fun movieTrying(): Boolean = current.value?.source == "movie" && movieMsg.value.isBlank() && movieTry < movieTries.size - 1
+
     fun playMovie(p: com.blaze.assistant.movies.MoviePlay, at: Long = -1L) {
         if (!::player.isInitialized) return
+        movieTries = listOf(p.copy(alternates = emptyList())) + p.alternates.filter { it.link != p.url }.map { s ->
+            p.copy(url = s.link, type = s.type, headers = com.blaze.assistant.movies.StreamPlan.headers(s.headers),
+                subtitles = s.subtitles.ifEmpty { p.subtitles }, alternates = emptyList()) }
+        movieTry = 0
+        startMovie(movieTries[0], at)
+    }
+
+    /** A stream didn't start (error, or not ready in StreamPlan.START_TIMEOUT_MS): log why (no URLs / headers) and try the next. */
+    private fun movieFailed(reason: String): Boolean {
+        val m = movie ?: return false
+        if (current.value?.source != "movie" || movieTries.isEmpty() || m.source == "local") return false
+        movieWatch?.cancel()
+        com.blaze.assistant.device.CrashLog.write(com.blaze.assistant.movies.StreamPlan.logLine(m.source, movieTry, movieTries.size,
+            com.blaze.assistant.movies.StreamPlan.kind(m.type, m.url), reason))
+        val next = com.blaze.assistant.movies.StreamPlan.next(movieTry, movieTries.size)
+        if (next == null) { movieMsg.value = com.blaze.assistant.movies.StreamPlan.FAIL_TEXT; player.stop(); return true }
+        movieTry = next
+        startMovie(movieTries[next], player.currentPosition.coerceAtLeast(0).takeIf { it > 0 } ?: -1L)
+        return true
+    }
+
+    private fun startMovie(p: com.blaze.assistant.movies.MoviePlay, at: Long = -1L) {
+        movieMsg.value = ""
         savePos()
         current.value?.let { com.blaze.assistant.agent.AwarenessHooks.videoLeft(player, it, clear = false) }
         upNext.value = null; heightCap = 0
         movie = p
-        http.setDefaultRequestProperties(p.headers)
+        // The headers / referer the source returned go with every request of this stream (manifest, segments, redirects).
+        val hdr = com.blaze.assistant.movies.StreamPlan.headers(p.headers)
+        http.setDefaultRequestProperties(hdr)
+        http.setUserAgent(hdr["User-Agent"])
         val t = Track("movie:" + p.key, p.url, p.title, sourceLabel(p.source), "", 0, p.image, "movie", 0, "", "video", "", p.source)
         current.value = t
         playUris = listOf(p.url)
@@ -427,10 +473,17 @@ class VideoActivity : ComponentActivity(), com.blaze.assistant.ui.BackRule.ToCha
         load(pos, true)
         tab.value = "player"
         com.blaze.assistant.agent.AwarenessHooks.video(player, t)
+        if (p.source != "local") {
+            movieWatch?.cancel()
+            movieWatch = lifecycleScope.launch {
+                delay(com.blaze.assistant.movies.StreamPlan.START_TIMEOUT_MS)
+                if (movie === p && player.playbackState != Player.STATE_READY && player.playbackState != Player.STATE_ENDED && player.currentPosition < 1_000) movieFailed("start timeout")
+            }
+        }
     }
 
     /** The browse tab under the player sheet (library | movies | store), so collapsing the player goes back where the user was. */
-    val browse = mutableStateOf("library")
+    val browse = mutableStateOf("home")
     /** 0.46.2 a source from an add-source link, waiting for the user's Install tap (null = none). */
     val pendingSource = mutableStateOf<String?>(null)
     private val pickMovie = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -492,7 +545,12 @@ class VideoActivity : ComponentActivity(), com.blaze.assistant.ui.BackRule.ToCha
         val stream = t.source == "stream"
         // 0.45.20: a stepped-down rendition caches under its own key (bytes of two renditions never mix under one key).
         val ck = if (heightCap > 0) "${t.key}~${heightCap}p" else t.key
-        val first = MediaItem.Builder().setMediaId(t.key).setUri(playUris.first()).setCustomCacheKey(if (stream) StreamCache.key(ck) else null)
+        // 0.46.5: HLS / DASH from a source's stream type (URLs often don't say), so Media3 picks the right loader.
+        val mime = movie?.takeIf { t.source == "movie" }?.let { m -> when (com.blaze.assistant.movies.StreamPlan.kind(m.type, playUris.first())) {
+            com.blaze.assistant.movies.StreamPlan.Kind.HLS -> androidx.media3.common.MimeTypes.APPLICATION_M3U8
+            com.blaze.assistant.movies.StreamPlan.Kind.DASH -> androidx.media3.common.MimeTypes.APPLICATION_MPD
+            else -> null } }
+        val first = MediaItem.Builder().setMediaId(t.key).setUri(playUris.first()).setMimeType(mime).setCustomCacheKey(if (stream) StreamCache.key(ck) else null)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(t.title).build()).setSubtitleConfigurations(subs).build()
         if (playUris.size == 1) player.setMediaItem(first, at)
         else {
@@ -674,7 +732,7 @@ class VideoActivity : ComponentActivity(), com.blaze.assistant.ui.BackRule.ToCha
         val vs = player.videoSize
         val r = if (vs.width > 0 && vs.height > 0) Rational(vs.width, vs.height).let { if (it.toFloat() > 2.39f) Rational(239, 100) else if (it.toFloat() < 0.42f) Rational(42, 100) else it } else Rational(16, 9)
         val b = PictureInPictureParams.Builder().setAspectRatio(r)
-        if (Build.VERSION.SDK_INT >= 31) b.setAutoEnterEnabled(player.isPlaying && tab.value == "player").setSeamlessResizeEnabled(true)
+        if (Build.VERSION.SDK_INT >= 31) b.setAutoEnterEnabled(player.isPlaying && current.value != null).setSeamlessResizeEnabled(true)
         return b.build()
     }
 
@@ -697,7 +755,7 @@ class VideoActivity : ComponentActivity(), com.blaze.assistant.ui.BackRule.ToCha
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         // Android 8–11: go to picture-in-picture by hand when leaving a playing video (12+ does it via auto-enter).
-        if (Build.VERSION.SDK_INT in 26..30 && player.isPlaying && tab.value == "player") enterPip()
+        if (Build.VERSION.SDK_INT in 26..30 && player.isPlaying && current.value != null) enterPip()
     }
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
@@ -750,45 +808,90 @@ class VideoActivity : ComponentActivity(), com.blaze.assistant.ui.BackRule.ToCha
 @Composable
 private fun VideoApp(a: VideoActivity) {
     val c = LocalBlaze.current
+    val ctx = LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     val tab by a.tab
     val pip by a.pip
     val full by a.fullscreen
     val store = remember { StoreState("video") }
+    // 0.46.4 revamp: Home · Search · Library · Sources; a film's details open over the page; the player is a sheet.
+    var detail by remember { mutableStateOf<Pair<com.blaze.assistant.movies.MovieSource, com.blaze.assistant.movies.MoviePost>?>(null) }
+    var libChip by remember { mutableStateOf("videos") }
+    var account by remember { mutableStateOf(false) }
+    var note by remember { mutableStateOf("") }
     BackHandler(full) { a.setFullscreen(false) }
     // v0.34.1: Back collapses the player sheet; the video keeps playing in the mini-player.
     BackHandler(!full && tab == "player") { a.tab.value = a.browse.value }
     // Wave A item 26: Back from the library or the store goes to the agent chat (not the launcher).
     BackHandler(BackToChat.step(full, tab) == BackToChat.Step.TO_CHAT) { a.leaveToChat() }
+    BackHandler(!full && tab == "store") { a.tab.value = "search"; a.browse.value = "search" }
+    BackHandler(!full && tab != "player" && detail != null) { detail = null }
 
     if (pip) { PlayerSurface(a, controls = false); return }
     if (full) { Box(Modifier.fillMaxSize().background(Color.Black)) { PlayerSurface(a, controls = true) }; return }
 
     val cur by a.current
+    fun go(id: String) { detail = null; a.tab.value = id; a.browse.value = id }
+    val open: (com.blaze.assistant.movies.MovieSource, com.blaze.assistant.movies.MoviePost) -> Unit = { s, p -> detail = s to p }
+    val resume: (com.blaze.assistant.movies.Progress) -> Unit = { pr -> scope.launch {
+        try { a.playMovie(resumePlay(ctx, pr)) } catch (e: Exception) { note = e.message ?: "Couldn't continue" } } }
+    val page = VideoNav.normalize(if (tab == "player") a.browse.value else tab)
     // v0.45.8: Video shows the picked theme and has the shared theme switcher.
     com.blaze.assistant.ui.ThemedScreen(Modifier.fillMaxSize(), own = { background(c.paper) }) {
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
-            Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                BackButton({ a.leaveToChat() }, desc = "Back to chat")
-                Spacer(Modifier.weight(1f))
-                // v0.34.1: one Library entry (the player is a sheet over it now, not a tab).
-                // 0.46.2: Movies (official sources, your videos, Jellyfin, sources you add) between Library and Store.
-                AppPill(listOf("library" to "Library", "movies" to "Movies", "store" to "Store"), if (tab == "player") a.browse.value else tab, onPick = { a.tab.value = it; a.browse.value = it })
-                Spacer(Modifier.weight(1f)); com.blaze.assistant.ui.ThemeSwitch(Modifier.width(48.dp))
+            if (detail == null) MediaTopBar(when (page) { "search", "store" -> "Search"; "library" -> "Library"; "sources" -> "Sources"; else -> "Video" },
+                onAccount = { account = true }, onClose = { a.leaveToChat() }) {
+                com.blaze.assistant.ui.ThemeSwitch(Modifier.width(44.dp))
             }
-            Box(Modifier.weight(1f)) {
-                when (tab) {
-                    "store" -> StoreView("video", store) { item, d, src -> a.watch(item, d, src) }
-                    "movies" -> MoviesTab(onPlay = { a.playMovie(it) }, onPickFile = { a.pickMovieFile() }, incoming = a.pendingSource.value,
-                        onIncomingDone = { a.pendingSource.value = null })
-                    else -> VideoLibrary(a)
+            if (note.isNotBlank()) MText(note, 12.sp, c.sub, modifier = Modifier.padding(horizontal = 16.dp))
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                val d = detail
+                if (d != null) {
+                    val lib by com.blaze.assistant.movies.Movies.lib.collectAsState()
+                    val more by produceState(emptyList<com.blaze.assistant.movies.MoviePost>(), d.first.id, d.second.link) {
+                        value = withContext(Dispatchers.IO) { runCatching { d.first.rows().flatMap { it.second } }.getOrDefault(emptyList()) }
+                            .let { VideoDetailsLogic.moreLikeThis(d.second, it) }
+                    }
+                    MovieDetailsLoader(d.first, d.second, lib.inWatchlist(d.second.link, d.second.source), onBack = { detail = null },
+                        onWatchlist = { com.blaze.assistant.movies.Movies.toggleWatchlist(d.second) }, onPlay = { a.playMovie(it) },
+                        more = more, onMore = { p -> detail = d.first to p })
+                } else when (page) {
+                    "store" -> StoreView("video", store) { item, dd, src -> a.watch(item, dd, src) }
+                    "search" -> VideoSearchPage(open, onOnline = { go("store") })
+                    "library" -> Column(Modifier.fillMaxSize()) {
+                        FilterChips(listOf("videos" to "My videos", "watchlist" to "Watchlist", "downloads" to "Downloads"), libChip) { libChip = it }
+                        Box(Modifier.weight(1f)) {
+                            when (libChip) {
+                                "watchlist" -> WatchlistGrid(open)
+                                else -> VideoLibrary(a)
+                            }
+                        }
+                    }
+                    "sources" -> VideoSourcesPage(onPickFile = { a.pickMovieFile() }, incoming = a.pendingSource.value, onIncomingDone = { a.pendingSource.value = null })
+                    else -> VideoHomePage(open, resume)
+                }
+                // Mini-player above the nav while something plays: tap re-opens the player, play / pause, close.
+                androidx.compose.animation.AnimatedVisibility(tab != "player" && cur != null, Modifier.align(Alignment.BottomCenter), enter = MotionTokens.enterUp(), exit = MotionTokens.exitDown()) {
+                    VideoMini(a)
                 }
             }
-        }
-        // Mini-player while the sheet is collapsed: tap re-opens the player, play / pause, close.
-        AnimatedVisibility(tab != "player" && cur != null, Modifier.align(Alignment.BottomCenter), enter = MotionTokens.enterUp(), exit = MotionTokens.exitDown()) {
-            VideoMini(a)
+            MediaBottomNav(VideoNav.tabs.map { NavItem(it.id, it.label, when (it) {
+                VideoNav.Tab.HOME -> Icons.Rounded.Home; VideoNav.Tab.SEARCH -> Icons.Rounded.Search
+                VideoNav.Tab.LIBRARY -> Icons.Rounded.VideoLibrary; VideoNav.Tab.SOURCES -> Icons.Rounded.Extension }) },
+                VideoNav.lit(tab, a.browse.value).id) { go(it) }
         }
         PlayerSheet(tab == "player", onCollapse = { a.tab.value = a.browse.value }) { PlayerTab(a) }
+        if (account) {
+            val name = remember { runCatching { com.blaze.assistant.agent.Settings.userName }.getOrDefault("") }
+            var autoplay by remember { mutableStateOf(MediaPrefs.autoplay(ctx)) }
+            var saver by remember { mutableStateOf(MediaPrefs.dataSaver(ctx)) }
+            com.blaze.assistant.ui.BlazeDialog(title = name.ifBlank { "Your account" }, confirm = "Done", onConfirm = { account = false }, onDismiss = { account = false }) {
+                Row(Modifier.fillMaxWidth().clickable { autoplay = !autoplay; MediaPrefs.setBool(ctx, MediaPrefs.AUTOPLAY, autoplay) }.padding(vertical = 8.dp)) {
+                    MText(if (autoplay) "Play the next episode by itself: on" else "Play the next episode by itself: off", 14.sp, c.ink) }
+                Row(Modifier.fillMaxWidth().clickable { saver = !saver; MediaPrefs.setBool(ctx, MediaPrefs.DATA_SAVER, saver) }.padding(vertical = 8.dp)) {
+                    MText(if (saver) "Data saver on mobile data: on" else "Data saver on mobile data: off", 14.sp, c.ink) }
+            }
+        }
     }
 }
 
@@ -809,7 +912,7 @@ private fun VideoMini(a: VideoActivity) {
     MiniBar(t, listOf(t?.artist.orEmpty(), t?.licence.orEmpty()).filter { it.isNotBlank() }.joinToString(" \u00b7 "), playing, frac,
         onOpen = { a.tab.value = "player" },
         onPlayPause = { if (p.isPlaying) p.pause() else { if (p.playbackState == Player.STATE_ENDED) p.seekTo(0); if (p.playbackState == Player.STATE_IDLE) p.prepare(); p.play() } },
-        onClose = { a.closePlayer() }, artRatio = 16f / 9f)
+        onClose = { a.closePlayer() }, artRatio = 16f / 9f, insets = false)
 }
 
 @Composable
@@ -870,12 +973,15 @@ private fun PlayerSurface(a: VideoActivity, controls: Boolean) {
     val busyWork by a.work
     val recap by a.recapText
     var speed by remember { mutableFloatStateOf(p.playbackParameters.speed) }
+    // 0.46.4: lock (only the unlock button works) and pinch to fill / fit.
+    var locked by remember { mutableStateOf(false) }
+    var filled by remember { mutableStateOf(false) }
     DisposableEffect(p) {
         val l = object : Player.Listener {
             override fun onEvents(player: Player, events: Player.Events) {
                 playing = player.isPlaying; dur = player.duration.coerceAtLeast(0); pos = player.currentPosition
                 buffering = player.playbackState == Player.STATE_BUFFERING; speed = player.playbackParameters.speed
-                error = player.playerError?.let { e ->
+                error = if (a.movieTrying()) "" else a.movieMsg.value.ifBlank { player.playerError?.let { e ->
                     when (e.errorCode) {
                         PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED, PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT -> "No connection. Downloaded videos play offline."
                         PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS -> "The stream link expired or was refused. Open it again from the Store."
@@ -883,7 +989,7 @@ private fun PlayerSurface(a: VideoActivity, controls: Boolean) {
                         PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED, PlaybackException.ERROR_CODE_DECODER_INIT_FAILED -> "This phone can't decode this video. Try a lower quality."
                         else -> "Couldn't play this: " + (e.message ?: e.errorCodeName)
                     }
-                }.orEmpty()
+                }.orEmpty() }
             }
         }
         p.addListener(l)
@@ -904,12 +1010,25 @@ private fun PlayerSurface(a: VideoActivity, controls: Boolean) {
                 subtitleView?.setBottomPaddingFraction(0.12f)
                 player = p
             }
-        }, update = { it.player = p }, onRelease = { it.player = null }, modifier = Modifier.fillMaxSize())
+        }, update = { it.player = p; it.resizeMode = if (filled) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT },
+            onRelease = { it.player = null }, modifier = Modifier.fillMaxSize())
 
         if (controls) {
             // Gestures: tap toggles controls, double-tap left/right skips 10 s, vertical drags change brightness (left) / volume (right).
             // Wave A item 4: no swipe-to-seek; sideways swipes are left to Android's gesture navigation. Seek with the bar or the 10 s buttons.
             Box(Modifier.fillMaxSize()
+                // 0.46.4: pinch out fills the screen, pinch in fits the whole picture again (two fingers only; one-finger drags stay brightness / volume).
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        var scale = 1f
+                        do {
+                            val ev = awaitPointerEvent()
+                            if (ev.changes.count { it.pressed } >= 2) { scale *= ev.calculateZoom(); ev.changes.forEach { it.consume() } }
+                        } while (ev.changes.any { it.pressed })
+                        if (scale != 1f) { val f = PlayerGestures.fill(scale, filled); if (f != filled) { filled = f; hint = if (f) "Fill" else "Fit" } }
+                    }
+                }
                 .pointerInput(Unit) {
                     detectTapGestures(onTap = { show = !show }, onDoubleTap = { o ->
                         if (o.x < size.width / 2) { p.seekBack(); hint = "\u2212 10 s" } else { p.seekForward(); hint = "+ 10 s" }
@@ -986,13 +1105,15 @@ private fun PlayerSurface(a: VideoActivity, controls: Boolean) {
         if (busyWork.isNotBlank()) Box(Modifier.align(Alignment.TopStart).padding(10.dp).clip(BlazeShapes.small).background(Color.Black.copy(alpha = 0.7f)).padding(horizontal = 10.dp, vertical = 6.dp)) {
             MText(busyWork, 12.sp, Color.White)
         }
-        if (controls) AnimatedVisibility(show && error.isBlank(), Modifier.fillMaxSize(), enter = MotionTokens.fade(), exit = MotionTokens.fadeAway()) {
+        if (controls) AnimatedVisibility(show && error.isBlank() && !locked, Modifier.fillMaxSize(), enter = MotionTokens.fade(), exit = MotionTokens.fadeAway()) {
             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f))) {
                 Row(Modifier.align(Alignment.TopEnd).padding(6.dp)) {
                     Box {
                         RoundIcon(Icons.Rounded.Speed, "Speed ${Speeds.label(speed)}", tint = Color.White) { speedMenu = true }
                         BlazeMenu(speedMenu, { speedMenu = false }, Speeds.all.map { s -> (Speeds.label(s) + if (s == speed) "  \u2713" else "") to { p.setPlaybackSpeed(s) } })
                     }
+                    RoundIcon(Icons.Rounded.Lock, "Lock the screen", tint = Color.White) { locked = true; show = false }
+                    RoundIcon(Icons.Rounded.AspectRatio, if (filled) "Fit to screen" else "Fill the screen", tint = Color.White) { filled = !filled }
                     RoundIcon(Icons.Rounded.ClosedCaption, "Subtitles and audio", tint = Color.White) { tracksOpen = true }
                     if (Build.VERSION.SDK_INT >= 26) RoundIcon(Icons.Rounded.PictureInPictureAlt, "Picture in picture", tint = Color.White) { a.enterPip() }
                     Box {
@@ -1031,6 +1152,12 @@ private fun PlayerSurface(a: VideoActivity, controls: Boolean) {
                         active = BlazeBrush.blue, rest = Color.White.copy(alpha = 0.3f), knob = Color.White, label = "Seek video")
                 }
             }
+        }
+        // 0.46.4 lock: every touch stops here except the unlock button.
+        if (controls && locked) Box(Modifier.fillMaxSize().pointerInput(Unit) {
+            awaitPointerEventScope { while (true) { awaitPointerEvent().changes.forEach { it.consume() } } }
+        }) {
+            RoundIcon(Icons.Rounded.LockOpen, "Unlock the screen", Modifier.align(Alignment.CenterStart).padding(16.dp), tint = Color.White, fill = Color.Black.copy(alpha = 0.5f)) { locked = false; show = true }
         }
     }
     if (tracksOpen) TracksDialog(a) { tracksOpen = false }

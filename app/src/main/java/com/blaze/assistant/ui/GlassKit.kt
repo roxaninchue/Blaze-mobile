@@ -117,7 +117,7 @@ object GlassTokens {
     val pillShape = RoundedCornerShape(50)
 
     /** RenderEffect blur exists from API 31; skipped on low-RAM phones. */
-    fun blurSupported(ctx: Context): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+    fun blurSupported(ctx: Context): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && com.blaze.assistant.device.Thermal.now().blur &&
         !(try { (ctx.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager)?.isLowRamDevice == true } catch (_: Throwable) { false })
 
     /** Fill brush for a glass tile (pure; [dark] = the theme). */
