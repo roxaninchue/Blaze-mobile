@@ -89,6 +89,16 @@ object CloudRuns {
     class Fallback(val why: String) : Exception(why)
 
     /** What a failed run means for the person: an error line (an exception to show), or null = do it locally. */
+    /** 0.46.3: run failures the phone's own loop (with its backup brains) takes over instead of showing an error. */
+    fun handOff(code: String): Boolean = code in setOf("models_busy", "no_reply", "expired", "internal_error", "upstream_error", "timeout", "") ||
+        code.startsWith("5")
+
+    /** 0.46.3: an error while creating / following a run that another brain can fix: do the step locally instead. */
+    fun handOff(e: LlmClient.LlmException): Boolean = e !is RunRefused && e.code != 413 && e.message != STOPPED && e.message != SAFE && Failover.fixable(e)
+
+    /** A run's own final verdict that no other brain changes (today's allowance, too large…): shown as it is. */
+    class RunRefused(msg: String, code: Int) : LlmClient.LlmException(msg, code)
+
     fun failure(code: String): LlmClient.LlmException? = when (code) {
         "quota_exceeded" -> LlmClient.LlmException(Cloud.friendly(429, "quota_exceeded"), 429)
         "models_busy" -> LlmClient.LlmException(BUSY_ALL, 503)
@@ -750,11 +760,15 @@ object CloudRuns {
                     var code = t.red.errorCode
                     if (code.isBlank()) code = view(id)?.optJSONObject("error")?.optString("code").orEmpty()
                     forget(id, true); t.runId = null
+                    // 0.46.3: a run that failed for a reason another brain can fix (every model busy, no reply, too slow, a 5xx)
+                    // never reaches the person: this step and the rest of the turn go on the phone's own loop, which retries
+                    // Blaze Cloud, then the backup brain, then the reserve, with the same context (Failover).
+                    if (handOff(code)) throw Fallback("failed $code: handed to the local loop")
                     val known = failure(code)
                     // Contract §3: a busy / quota failure says it in the gateway's honest words, with what to do next.
                     if (known != null && t.red.failReason.isNotBlank())
-                        throw LlmClient.LlmException(listOf(t.red.failReason, t.red.failTry).filter { it.isNotBlank() }.joinToString(" "), known.code)
-                    throw known ?: Fallback("failed $code")
+                        throw RunRefused(listOf(t.red.failReason, t.red.failTry).filter { it.isNotBlank() }.joinToString(" "), known.code)
+                    throw known?.let { RunRefused(it.message.orEmpty(), it.code) } ?: Fallback("failed $code")
                 }
                 "cancelled" -> { forget(id, true); t.runId = null; throw LlmClient.LlmException(STOPPED, 0) }
                 else -> { cancel(id); t.runId = null; throw Fallback("status $status") }
@@ -839,6 +853,12 @@ object CloudRuns {
         } catch (f: Fallback) {
             t.off = true
             LlmClient.lastCloudError = "cloud run: ${f.why}"
+            null
+        } catch (e: LlmClient.LlmException) {
+            if (!handOff(e)) throw e
+            // 0.46.3: busy / 5xx / timeout / network on the run: the local loop (Blaze Cloud retry, backup, reserve) takes it
+            t.off = true
+            LlmClient.lastCloudError = "cloud run: ${e.message.orEmpty().take(200)} (handed to the local loop)"
             null
         }
     }

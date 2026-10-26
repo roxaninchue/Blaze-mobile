@@ -57,7 +57,10 @@ internal fun BackupBrainSection() {
 
     V18Section("Backup brain")
     V18Note("Answers on the phone when Blaze Cloud is busy or down, before Blaze Cloud's own reserve. Status: " +
-        BackupStatus.line(state, BackupBrain.VERSION, mb, backAt))
+        BackupStatus.line(state, BackupBrain.VERSION, mb, backAt) +
+        BackupStatus.healthLine(BackupBrain.healthOk, BackupBrain.healthAt.takeIf { it > 0 }?.let { java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(it)) }.orEmpty())
+            .let { if (it.isEmpty()) "" else " $it" })
+    if (state == BackupStatus.State.INSTALLED) V18Button("Check now") { scope.launch { note = if (BackupBrain.healthCheck()) "The backup brain answered." else "The backup brain didn't answer."; tick++ } }
     if (BackupStatus.canDownload(state)) V18Button("Download now (~$mb MB)") {
         if (BackupStatus.confirmMobileData(BackupBrain.phone())) askMobile = true else download()
     }

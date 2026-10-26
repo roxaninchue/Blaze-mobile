@@ -70,7 +70,8 @@ object BackupBrain {
     fun init(ctx: Context) {
         app = ctx.applicationContext
         // Install quietly once Alpine exists (and refresh the everyday tools of every installed Linux).
-        scope.launch { delay(60_000); runCatching { install(false) } }
+        // 0.46.3: ready by default: a quiet background setup (Alpine first when it's missing, on Wi-Fi), then a health check.
+        scope.launch { delay(60_000); runCatching { autoSetup() } }
         LinuxReadyRunner.ensureAllLater()
         // v0.45.27: and as soon as the phone gets onto Wi-Fi (an unmetered, working connection), not only at start.
         watchWifi()
@@ -161,6 +162,28 @@ object BackupBrain {
 
     /** Can the backup step run for a request (it may still have to start)? */
     fun ready(): Boolean = enabled && installed() && System.currentTimeMillis() >= freeUntil
+
+    /** 0.46.3: the last startup health check (null = not checked yet) and when, for Settings › Backup brain. */
+    @Volatile var healthOk: Boolean? = null; private set
+    @Volatile var healthAt: Long = 0L; private set
+
+    /** 0.46.3: Linux (Alpine) when missing and the phone is on Wi-Fi (or mobile data is allowed), then the backup, then a health check. */
+    suspend fun autoSetup() {
+        if (!enabled || !supported()) return
+        val dataOk = LinuxReadyRunner.unmetered() || Settings.bool("backup_brain_mobile_data", false)
+        if (!Linux.installed() && LinuxReadyRunner.online() && dataOk) runCatching { Linux.install() }.onFailure { note("auto linux: ${it.message}") }
+        if (Linux.installed() && !installed()) note("auto install: " + runCatching { install(false) }.getOrElse { it.message.orEmpty() })
+        healthCheck()
+    }
+
+    /** Starts the backup server and asks its health endpoint. */
+    suspend fun healthCheck(): Boolean {
+        if (!installed()) { healthOk = null; return false }
+        val ok = runCatching { start() && healthy() }.getOrDefault(false)
+        healthOk = ok; healthAt = System.currentTimeMillis()
+        note("health: " + if (ok) "ok" else "not answering")
+        return ok
+    }
 
     // ---------------- install ----------------
 

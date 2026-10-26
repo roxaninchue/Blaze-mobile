@@ -28,6 +28,13 @@ object BackupStatus {
         State.NOT_DOWNLOADED -> "Not downloaded yet (about $mb MB)."
     }
 
+    /** 0.46.3: the startup health check line ("" = not checked / not installed). [at] = the time already formatted. */
+    fun healthLine(ok: Boolean?, at: String): String = when (ok) {
+        null -> ""
+        true -> "Health check: answering" + (if (at.isNotBlank()) " ($at)." else ".")
+        false -> "Health check: not answering" + (if (at.isNotBlank()) " ($at)" else "") + ". Blaze Cloud's reserve still covers for it."
+    }
+
     /** "Download now" is offered for these. */
     fun canDownload(s: State): Boolean = s == State.WAITING_WIFI || s == State.NOT_DOWNLOADED || s == State.OFF
 

@@ -125,7 +125,7 @@ class AckBackgroundTest {
         CloudRuns.owned.clear()
         val gw = CloudRunsTest.FakeGateway()
         gw.brain = { r, _ ->
-            r.emit("failed", JSONObject().put("code", "models_busy").put("reason", "Every model is busy right now.").put("try", "Try again in a minute."))
+            r.emit("failed", JSONObject().put("code", "quota_exceeded").put("reason", "Every model is busy right now.").put("try", "Try again in a minute."))   // 0.46.3: models_busy now goes to the local loop; a refusal keeps the gateway's words
             r.emit("status", JSONObject().put("status", "failed"))
         }
         val client = CloudRuns.Client(gw, CloudRuns.RunStore({ kv[it] }, { k, v -> kv[k] = v }, { clock }), sleep = { clock += it }, now = { clock }, detached = { f -> runBlocking { f() } })

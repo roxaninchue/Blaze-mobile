@@ -323,8 +323,9 @@ class CloudRunsTest {
 
     @Test fun failedRunsBecomePlainLinesOrTheLocalLoop() = runBlocking {
         gw.brain = { r, _ -> r.emit("error", JSONObject().put("code", "models_busy").put("message", "x")); r.emit("status", JSONObject().put("status", "failed")) }
+        // 0.46.3: every model busy on the run = the phone's own loop takes the step (retry, backup brain, reserve), no error
         try { client.complete(CloudRuns.Turn("main", "t-9"), user("hi"), null, "chat", ev); fail() }
-        catch (e: LlmClient.LlmException) { assertEquals(CloudRuns.BUSY_ALL, e.message) }
+        catch (_: CloudRuns.Fallback) { }
         gw.brain = { r, _ -> r.emit("error", JSONObject().put("code", "model_rejected").put("message", "x")); r.emit("status", JSONObject().put("status", "failed")) }
         try { client.complete(CloudRuns.Turn("main", "t-10"), user("hi"), null, "chat", ev); fail() }
         catch (_: CloudRuns.Fallback) { }

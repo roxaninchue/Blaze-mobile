@@ -3203,6 +3203,8 @@ When you finish, say what you did in one short sentence.
                         if (!(liteNow && partial.trimStart().let { it.startsWith("[") || it.startsWith("TOOLS", true) })) gate.offer(partial)
                     } else null
                     liveGate = gate   // v0.45.0 (#5): Stop closes it at once, so no queued frame lands after "Stopped."
+                    // 0.46.3: another brain took over this call: one quiet plain status, never an error bubble (Failover).
+                    LlmClient.switchListener = { line -> scope.launch { if (mood != Mood.IDLE) status = line } }
                     val onThink: (String) -> Unit = { t -> if (!gate.isClosed) scope.launch { if (!gate.isClosed) thinking = listOf(before, t).filter { it.isNotBlank() }.joinToString("\n\n") } }
 
                     // v0.30.7: no blocking summarise call in the middle of a phone task (a context error below still folds).
