@@ -1,6 +1,5 @@
 package com.blaze.assistant.agent
 
-import kotlinx.coroutines.test.UncaughtExceptionsBeforeTest
 import kotlinx.coroutines.test.runTest
 
 /**
@@ -23,7 +22,9 @@ object LeakedMainLaunches {
     }
 
     fun drain() {
-        try { runTest { } } catch (e: UncaughtExceptionsBeforeTest) {
+        // UncaughtExceptionsBeforeTest is internal in kotlinx-coroutines-test: matched by name
+        try { runTest { } } catch (e: IllegalStateException) {
+            if (e.javaClass.simpleName != "UncaughtExceptionsBeforeTest") throw e
             val other = e.suppressed.filterNot { missingMain(it) }
             if (other.isNotEmpty()) throw e
             System.err.println("LeakedMainLaunches: dropped ${e.suppressed.size} missing-Main launch failure(s) from earlier tests")
