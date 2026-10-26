@@ -690,6 +690,12 @@ fun ChatScreen() {
                         try { ctx.startActivity(com.blaze.assistant.phone.PhoneControl.fixIntent(ctx)) }
                         catch (_: Exception) { ctx.startActivity(Intent(AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
                     }
+                // 0.46.3: the on-phone brain's one-time question before its setup uses mobile data
+                val askData by com.blaze.assistant.agent.BackupBrain.askMobile.collectAsState()
+                if (askData) BlazeDialog("Set up the on-phone brain?", "Blaze's main brain runs on your phone. Setting it up downloads about " +
+                    com.blaze.assistant.agent.BackupNudge.mb(com.blaze.assistant.agent.BackupBrain.DOWNLOAD_BYTES) + " MB plus a small Linux. You're on mobile data. Until it's ready, Blaze uses its online brains.",
+                    confirm = "Use mobile data", onConfirm = { com.blaze.assistant.agent.BackupBrain.answerMobile(true) },
+                    dismiss = "Wait for Wi-Fi", onDismiss = { com.blaze.assistant.agent.BackupBrain.answerMobile(false) })
                 // 0.46.3: the one-time phone control explainer (a phone task needed control and it was off).
                 val explain by com.blaze.assistant.phone.flash.PhoneExplainer.requested.collectAsState()
                 if (explain) PhoneExplainerDialog(onOpenSettings = {

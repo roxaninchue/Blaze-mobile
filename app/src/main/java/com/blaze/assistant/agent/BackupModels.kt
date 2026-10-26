@@ -38,6 +38,10 @@ object BackupModels {
         "mimo-v2.6-flash-free" to 80.0,
     )
 
+    /** 0.46.3 (A4): a free-tier rest is capped at 30 minutes. */
+    const val MAX_REST_MS = 30 * 60_000L
+    fun capRest(until: Long, now: Long): Long = minOf(until, now + MAX_REST_MS)
+
     /** Ids that are free on the public list without price data. */
     private val FREE_IDS = setOf("big-pickle")
 

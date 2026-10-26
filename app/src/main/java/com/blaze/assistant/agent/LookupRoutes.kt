@@ -16,7 +16,7 @@ object LookupRoutes {
     }
 
     /**
-     * The summarize step: Blaze's own routing (Blaze Cloud gateway, then the backup brain, then the reserve; never NVIDIA or
+     * The summarize step: Blaze's own routing (the on-phone brain, then the Nous reserve, then Blaze Cloud; never NVIDIA or
      * System One), asked as a lite turn on the STEPS lane so the gateway picks its fastest capable model.
      */
     val brain = object : LookupLane.Brain {

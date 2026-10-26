@@ -83,6 +83,6 @@ class BackupRouteTest {
         assertFalse(src.contains("if (e is TooSlow && !backupReady) throw"))
         // 0.46.3: the fallback steps run through Failover (BackupRoute.fallbacks inside), for every call of the loop
         assertTrue(src.contains("Failover.run("))
-        assertTrue(HideModels19Test.srcFile("java/com/blaze/assistant/agent/Failover.kt").readText().contains("BackupRoute.fallbacks(backupReady"))
+        assertTrue(src.contains("BrainOrder.plan(backupReady"))   // 0.46.3 order: on-device, Nous reserve, Blaze Cloud
     }
 }

@@ -1,15 +1,12 @@
 package com.blaze.assistant.agent
 
 /**
- * 0.46.3 (report on 0.46.2: "Blaze Cloud is busy right now. Tap Retry", then "Something went wrong (t8: Blaze Cloud is
- * busy…)" mid-task, and the backup brain never answered). The rule: while any brain is left, nobody sees a busy or
- * provider error. One model call of the agent loop, at ANY turn (the first or the eighth):
- *  1. Blaze Cloud (its own quiet retries, Cloud.drive), [retryOnce] = one more plain try for a busy / 5xx / timeout /
- *     network failure;
- *  2. then the steps [BackupRoute.fallbacks] gives (the on-device backup brain when ready, then the gateway's Nous
- *     reserve), each answering with the same messages and tools, so the task goes on with its context;
- *  3. only when every one failed, the first error is thrown (shown with Retry).
- * [onSwitch] gets one plain status line when another brain took over ("Switched to backup"). Pure (FailoverTest).
+ * 0.46.3 (reports on 0.46.2: "Blaze Cloud is busy right now. Tap Retry", then "Something went wrong (t8: …)" mid-task).
+ * The rule: while any brain is left, nobody sees a busy or provider error. One model call of the agent loop, at ANY turn
+ * (the first or the eighth), goes through the brains in [BrainOrder.plan] order (on-device OpenCode, Nous reserve,
+ * Blaze Cloud), each with the same messages and tools, so the task goes on with its context. Only when every one failed
+ * is an error thrown (shown with Retry). [onSwitch] gets one plain status line when a later brain took over a call.
+ * A sign-in / allowance / malformed-request refusal from Blaze Cloud is final ([fixable]). Pure (FailoverTest).
  */
 object Failover {
     const val SWITCHED = "Switched to backup"
@@ -24,37 +21,41 @@ object Failover {
     }
 
     suspend fun <T> run(
-        cloud: suspend () -> T,
-        backupReady: Boolean,
-        backup: suspend () -> T,
-        reserve: suspend () -> T,
-        retryOnce: Boolean = false,
+        steps: List<BackupRoute.Step>,
+        call: suspend (BackupRoute.Step) -> T,
         shapeError: (Throwable) -> Boolean = { false },
         onSwitch: (String) -> Unit = {},
         onFail: (BackupRoute.Step, Throwable) -> Unit = { _, _ -> },
+        onOk: (BackupRoute.Step) -> Unit = {},
     ): Outcome<T> {
-        val first: Throwable
-        try { return Outcome(cloud(), BackupRoute.Step.CLOUD, false) } catch (e: Throwable) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            first = e
-        }
-        if (!fixable(first) || shapeError(first)) throw first
-        if (retryOnce && first !is LlmClient.TooSlow) try { return Outcome(cloud(), BackupRoute.Step.CLOUD, true) } catch (e: Throwable) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            onFail(BackupRoute.Step.CLOUD, e)
-        }
-        val le = first as? LlmClient.LlmException
-        val steps = BackupRoute.fallbacks(backupReady, le?.code ?: 503, first.message.orEmpty(), false)
-        for (step in steps) {
+        if (steps.isEmpty()) throw LlmClient.LlmException(Cloud.SIGNED_OUT, 401)
+        var cloudErr: Throwable? = null
+        var last: Throwable? = null
+        steps.forEachIndexed { i, step ->
             try {
-                val v = when (step) { BackupRoute.Step.BACKUP -> backup(); BackupRoute.Step.RESERVE -> reserve(); else -> continue }
-                onSwitch(SWITCHED)
-                return Outcome(v, step, retryOnce)
+                val v = call(step)
+                if (i > 0) onSwitch(SWITCHED)
+                onOk(step)
+                return Outcome(v, step, i > 0)
             } catch (e: Throwable) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 onFail(step, e)
+                last = e
+                if (step == BackupRoute.Step.CLOUD) {
+                    cloudErr = e
+                    // what no other brain fixes (sign-in, allowance, a refused request shape) is final
+                    if (!fixable(e) || shapeError(e)) throw e
+                }
             }
         }
-        throw if (first is LlmClient.TooSlow) LlmClient.LlmException(Cloud.BUSY, 503) else first
+        val err = cloudErr ?: last!!
+        throw if (err is LlmClient.TooSlow || err !is LlmClient.LlmException) LlmClient.LlmException(Cloud.BUSY, 503) else err
     }
+
+    /** The 0.46.3-early shape (cloud first): kept for callers that pass explicit lambdas; same order rule as [BrainOrder]. */
+    suspend fun <T> run(cloud: suspend () -> T, backupReady: Boolean, backup: suspend () -> T, reserve: suspend () -> T,
+                        shapeError: (Throwable) -> Boolean = { false }, onSwitch: (String) -> Unit = {},
+                        onFail: (BackupRoute.Step, Throwable) -> Unit = { _, _ -> }): Outcome<T> =
+        run(BrainOrder.plan(backupReady), { s -> when (s) { BackupRoute.Step.BACKUP -> backup(); BackupRoute.Step.RESERVE -> reserve(); BackupRoute.Step.CLOUD -> cloud() } },
+            shapeError, onSwitch, onFail)
 }

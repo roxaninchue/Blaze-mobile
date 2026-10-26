@@ -63,8 +63,9 @@ object BackupRoute {
      * a phone without the backup showed "Blaze Cloud is busy" without ever asking the reserve. [shapeError] (the request
      * itself was refused) and what [moveOn] rules out (sign-in, waiting list, allowance) get nothing.
      */
-    fun fallbacks(backupReady: Boolean, code: Int, message: String, shapeError: Boolean): List<Step> = when {
-        shapeError || !moveOn(code, message) -> emptyList()
+    fun fallbacks(backupReady: Boolean, code: Int, message: String, shapeError: Boolean, afterHeal: Boolean = false): List<Step> = when {
+        // A1: after the flattened retry a 400 is a model / provider quirk, not the request's shape: the fallbacks still run
+        (shapeError && !afterHeal) || !moveOn(code, message) -> emptyList()
         backupReady -> listOf(Step.BACKUP, Step.RESERVE)
         else -> listOf(Step.RESERVE)
     }

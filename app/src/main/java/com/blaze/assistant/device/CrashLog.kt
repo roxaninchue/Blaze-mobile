@@ -31,9 +31,19 @@ object CrashLog {
         write("CAUGHT: ${android.util.Log.getStackTraceString(e).take(4000)}")
         try {
             android.os.Handler(android.os.Looper.getMainLooper()).post {
-                try { com.blaze.assistant.agent.Agent.reportError("Something went wrong (${e.javaClass.simpleName}: ${e.message?.take(120)}). It's in the crash report; try again.") } catch (_: Throwable) { }
+                try { com.blaze.assistant.agent.Agent.reportError(lineFor(e)) } catch (_: Throwable) { }
             }
         } catch (_: Throwable) { }
+    }
+
+    /**
+     * 0.46.3 (A5; report: "Something went wrong (t8: Blaze Cloud is busy…)": "t8" was the release build's shrunk name for
+     * the model-call error class). A model error shows its own plain words; anything else a plain line. Never a class name.
+     */
+    fun lineFor(e: Throwable, kept: Boolean = false): String = when {
+        e is com.blaze.assistant.agent.LlmClient.LlmException && !e.message.isNullOrBlank() -> e.message!!.trim()
+        kept -> "Something went wrong, but Blaze kept running. It's in the crash report."
+        else -> "Something went wrong. It's in the crash report; try again."
     }
 
     private val recent = ArrayDeque<Long>()
@@ -50,7 +60,7 @@ object CrashLog {
                     recent.addLast(now); while (recent.isNotEmpty() && now - recent.first() > 10_000) recent.removeFirst()
                     if (recent.size >= 5 || e is OutOfMemoryError) { writeNow("CAUGHT on main (giving up): ${android.util.Log.getStackTraceString(e).take(4000)}"); throw e }
                     write("CAUGHT on main: ${android.util.Log.getStackTraceString(e).take(4000)}")
-                    try { com.blaze.assistant.agent.Agent.reportError("Something went wrong (${e.javaClass.simpleName}: ${e.message?.take(120)}). Blaze kept running; it's in the crash report.") } catch (_: Throwable) { }
+                    try { com.blaze.assistant.agent.Agent.reportError(lineFor(e, kept = true)) } catch (_: Throwable) { }
                 }
             }
         }

@@ -57,7 +57,7 @@ object ProviderCatalog {
         "groq" -> listOf("llama-3.3-70b-versatile", "openai/gpt-oss-120b", "moonshotai/kimi-k2-instruct-0905",
             "qwen/qwen3-32b", "meta-llama/llama-4-maverick-17b-128e-instruct", "openai/gpt-oss-20b", "llama-3.1-8b-instant")
         "cerebras" -> listOf("gpt-oss-120b", "qwen-3-235b-a22b-instruct-2507", "zai-glm-4.6", "llama-3.3-70b", "llama3.1-8b")
-        "nvidia" -> listOf("meta/llama-3.3-70b-instruct", "moonshotai/kimi-k2.6", "z-ai/glm-5.3", "nvidia/nemotron-3-super-120b-a12b",
+        "nvidia" -> listOf("meta/llama-3.3-70b-instruct", "moonshotai/kimi-k2.6", "z-ai/glm-5.3",
             "deepseek-ai/deepseek-v4.1-flash", "openai/gpt-oss-120b", "openai/gpt-oss-20b")
         "mistral" -> listOf("mistral-small-latest", "mistral-medium-latest", "mistral-large-latest", "open-mistral-nemo", "ministral-8b-latest")
         "openrouter" -> (safe { FreeRouter.openRouterPicks() } ?: emptyList()) + "openrouter/free"
@@ -81,13 +81,14 @@ object ProviderCatalog {
     /** Chat-capable text model? Drops embeddings, TTS, Whisper, guard, image, rerank and the like. */
     fun isChatText(id: String): Boolean {
         val l = id.lowercase()
-        return l.isNotBlank() && NON_CHAT.none { l.contains(it) }
+        // 0.46.3: never NVIDIA (Nemotron) or System One (Jev) models, whatever a list offers
+        return l.isNotBlank() && NON_CHAT.none { l.contains(it) } && !BackupModels.excluded(id)
     }
 
     private val KNOWN_TOOLS = Regex(
         """(?i)(llama-?3\.[13]|llama3\.[13]|llama-?4|qwen-?3|qwen2\.5|qwq|gpt-oss|kimi|deepseek-(v[3-9]|chat)|glm-?[4-9]|""" +
-            """mistral-(small|medium|large)|mixtral|magistral|ministral|open-mistral-nemo|devstral|command-[ra]|nemotron-(3|4|ultra|super)|""" +
-            """llama-3\.1-nemotron|hermes|granite-?[34]|gemini|grok|compound|minimax|seed-oss|jamba|palmyra|openai-fast|^openai$)""")
+            """mistral-(small|medium|large)|mixtral|magistral|ministral|open-mistral-nemo|devstral|command-[ra]|""" +
+            """hermes|granite-?[34]|gemini|grok|compound|minimax|seed-oss|jamba|palmyra|openai-fast|^openai$)""")
 
     /** Tool calling from the known list (used when the provider's API doesn't say). */
     fun knownTools(id: String): Boolean = KNOWN_TOOLS.containsMatchIn(id) && !id.contains("gemma", true)
@@ -162,8 +163,8 @@ object ProviderCatalog {
 
     // ---------------- ordering ----------------
 
-    private val strongFamilies = listOf("kimi", "deepseek", "qwen3", "qwen-3", "glm", "gpt-oss", "nemotron-3-ultra", "nemotron-ultra",
-        "llama-4", "maverick", "gemini", "mistral-large", "mistral-medium", "nemotron-3-super", "llama-3.3", "llama3.3", "hermes", "grok")
+    private val strongFamilies = listOf("kimi", "deepseek", "qwen3", "qwen-3", "glm", "gpt-oss",
+        "llama-4", "maverick", "gemini", "mistral-large", "mistral-medium", "llama-3.3", "llama3.3", "hermes", "grok")
     private val weakWords = Regex("""(?i)(nano|tiny|micro|(?<!ge)mini|small|lite|lightning|instant|-xs\b|code|chatqa|llama2|gemma-2b|recurrent|(?<![0-9.])[1-4]b\b|(?<![0-9.])[78]b\b|e2b|e4b|preview|-exp\b)""")
 
     /** Rough "billions of parameters" in the id (first number before b; 0 when unknown). */

@@ -96,6 +96,9 @@ object CloudRuns {
     /** 0.46.3: an error while creating / following a run that another brain can fix: do the step locally instead. */
     fun handOff(e: LlmClient.LlmException): Boolean = e !is RunRefused && e.code != 413 && e.message != STOPPED && e.message != SAFE && Failover.fixable(e)
 
+    /** A2 (patch spec): a run failure the local loop takes instead (busy, expired, no reply, 5xx, network), not quota / too large. */
+    fun fallLocal(e: LlmClient.LlmException): Boolean = handOff(e) && !(e.code == 429 && Cloud.friendly(429, e.message.orEmpty()) != Cloud.BUSY)
+
     /** A run's own final verdict that no other brain changes (today's allowance, too large…): shown as it is. */
     class RunRefused(msg: String, code: Int) : LlmClient.LlmException(msg, code)
 
@@ -819,6 +822,9 @@ object CloudRuns {
      * not a scheduled routine). Everything else keeps the local loop.
      */
     fun eligible(mainChat: Boolean, private: Boolean, online: Boolean): Boolean = try {
+        // 0.46.3 brain order: a Cloud run is Blaze Cloud, which now comes after the on-device brain; while that is ready the
+        // turn stays on the phone's loop (on-device → Nous → Blaze Cloud)
+        !(try { BackupBrain.ready() } catch (_: Throwable) { false }) &&
         mainChat && !private && online && Settings.bool(PREF, true) && Settings.gatewayToken().isNotBlank() && !client().store.isOff()
     } catch (_: Throwable) { false }
 

@@ -46,8 +46,8 @@ object BackupBrain {
     /** Public lists of OpenCode's hosted models (no key needed), tried in order. */
     val PUBLIC_LISTS = listOf("https://opencode.ai/zen/v1/models", "https://opencode.ai/inference/v1/models")
     const val IDLE_MS = 15 * 60_000L
-    const val START_WAIT_MS = 30_000L
-    const val FIRST_CHUNK_MS = 25_000L
+    const val START_WAIT_MS = 20_000L   // 0.46.3 (A4): start + first model fit in about 45 s
+    const val FIRST_CHUNK_MS = BrainOrder.FIRST_TOKEN_MS   // 0.46.3: ~20 s first-token cap per model, then the next one
     const val GAP_MS = 30_000L
     const val TOTAL_MS = 100_000L
     const val MAX_MODELS = 4
@@ -71,7 +71,9 @@ object BackupBrain {
         app = ctx.applicationContext
         // Install quietly once Alpine exists (and refresh the everyday tools of every installed Linux).
         // 0.46.3: ready by default: a quiet background setup (Alpine first when it's missing, on Wi-Fi), then a health check.
-        scope.launch { delay(60_000); runCatching { autoSetup() } }
+        scope.launch { delay(8_000); runCatching { autoSetup() } }
+        // health probe every ~10 min while installed (keeps the status in Settings › Brains live)
+        scope.launch { while (true) { delay(BrainOrder.PROBE_EVERY_MS); if (installed()) runCatching { if (!healthy()) healthCheck() else { healthOk = true; healthAt = System.currentTimeMillis() } } } }
         LinuxReadyRunner.ensureAllLater()
         // v0.45.27: and as soon as the phone gets onto Wi-Fi (an unmetered, working connection), not only at start.
         watchWifi()
@@ -163,6 +165,23 @@ object BackupBrain {
     /** Can the backup step run for a request (it may still have to start)? */
     fun ready(): Boolean = enabled && installed() && System.currentTimeMillis() >= freeUntil
 
+    @Volatile private var lastError = ""
+
+    /** 0.46.3 (A4): one line on whether the on-device brain could run (crash report, final failures). */
+    fun diag(): String = try {
+        "backup: supported=${supported()} linux=${Linux.installed()} installed=${installed()} enabled=$enabled ready=${ready()} " +
+            "resting=${if (freeUntil > System.currentTimeMillis()) java.util.Date(freeUntil).toString() else "no"} health=${healthOk ?: "unchecked"} last=\"${lastError.take(120)}\""
+    } catch (e: Throwable) { "backup: diag failed ${e.message}" }
+
+    /** 0.46.3: the one-time question before the setup uses mobile data (the UI shows it; the answer is saved). */
+    val askMobile = kotlinx.coroutines.flow.MutableStateFlow(false)
+    fun answerMobile(allow: Boolean) {
+        Settings.setBool("backup_mobile_asked", true)
+        if (allow) Settings.setBool("backup_brain_mobile_data", true)
+        askMobile.value = false
+        if (allow) scope.launch { runCatching { autoSetup() } }
+    }
+
     /** 0.46.3: the last startup health check (null = not checked yet) and when, for Settings › Backup brain. */
     @Volatile var healthOk: Boolean? = null; private set
     @Volatile var healthAt: Long = 0L; private set
@@ -171,8 +190,10 @@ object BackupBrain {
     suspend fun autoSetup() {
         if (!enabled || !supported()) return
         val dataOk = LinuxReadyRunner.unmetered() || Settings.bool("backup_brain_mobile_data", false)
+        // primary brain: on mobile data, ask once (until then, and on a 32-bit phone, Blaze starts at Nous)
+        if (!dataOk && LinuxReadyRunner.online() && !installed() && !Settings.bool("backup_mobile_asked", false)) askMobile.value = true
         if (!Linux.installed() && LinuxReadyRunner.online() && dataOk) runCatching { Linux.install() }.onFailure { note("auto linux: ${it.message}") }
-        if (Linux.installed() && !installed()) note("auto install: " + runCatching { install(false) }.getOrElse { it.message.orEmpty() })
+        if (Linux.installed() && !installed()) note("auto install: " + runCatching { install(dataOk) }.getOrElse { it.message.orEmpty() })
         healthCheck()
     }
 
@@ -334,11 +355,14 @@ object BackupBrain {
      * limit, an empty reply or a stall. Returns the OpenAI-shaped assistant message (tool calls included), or throws
      * [LlmClient.LlmException] when no model answered.
      */
-    suspend fun complete(messages: JSONArray, tools: JSONArray?, onText: ((String) -> Unit)?, onThink: ((String) -> Unit)?): JSONObject {
+    suspend fun complete(messages: JSONArray, tools: JSONArray?, onText: ((String) -> Unit)?, onThink: ((String) -> Unit)?,
+                         coding: Boolean = false, googleData: Boolean = false): JSONObject {
         if (!BackupBridge.canServe(messages)) throw LlmClient.LlmException("backup: pictures aren't supported", 415)
         if (!start()) throw LlmClient.LlmException("backup: not running", 503)
         lastUse = System.currentTimeMillis()
-        val list = BackupModels.order(refreshModels(false), cooling, System.currentTimeMillis())
+        val ordered = BackupModels.order(refreshModels(false), cooling, System.currentTimeMillis())
+        // 0.46.3 (BrainOrder): coders first for a coding job; zero-retention models only with Google data
+        val list = BrainOrder.models(ordered.map { it.id }, coding, googleData).map { id -> ordered.firstOrNull { it.id == id } ?: BackupModels.Model(id, free = true) }
         if (list.isEmpty()) throw LlmClient.LlmException("backup: no free models", 503)
         val t0 = System.currentTimeMillis()
         var last: LlmClient.LlmException? = null
@@ -353,10 +377,15 @@ object BackupBrain {
             } catch (e: kotlinx.coroutines.CancellationException) { throw e
             } catch (e: FreeLimit) {
                 // Every free model shares the phone's free allowance: rest them all until OpenCode says it resets.
-                list.forEach { cooling[it.id] = e.until }
-                freeUntil = e.until
+                // 0.46.3 (A4): rest at most 30 min (a stale or long reset no longer parks it all evening), and say so
+                val until = BackupModels.capRest(e.until, System.currentTimeMillis())
+                list.forEach { cooling[it.id] = until }
+                freeUntil = until
+                try { com.blaze.assistant.device.CrashLog.write("Backup brain resting until " + java.util.Date(until)) } catch (_: Throwable) { }
+                lastError = e.message.orEmpty()
                 throw e
             } catch (e: LlmClient.LlmException) {
+                lastError = "${m.id}: ${e.message.orEmpty().take(120)}"
                 cooling[m.id] = System.currentTimeMillis() + BackupModels.coolMs(e.code, e.message.orEmpty())
                 CallState.current().errors.add("backup ${m.id}: ${e.code} ${e.message.orEmpty().take(120)}")
                 last = e

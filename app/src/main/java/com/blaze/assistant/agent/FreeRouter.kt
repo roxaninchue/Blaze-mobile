@@ -33,7 +33,7 @@ object FreeRouter {
     // "openrouter/free" hands each turn to a random free model, sometimes a tiny coding model that
     // can't even read the clock. Instead pick the strongest free models that support tools, once a day.
     private val weak = Regex("""(code|coder|codestral|devstral|mini|nano|tiny|small|lite|micro|guard|embed|vision|-vl|ocr|reward|math|\b[0-9]b\b|\b(1\.5|0\.5|1|2|3|4|7|8|9|12|14)b\b|e2b|e4b|uncensored|roleplay|rp\b)""", RegexOption.IGNORE_CASE)
-    private val strong = listOf("deepseek", "qwen3", "kimi", "glm", "gpt-oss", "llama-4", "gemini", "mistral-large", "nemotron-ultra", "hermes", "maverick", "grok")
+    private val strong = listOf("deepseek", "qwen3", "kimi", "glm", "gpt-oss", "llama-4", "gemini", "mistral-large", "hermes", "maverick", "grok")
     @Volatile private var refreshing = false
 
     /** Best free OpenRouter models (tools-capable), cached; refreshed in the background daily. */
