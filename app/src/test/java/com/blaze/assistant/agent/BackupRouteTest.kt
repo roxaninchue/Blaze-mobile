@@ -49,4 +49,38 @@ class BackupRouteTest {
         assertFalse(BackupRoute.moveOn(429, "You've used today's free messages. They come back tomorrow."))
         assertFalse(BackupRoute.moveOn(429, "quota_exceeded"))
     }
+
+    // v0.45.28: Rocky on 4G without the backup brain saw "Blaze Cloud is busy" and the Nous reserve was never asked.
+    @Test fun noBackupBusyStillGoesToTheReserve() {
+        val R = listOf(BackupRoute.Step.RESERVE)
+        assertEquals(R, BackupRoute.fallbacks(false, 503, Cloud.BUSY, false))
+        assertEquals(R, BackupRoute.fallbacks(false, 429, Cloud.BUSY, false))                 // busy, not the allowance
+        assertEquals(R, BackupRoute.fallbacks(false, 0, Cloud.UNREACHABLE, false))
+        assertEquals(R, BackupRoute.fallbacks(false, 0, "Blaze Cloud too slow (no first chunk in 15s)", false))
+        assertEquals(R, BackupRoute.fallbacks(false, 502, "Blaze · blaze-auto said (502): upstream", false))
+        // with the backup ready: backup first, then the reserve
+        assertEquals(listOf(BackupRoute.Step.BACKUP, BackupRoute.Step.RESERVE), BackupRoute.fallbacks(true, 503, Cloud.BUSY, false))
+        // never for what no other brain can fix, nor a request the services refuse as such
+        assertTrue(BackupRoute.fallbacks(false, 401, Cloud.SIGNED_OUT, false).isEmpty())
+        assertTrue(BackupRoute.fallbacks(true, 403, Cloud.WAITLISTED, false).isEmpty())
+        assertTrue(BackupRoute.fallbacks(false, 429, "You've used today's free messages. They come back tomorrow.", false).isEmpty())
+        assertTrue(BackupRoute.fallbacks(true, 400, "bad tool shape", true).isEmpty())
+    }
+
+    @Test fun partialStreamFailureFallsBack() {
+        val broke = "Blaze · blaze-auto stopped sending (timed out mid-reply)."
+        assertTrue(BackupRoute.brokeMidReply(broke))
+        assertTrue(BackupRoute.brokeMidReply("unexpected end of stream on https://gateway"))
+        assertFalse(BackupRoute.brokeMidReply(Cloud.SIGNED_OUT))
+        assertEquals(listOf(BackupRoute.Step.RESERVE), BackupRoute.fallbacks(false, 0, broke, false))
+        assertEquals(listOf(BackupRoute.Step.BACKUP, BackupRoute.Step.RESERVE), BackupRoute.fallbacks(true, 0, broke, false))
+        // the reserve call is the gateway call with X-Blaze-Reserve: only
+        assertEquals("only", BackupRoute.reserveHeader(BackupRoute.Step.RESERVE, false))
+    }
+
+    @Test fun llmClientNeverSkipsTheReserveWithoutBackup() {
+        val src = HideModels19Test.srcFile("java/com/blaze/assistant/agent/LlmClient.kt").readText()
+        assertFalse(src.contains("if (e is TooSlow && !backupReady) throw"))
+        assertTrue(src.contains("BackupRoute.fallbacks(backupReady"))
+    }
 }

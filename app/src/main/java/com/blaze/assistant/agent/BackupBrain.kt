@@ -64,6 +64,7 @@ object BackupBrain {
     private val cooling = ConcurrentHashMap<String, Long>()
     /** Until when the phone's OpenCode free allowance is used up (0 = not known to be). */
     @Volatile private var freeUntil = 0L
+    @Volatile private var fetching = false
     private val log = StringBuilder()
 
     fun init(ctx: Context) {
@@ -90,16 +91,29 @@ object BackupBrain {
     @Volatile private var lastAutoTry = 0L
     private val wifiCheck = java.util.concurrent.atomic.AtomicBoolean(false)
 
-    /** Starts the one-time download in the background (once at a time); true when it was started or is running. */
-    fun startDownload(): Boolean {
+    /**
+     * Starts the one-time download in the background (once at a time); true when it was started or is running.
+     * v0.45.28: [force] = Settings › Backup brain › Download now (mobile data allowed after the person confirmed); [done]
+     * gets the result line.
+     */
+    fun startDownload(force: Boolean = false, done: ((String) -> Unit)? = null): Boolean {
         if (!installing.compareAndSet(false, true)) return true
         lastAutoTry = System.currentTimeMillis()
         scope.launch {
-            try { val r = runCatching { install(false) }.getOrElse { it.message.orEmpty() }; note("download: $r") }
+            try { val r = runCatching { install(force) }.getOrElse { it.message.orEmpty() }; note("download: $r"); done?.invoke(r) }
             finally { installing.set(false) }
         }
         return true
     }
+
+    /** v0.45.28: the download is running right now (from any path). */
+    fun downloading(): Boolean = installing.get() || fetching
+
+    /** v0.45.28: until when the phone's free allowance is used up (0 = it isn't). */
+    fun restingUntil(): Long = freeUntil
+
+    /** v0.45.28 (Settings): the status as [BackupStatus] sees it. */
+    fun status(now: Long = System.currentTimeMillis()): BackupStatus.State = BackupStatus.state(phone(), downloading(), freeUntil, now)
 
     /** Registers a callback for unmetered networks while the backup brain still has to be downloaded. */
     private fun watchWifi() {
@@ -161,6 +175,7 @@ object BackupBrain {
             if (!LinuxReadyRunner.online()) return@withLock "Offline."
             if (!force && !LinuxReadyRunner.unmetered() && !Settings.bool("backup_brain_mobile_data", false)) return@withLock "Waiting for Wi-Fi."
             val tgz = File(Linux.base(), ".dl-backup-$VERSION.tar.gz")
+            fetching = true
             try {
                 Fetch.download(listOf(URL), tgz, SHA256)
                 dir().deleteRecursively(); dir().mkdirs()
@@ -178,7 +193,7 @@ object BackupBrain {
             } catch (e: Exception) {
                 note("install failed: ${e.message}")
                 "Install failed: ${Fetch.reason(e)}"
-            }
+            } finally { fetching = false }
         }
     }
 

@@ -2175,7 +2175,7 @@ When you finish, say what you did in one short sentence.
                     val elapsed = ((System.currentTimeMillis() - t0) / 1000).toInt()
                     val req = JSONArray().put(JSONObject().put("role", "system").put("content",
                         WaitNudge.system(idle, worker, WaitNudge.firstName(Settings.greetName()), task, elapsed)))
-                    try { val c = duoContext(idle, 6); for (i in 0 until c.length()) req.put(c.get(i)) } catch (_: Exception) { }
+                    try { val c = duoContext(idle, 6); for (i in 0 until c.length()) req.put(c.get(i)) } catch (e: Exception) { com.blaze.assistant.device.CrashLog.quiet("Agent: wait line context", e) }
                     req.put(JSONObject().put("role", "user").put("content", WaitNudge.CUE))
                     LlmClient.liteTurn = true
                     val raw = try {

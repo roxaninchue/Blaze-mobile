@@ -138,26 +138,36 @@ object LlmClient {
             return if (!backupReady) cloud(reserve) else watchFirstChunk(onText != null) { cloud(reserve) }
         } catch (e: LlmException) {
             if (e.code != 401 && e.code != 403) try { com.blaze.assistant.device.CrashLog.write("Blaze Cloud failed: ${lastCloudError}") } catch (_: Throwable) { }
-            if (e is TooSlow && !backupReady) throw LlmException(Cloud.BUSY, 503)
-            if (!backupReady || ToolCalls.isShapeError(e) || !BackupRoute.moveOn(e.code, e.message.orEmpty())) throw e
             first = e
         }
-        // The backup brain: same messages, same tools; its tool calls come back as real tool_calls for the agent loop.
-        try {
-            val m = BackupBrain.complete(msgs, tools, onText, if (lane == Lane.MAIN) onThink else null)
-            lastServedBy = ""; lastServedKey = ""
-            lastRoute = "Blaze Cloud" + ModelRoute.label(pick)
-            CallState.current().errors.add("answered by the on-device backup")
-            return m
-        } catch (e: kotlinx.coroutines.CancellationException) { throw e
-        } catch (e: Exception) {
-            CallState.current().errors.add("backup: " + e.message.orEmpty().take(200))
-            try { com.blaze.assistant.device.CrashLog.write("Backup brain failed: ${e.message.orEmpty().take(200)}") } catch (_: Throwable) { }
+        // v0.45.28 (BackupRoute.fallbacks): the backup brain when it's ready, then ALWAYS the gateway's Nous reserve, before any
+        // error shows. A stream that died after a few words is asked again the same way; the new reply streams into the same
+        // bubble from the start (onText always carries the whole text so far), so it replaces the partial words.
+        val steps = BackupRoute.fallbacks(backupReady, first.code, first.message.orEmpty(), ToolCalls.isShapeError(first))
+        if (steps.isEmpty()) throw first
+        if (BackupRoute.brokeMidReply(first.message.orEmpty())) CallState.current().errors.add("stream broke mid-reply: asking again")
+        for (step in steps) when (step) {
+            BackupRoute.Step.BACKUP -> try {
+                // The backup brain: same messages, same tools; its tool calls come back as real tool_calls for the agent loop.
+                val m = BackupBrain.complete(msgs, tools, onText, if (lane == Lane.MAIN) onThink else null)
+                lastServedBy = ""; lastServedKey = ""
+                lastRoute = "Blaze Cloud" + ModelRoute.label(pick)
+                CallState.current().errors.add("answered by the on-device backup")
+                return m
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e
+            } catch (e: Exception) {
+                CallState.current().errors.add("backup: " + e.message.orEmpty().take(200))
+                try { com.blaze.assistant.device.CrashLog.write("Backup brain failed: ${e.message.orEmpty().take(200)}") } catch (_: Throwable) { }
+            }
+            BackupRoute.Step.RESERVE -> try {
+                // The Nous reserve (owner key, server-side): slower, consistent.
+                return cloud(BackupRoute.reserveHeader(BackupRoute.Step.RESERVE, true)).also { CallState.current().errors.add("answered by the reserve") }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e
+            } catch (e: LlmException) { CallState.current().errors.add("reserve: " + e.message.orEmpty().take(200)) }
+            BackupRoute.Step.CLOUD -> {}
         }
-        // The Nous reserve (owner key, server-side): slower, consistent. If it can't answer either, the first error stands.
-        return try { cloud(BackupRoute.reserveHeader(BackupRoute.Step.RESERVE, true)) }
-        catch (e: kotlinx.coroutines.CancellationException) { throw e }
-        catch (e: LlmException) { CallState.current().errors.add("reserve: " + e.message.orEmpty().take(200)); throw if (first is TooSlow) LlmException(Cloud.BUSY, 503) else first }
+        // Nothing could answer: the first error stands (a "too slow" one reads as busy).
+        throw if (first is TooSlow) LlmException(Cloud.BUSY, 503) else first
     }
 
     /** Thrown inside [watchFirstChunk] when Blaze Cloud showed no sign of life in time (the backup takes over). */

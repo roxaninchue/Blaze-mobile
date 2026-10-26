@@ -56,6 +56,26 @@ object BackupRoute {
         return true
     }
 
+    /**
+     * v0.45.28: what runs after Blaze Cloud's own call failed for good, in order. The Nous reserve on the gateway
+     * (`X-Blaze-Reserve: only`) ALWAYS gets a turn for a failure another brain can fix (busy, 5xx, 429 that isn't the
+     * allowance, too slow, no answer, a stream that died mid-reply), also when the backup brain isn't ready: before this,
+     * a phone without the backup showed "Blaze Cloud is busy" without ever asking the reserve. [shapeError] (the request
+     * itself was refused) and what [moveOn] rules out (sign-in, waiting list, allowance) get nothing.
+     */
+    fun fallbacks(backupReady: Boolean, code: Int, message: String, shapeError: Boolean): List<Step> = when {
+        shapeError || !moveOn(code, message) -> emptyList()
+        backupReady -> listOf(Step.BACKUP, Step.RESERVE)
+        else -> listOf(Step.RESERVE)
+    }
+
+    /** A stream that broke after some words arrived (the fallback's reply replaces the partial one in the same bubble). */
+    fun brokeMidReply(message: String): Boolean {
+        val t = message.lowercase()
+        return "stopped sending" in t || "mid-reply" in t || "stream ended" in t || "unexpected end of stream" in t ||
+            "connection reset" in t || "software caused connection abort" in t || "stream was reset" in t
+    }
+
     /** Has the attempt that started at [startedAt] shown a sign of life ([lastChunkAt] = latest chunk of any kind)? */
     fun alive(startedAt: Long, lastChunkAt: Long, gotFirst: Boolean, callStart: Long): Boolean =
         lastChunkAt >= startedAt || (gotFirst && callStart >= startedAt)

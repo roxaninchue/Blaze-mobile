@@ -109,6 +109,8 @@ val advancedPages = listOf(
     SettingsPage("usage", "Usage", "Tokens and estimated cost"),
     SettingsPage("device", "Device & diagnostics", "Phone health, self-check, crash report"),
     SettingsPage("backup", "Backup", "Export or import everything"),
+    // v0.45.28: the on-device backup brain (also on the Brain page).
+    SettingsPage("backup_brain", "Backup brain", "Answers on the phone when Blaze Cloud is down: status, download, wait"),
 )
 
 /**
@@ -163,7 +165,9 @@ fun SettingsScreen(start: String?, a11yOn: Boolean, onOpenAccessibility: () -> U
                 "about" -> AboutPage()
                 "advanced" -> AdvancedList { page = it }
                 // v0.25.0: one brain, Blaze Cloud. No providers, keys or models to pick.
-                "ai" -> { BrainCard { page = "account" }; AiPage(); OfflineBrainSection() }
+                // v0.45.28: the on-device backup brain's own section (status, Download now, switches, wait).
+                "ai" -> { BrainCard { page = "account" }; AiPage(); BackupBrainSection(); OfflineBrainSection() }
+                "backup_brain" -> BackupBrainSection()
                 "account" -> AccountPage(onOpen = { page = it })
                 "sync" -> CloudSyncPage(onSignIn = { page = "account" })
                 "plan" -> CheckoutPage()

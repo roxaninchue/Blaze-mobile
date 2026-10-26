@@ -27,7 +27,7 @@ class WaitNudgeTest {
 
     @Test fun names() {
         assertEquals("Sam", WaitNudge.firstName("Sam Lee"))
-        assertEquals("Lackson", WaitNudge.firstName("  Lackson "))
+        assertEquals("Mutale", WaitNudge.firstName("  Mutale "))
         assertNull(WaitNudge.firstName("")); assertNull(WaitNudge.firstName(null))
     }
 
