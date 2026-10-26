@@ -1,5 +1,7 @@
 package com.blaze.assistant.ui
 
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Pause
 import android.graphics.BitmapFactory
 import android.media.MediaPlayer
 import android.widget.Toast
