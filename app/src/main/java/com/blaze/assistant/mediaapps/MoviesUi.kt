@@ -328,7 +328,7 @@ private fun JellyfinDialog(onDone: (String) -> Unit) {
             dismiss = "Sign out", onDismiss = { Movies.removeJellyfin(); onDone("Signed out of Jellyfin.") })
         return
     }
-    var server by remember { mutableStateOf("") }; var user by remember { mutableStateOf("") }; var pass by remember { mutableStateOf("") }
+    var server by remember { mutableStateOf("") }; var user by remember { mutableStateOf("") }; var pass by remember { mutableStateOf("") }; var reveal by remember { mutableStateOf(false) }
     var err by remember { mutableStateOf("") }; var busy by remember { mutableStateOf(false) }
     BlazeDialog("Add your Jellyfin server", "Your own server only. The password is used once to sign in; Blaze keeps the sign-in encrypted on this phone.",
         confirm = if (busy) "Signing in\u2026" else "Sign in", onConfirm = {
@@ -338,8 +338,9 @@ private fun JellyfinDialog(onDone: (String) -> Unit) {
         }, dismiss = "Cancel", onDismiss = { onDone("") }) {
         BlazeTextField(server, { server = it }, "Server address (http://192.168.1.20:8096)", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
         Spacer(Modifier.height(8.dp)); BlazeTextField(user, { user = it }, "User name")
-        Spacer(Modifier.height(8.dp)); BlazeTextField(pass, { pass = it }, "Password", visualTransformation = PasswordVisualTransformation(),
+        Spacer(Modifier.height(8.dp)); BlazeTextField(pass, { pass = it }, "Password", visualTransformation = if (reveal) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
+        Text(if (reveal) "Hide password" else "Show password", color = LocalBlaze.current.accent, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp).clickable { reveal = !reveal })
         if (err.isNotBlank()) Text(err, color = LocalBlaze.current.sub, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
     }
 }

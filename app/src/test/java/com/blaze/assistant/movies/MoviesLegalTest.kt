@@ -10,7 +10,7 @@ import java.io.File
  * tunnel. The only Vega link allowed anywhere is the vega-app source repo in THIRD_PARTY_NOTICES.md (Apache-2.0 attribution).
  */
 class MoviesLegalTest {
-    private val app = listOf(File("src/main"), File("app/src/main")).first { it.isDirectory }
+    private val app = listOf(File("src/main"), File("app/src/main")).first { it.isDirectory }.absoluteFile
     private val repoRoot = app.parentFile.parentFile.parentFile
     private val banned = Regex("""(?i)zenda|vega-org|vega-providers|vegamovies|moviesmod|hdhub|multimovies|uhdmovies|katmovie|goodbyedpi|byedpi|zapret|warp-plus|cloudflare warp""")
     private val okHosts = setOf("archive.org", "blazeinchue.pages.dev", "github.com", "raw.githubusercontent.com", "gitlab.com", "192.168.1.20", "schemas.android.com")

@@ -71,7 +71,7 @@ class StageToolsTest {
         val r = StageTools.RULE
         assertTrue(r.contains("study 30 min")); assertTrue(r.contains("not a reminder")); assertTrue(r.contains("Plain questions"))
         assertTrue(r.contains("open_view only when the user asks")); assertTrue(r.contains("Open in full view"))
-        assertTrue(r.length < 1100)
+        assertTrue(r.length < 1300)   // 0.46.2: + movies on the video card
     }
 
     @Test fun routingStageFirst() {

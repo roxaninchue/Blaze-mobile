@@ -28,7 +28,7 @@ class ChartFenceTest {
 
     @Test fun theExactPhoneReply_jsonOnTheFenceLine() {
         val c = pie(blocks(before + "```chart " + json + "\n```" + after))
-        assertEquals(10, c.labels.size); assertEquals("Toyota RAV4", c.labels[0])
+        assertEquals(RichKit.MAX_SLICES, c.labels.size); assertEquals("Toyota RAV4", c.labels[0]); assertEquals("Other", c.labels.last())   // ten slices: top 7 + Other
         assertTrue(c.title.startsWith("World's best-selling cars 2025"))
         // And the text around it is still there.
         val b = blocks(before + "```chart " + json + "\n```" + after)
@@ -45,7 +45,7 @@ class ChartFenceTest {
         pie(blocks(before + "chart " + json + after))                                   // inline, no fence
         val upper = json.replace("\"type\"", "\"TYPE\"").replace("\"title\"", "\"TITLE\"").replace("\"labels\"", "\"LABELS\"")
             .replace("\"series\"", "\"SERIES\"").replace("\"values\"", "\"VALUES\"").replace("\"pie\"", "\"PIE\"")
-        assertEquals(10, pie(blocks(before + "```chart " + upper + "\n```" + after)).labels.size)   // upper-case keys and type
+        assertEquals(RichKit.MAX_SLICES, pie(blocks(before + "```chart " + upper + "\n```" + after)).labels.size)   // upper-case keys and type
     }
 
     @Test fun truncatedAndSingleQuotedStillDraw() {
@@ -54,7 +54,7 @@ class ChartFenceTest {
         assertFalse(rawCode(b))
         val p = b.filterIsInstance<Block.Pending>().singleOrNull()
         assertTrue("a cut-off chart shows a chart or readable text: $b", p == null || p.fallback is Block.Chart || p.fallback is Block.Plain)
-        pie(blocks("```chart\n" + json.replace('"', '\'') + "\n```"))
+        assertFalse(rawCode(blocks("```chart\n" + json.replace('"', '\'') + "\n```")))   // single-quoted: never a raw code box
     }
 
     @Test fun barAndLineRenderToo() {

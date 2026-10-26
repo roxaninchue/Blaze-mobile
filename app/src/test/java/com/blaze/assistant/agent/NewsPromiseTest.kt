@@ -35,7 +35,7 @@ class NewsPromiseTest {
         assertTrue(WaitNudge.skip(Duo.Who.BLAZE, user))
         assertFalse(WaitNudge.skip(Duo.Who.BLAZE, "find me cheap flights to Lusaka"))
         assertNull(WaitNudge.clean(bad))
-        assertEquals("Halo is on it and will be back with your plan shortly.", WaitNudge.clean("Halo is on it and will be back with your plan shortly."))
+        assertEquals("Halo is planning your week.", WaitNudge.clean("Halo is planning your week."))   // 0.46.2: plain factual lines only
     }
 
     @Test fun haloSpeaksInFirstPerson() {
