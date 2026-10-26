@@ -56,7 +56,7 @@ class ProviderSandbox(private val http: SandboxHttp = DefaultSandboxHttp, privat
         val exec = Executors.newSingleThreadExecutor { r -> Thread(r, "blaze-provider-js").apply { isDaemon = true } }
         val dispatcher = exec.asCoroutineDispatcher()
         val done = CompletableDeferred<Result>()
-        val job = scope.launch(dispatcher) {
+        scope.launch(dispatcher) {
             var q: QuickJs? = null
             try {
                 q = QuickJs.create(dispatcher)
@@ -106,8 +106,9 @@ class ProviderSandbox(private val http: SandboxHttp = DefaultSandboxHttp, privat
         }
         val r = withTimeoutOrNull(limits.timeoutMs) { done.await() }
         if (r != null) { exec.shutdown(); return r }
-        // Timed out: cancel (works while it waits on the network); a busy loop keeps its daemon thread, which we abandon.
-        job.cancel()
+        // Timed out: the call is abandoned on its own daemon thread and closes its engine there when (if) it ends. Never cancel
+        // the job from here: quickjs-kt's cancellation touches the native runtime from this thread while evaluate() is still
+        // running on the JS thread, which crashed the process (SIGSEGV in JS_DefineProperty, CI run 40341276397).
         val settled = withTimeoutOrNull(500) { done.await() }
         if (settled == null) abandoned.incrementAndGet()
         exec.shutdown()
