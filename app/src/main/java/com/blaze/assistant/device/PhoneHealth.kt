@@ -66,7 +66,10 @@ object PhoneHealth {
         val unused = list.filter { it.lastUsed in 1 until now - 30L * 86_400_000L || it.lastUsed == 0L }.sortedByDescending { it.sizeMb }
         return when (a.optString("detail", "report")) {
             "unused_apps" -> if (!usage) "Needs Usage access (Settings › Apps › Special access › Usage access › Blaze)." else if (unused.isEmpty()) "Every app was used in the last 30 days."
-                else "Unused for 30+ days (app size only; data and cache come on top):\n" + unused.take(30).joinToString("\n") { "${it.label} · ${it.sizeMb} MB · " +
+                // 0.46.0: every unused app (the old cap of 30 hid 12 of 42); an app whose size is unknown says so instead of being left out.
+                else "Unused for 30+ days, ${unused.size} apps (app size only; data and cache come on top" +
+                    unused.count { it.sizeMb <= 0 }.let { n -> if (n > 0) "; $n without a known size" else "" } + "):\n" +
+                    unused.take(60).joinToString("\n") { "${it.label} · ${if (it.sizeMb > 0) "${it.sizeMb} MB" else "size unknown"} · " +
                     if (it.lastUsed == 0L) "not opened in 90 days" else "last opened ${(now - it.lastUsed) / 86_400_000L} days ago" }
             "top_apps" -> if (!usage) "Needs Usage access." else list.filter { it.fgMs > 60_000 }.sortedByDescending { it.fgMs }.take(10)
                 .joinToString("\n") { "${it.label}: ${it.fgMs / 3_600_000}h ${(it.fgMs / 60_000) % 60}m this week" }.ifBlank { "No app use recorded this week." }

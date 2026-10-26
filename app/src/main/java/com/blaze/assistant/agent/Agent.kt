@@ -1481,6 +1481,9 @@ When you finish, say what you did in one short sentence.
         val turnOk = java.util.Collections.synchronizedList(mutableListOf<ClaimGuard.Call>())
         /** v0.44.0: every tool call this turn with its verified status (ClaimCheck reviews the final reply against it). */
         val turnDone = java.util.Collections.synchronizedList(mutableListOf<ClaimCheck.Done>())
+        /** 0.46.0: table cards built straight from tool results this turn (ToolCards), attached under the final reply. */
+        val turnCards = java.util.Collections.synchronizedList(mutableListOf<ToolCards.Card>())
+        @Volatile var richRepaired = false
         /** v0.45.13: the alarm / timer results of this turn (TimeEcho checks the reply's time against them). */
         val turnSetResults = java.util.Collections.synchronizedList(mutableListOf<String>())
         /** v0.45.13: GoalCheck's one "opening is only step 1" nudge per turn. */
@@ -2987,6 +2990,8 @@ When you finish, say what you did in one short sentence.
                     ViewRouter.followOnHint(curDesign.title, curDesign.kind, curDesign.path) else ""
                 turnOk.clear()
                 turnDone.clear()
+                turnCards.clear(); richRepaired = false
+                LlmClient.richTurn = RichRepair.richTurn(lastUserText())
                 turnSetResults.clear(); goalNudged = false
                 turnBook = VerifyBook()
                 oneShot.clear(); loopGuard.clear()
@@ -3481,6 +3486,18 @@ When you finish, say what you did in one short sentence.
                         if (check is ClaimCheck.Outcome.Rewrite) { textOut = check.text; reply.put("content", textOut); pendingFollowups = emptyList(); rewroteClaim = true }
                         // 0.46.0: the user only shared news and nothing ran: no "locked in / coming / almost ready" promises.
                         NewsPromise.clean(textOut, lastUserText(), synchronized(turnDone) { turnDone.isNotEmpty() })?.let { textOut = it; reply.put("content", textOut); pendingFollowups = emptyList() }
+                        // 0.46.0: tool data as exact cards, and one silent re-ask for a rich block that still can't be drawn.
+                        synchronized(turnCards) { turnCards.toList() }.takeIf { it.isNotEmpty() }?.let { cards -> textOut = ToolCards.attach(textOut, cards); reply.put("content", textOut) }
+                        if (!richRepaired && Settings.bool("rich_replies", true)) RichRepair.broken(textOut).firstOrNull()?.let { b ->
+                            richRepaired = true
+                            val fixed = try {
+                                val req = JSONArray().put(JSONObject().put("role", "user").put("content", RichRepair.prompt(b)))
+                                LlmClient.richTurn = true
+                                kotlinx.coroutines.withTimeoutOrNull(12_000L) { LlmClient.complete(req, null, null, null, LlmClient.Lane.BACKGROUND) }
+                                    ?.let { RichRepair.fixedBlock(b.kind, (it.opt("content") as? String).orEmpty()) }
+                            } catch (e: CancellationException) { throw e } catch (e: Exception) { com.blaze.assistant.device.CrashLog.quiet("Agent: rich repair", e); null }
+                            if (fixed != null) { textOut = RichRepair.splice(textOut, b, fixed); reply.put("content", textOut) }
+                        }
                         // 0.45.19-speed: while Blaze Phone is in play, "booked / paid / confirmed" needs a phone_read THIS turn that saw a
                         // confirmation; a status question counts too (device test: "Booking confirmed!" with nothing booked).
                         run {
@@ -3748,6 +3765,9 @@ When you finish, say what you did in one short sentence.
                         // desktop port, next alarm, file there); the model sees [verified=…] on every result.
                         // v0.45.2 (VerifyPolicy): risky actions and strict mode wait for the check as before; other probed actions
                         // get QUICK_MS, then the check finishes in the background and flips the receipt when it ends.
+                        // 0.46.0: a list result becomes an exact table card (no retyped rows); the model writes only the comment.
+                        try { ToolCards.card(name, args, result)?.let { card -> turnCards += card; LlmClient.richTurn = true; result = result.trimEnd() + "\n" + ToolCards.NOTE } }
+                        catch (e: Exception) { com.blaze.assistant.device.CrashLog.quiet("Agent: tool card", e) }
                         val book = turnBook
                         val strictV = VerifyPolicy.strict()
                         val vMode = VerifyPolicy.mode(name, strictV)

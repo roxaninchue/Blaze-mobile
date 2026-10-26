@@ -25,6 +25,8 @@ class CallState(val parent: CallState? = null) {
     @Volatile var lite = false
     @Volatile var quick = false
     @Volatile var heavy = false
+    /** 0.46.0: this turn is likely to write a rich block (table / chart…): a lower temperature (RichRepair.TEMPERATURE). */
+    @Volatile var rich = false
     @Volatile var turnModel: TurnModel? = null
 
     /** Wall-clock time of the latest streamed chunk of a call in this state (or a child's). */

@@ -57,6 +57,9 @@ object LlmClient {
     /** v0.44.0: the agent loop is on an action turn (ModelRoute.heavy): tool calls go to the strong lineup. */
     var heavyTurn: Boolean get() = CallState.current().heavy; set(v) { CallState.current().heavy = v }
 
+    /** 0.46.0: a rich-block turn (RichRepair): requests carry a low temperature for consistent JSON. */
+    var richTurn: Boolean get() = CallState.current().rich; set(v) { CallState.current().rich = v }
+
     /** True for a chat-lane turn (no tools, short prompt): Auto prefers small fast models for it. */
     var liteTurn: Boolean get() = CallState.current().lite; set(v) { CallState.current().lite = v }
 
@@ -354,6 +357,7 @@ object LlmClient {
             put("model", t.model)
             put("messages", messages)
             if (onText != null) put("stream", true)
+            if (richTurn) put("temperature", RichRepair.TEMPERATURE)
             val quick = quickTurn && Settings.bool("quick_think", true)
             if (quick && t.pid == "openrouter") put("reasoning", JSONObject().put("effort", "low"))
             if (quick && t.pid == "gemini" && !thoughts) put("reasoning_effort", "low")

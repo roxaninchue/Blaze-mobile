@@ -6,6 +6,11 @@
 - Timers are real: they keep exact time from their end time, ring with the app closed (exact alarm), show a countdown on the lock screen with Pause and Stop, and pomodoros roll from focus to break by themselves.
 - Smooth on every phone: only position, size and fade animate; phones with little memory, few cores or animations turned off get short cross-fades only. The timer redraws once a second, never per frame.
 - Blaze tries the Stage first and opens a full view (Music, Video, Learn…) only when you ask for it or the Stage can't host it; the full views are all still there.
+- Your Stage layout stays: where you put things, their sizes, hidden bars, open widgets and how the chat sits are saved and come back exactly after leaving or closing Blaze, until you tap Reset layout or ask Blaze for the original layout. A turned screen puts free-floating widgets back in their docks; a saved layout that can't be read falls back to the normal chat.
+- Tables, charts, choices and forms draw on the first try: a block written slightly wrong (the kind word inside the fence or inline, single quotes, unquoted keys, or a long table cut off midway) is repaired, and one that still can't be read gets one quiet fix from the model before it settles. Raw card code is never shown in a grey box; at worst you get the rows as a plain table or text. Rows with a missing value show "—" instead of disappearing.
+- Lists that come from Blaze's own tools (like unused apps with their sizes) are drawn as an exact table from the tool's data instead of being retyped, and show every app (the old limit of 30 is gone); apps without a known size are marked.
+- Tool calls written as text ("Tool call: memory_search {…}") are run for real and never shown in a bubble.
+- @halo: only Halo answers, in the first person. Sharing news ("I'm making a big update…") is no longer treated as a job: no "it's locked in / coming your way" promises when nothing is being built, and no wait line from Blaze.
 - Updates in place from 0.45.26 to 0.45.29.
 
 ## v0.45.29: Blaze Phone home screen removed, real replies only, cleaner chat bubbles, Tidy up that doesn't crash, a much better browser for tasks, "yes" means the newest offer (versionCode 176)
