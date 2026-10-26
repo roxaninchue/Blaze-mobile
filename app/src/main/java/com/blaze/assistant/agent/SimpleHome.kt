@@ -82,13 +82,23 @@ object SimpleHome {
 
     // ---------------- @blaze / @halo / @all ----------------
 
-    val TALK_TO = listOf("blaze", "halo", "all")
+    /** v0.45.28: the arc offers Blaze and Halo; Halo x Blaze ("all") is picked automatically per message, see [tagged]. */
+    val TALK_TO = listOf("blaze", "halo")
     private val anyTag = Regex("(?i)(^|\\s)@(all|both|everyone|duo|blaze|halo)\\b")
 
-    /** The message as sent: "@halo …" / "@all …" in front unless it already names someone; Blaze needs no tag. Commands are left alone. */
+    /**
+     * The message as sent. A message that already names someone (@blaze / @halo / @all) and commands are left alone.
+     * v0.45.28, Halo x Blaze is automatic instead of a third choice on the arc:
+     *  - a message that asks for both of them ("what do you both think", "Blaze and Halo, …") gets "@all";
+     *  - a creative, multi-phase job ([Duo.isTeamTask]) goes untagged, so the two team up on it (Duo TEAM) whoever is picked;
+     *  - otherwise Halo gets "@halo" and Blaze needs no tag.
+     * An old saved "all" pick counts as Blaze (the automatic rules above still bring Halo in when it fits).
+     */
     fun tagged(text: String, who: String): String {
         val t = text.trim()
-        if (t.isEmpty() || t.startsWith("/") || who == "blaze" || anyTag.containsMatchIn(t)) return t
-        return if (who in TALK_TO) "@$who $t" else t
+        if (t.isEmpty() || t.startsWith("/") || anyTag.containsMatchIn(t)) return t
+        if (Duo.wantsBoth(t)) return "@all $t"
+        if (Duo.isTeamTask(t)) return t
+        return if (who == "halo") "@halo $t" else t
     }
 }

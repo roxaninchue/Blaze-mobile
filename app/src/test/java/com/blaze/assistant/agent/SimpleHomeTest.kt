@@ -1,6 +1,7 @@
 package com.blaze.assistant.agent
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -39,10 +40,28 @@ class SimpleHomeTest {
 
     @Test fun talkToTags() {
         assertEquals("@halo hi there", SimpleHome.tagged("hi there", "halo"))
-        assertEquals("@all plan a trip", SimpleHome.tagged("plan a trip", "all"))
+        // v0.45.28: "all" is no longer a pick; an old saved "all" counts as Blaze.
+        assertEquals("plan a trip", SimpleHome.tagged("plan a trip", "all"))
         assertEquals("hi", SimpleHome.tagged("hi", "blaze"))
         assertEquals("/music", SimpleHome.tagged("/music", "halo"))
         assertEquals("hey @blaze do it", SimpleHome.tagged("hey @blaze do it", "halo"))
+    }
+
+    @Test fun haloXBlazeIsAutomatic() {
+        assertEquals(listOf("blaze", "halo"), SimpleHome.TALK_TO)
+        // Asked for both: @all whoever is picked.
+        assertEquals("@all what do you both think?", SimpleHome.tagged("what do you both think?", "blaze"))
+        assertEquals("@all Blaze and Halo, settle this", SimpleHome.tagged("Blaze and Halo, settle this", "halo"))
+        // A creative multi-phase job goes untagged so the duo teams up on it (Duo TEAM), even with Halo picked.
+        val story = "write a long story about a dragon"
+        assertTrue(Duo.isTeamTask(story))
+        assertEquals(story, SimpleHome.tagged(story, "halo"))
+        assertEquals(Duo.Mode.TEAM, Duo.route(SimpleHome.tagged(story, "halo")).mode)
+        // Everything else: Halo alone when Halo is picked, Blaze alone otherwise.
+        assertEquals("@halo set an alarm for 6", SimpleHome.tagged("set an alarm for 6", "halo"))
+        assertEquals(Duo.Mode.BLAZE, Duo.route(SimpleHome.tagged("set an alarm for 6", "all")).mode)
+        assertFalse(Duo.wantsBoth("open twitter"))
+        assertTrue(Duo.wantsBoth("Halo x Blaze, help me"))
     }
 
     @Test fun draftsAndSees() {

@@ -304,6 +304,11 @@ private fun LiveCamera(start: Mode, origin: Origin, attachTo: File?, chat: Strin
     var evUpper by remember { mutableIntStateOf(0) }
     var evStep by remember { mutableFloatStateOf(0f) }
     val lastHw = remember { floatArrayOf(-1f) }
+    // v0.45.28: the back camera to open (a logical multi-camera when there is one) and a separate ultrawide for below 1x.
+    var backId by remember { mutableStateOf<String?>(null) }
+    var ultra by remember { mutableStateOf<Pair<String, Float>?>(null) }
+    var onUltra by remember { mutableStateOf(false) }
+    val settledZoom = remember { floatArrayOf(1f) }
     val previewRef = remember { arrayOfNulls<PreviewView>(1) }
     val zoomAnim = remember { Animatable(1f) }
 
@@ -335,13 +340,29 @@ private fun LiveCamera(start: Mode, origin: Origin, attachTo: File?, chat: Strin
             } else { evLower = 0; evUpper = 0 }
         } catch (_: Exception) { evLower = 0; evUpper = 0 }
     }
-    fun zoomRange(): Pair<Float, Float> = CameraZoom.minTotal(camMin) to CameraZoom.maxTotal(hwMax, lens == "front")
+    /** The lowest zoom: the bound camera's own minimum, or the separate ultrawide's relative zoom (0.5 / 0.6). */
+    fun effMin(): Float = ultra?.takeIf { lens == "back" }?.second?.let { minOf(it, camMin) } ?: camMin
+    fun zoomRange(): Pair<Float, Float> = CameraZoom.minTotal(effMin()) to CameraZoom.maxTotal(hwMax, lens == "front")
+    fun selectorFor(l: String): CameraSelector {
+        if (l == "front") return CameraSelector.DEFAULT_FRONT_CAMERA
+        val id = (if (onUltra) ultra?.first else null) ?: backId ?: return CameraSelector.DEFAULT_BACK_CAMERA
+        return CameraLenses.selector(id)
+    }
     /** Sets the total zoom: the lens takes up to its max (only when that part changed), the preview scale does the rest. */
     fun setZoom(r: Float) {
         val (lo, hi) = zoomRange()
         val z = CameraZoom.clamp(r, lo, hi)
         zoom = z
-        val hw = CameraZoom.split(z, hwMax).hw
+        // v0.45.28: below 1x on a phone whose main camera stops at 1x, switch to the separate ultrawide (and back).
+        val u = ultra
+        if (lens == "back" && u != null) {
+            val want = CameraZoom.useUltraWide(z, onUltra)
+            if (want != onUltra) {
+                onUltra = want; lastHw[0] = -1f
+                try { controller.cameraSelector = selectorFor("back") } catch (e: Exception) { CameraSupport.log("ultrawide switch failed", e); onUltra = false }
+            }
+        }
+        val hw = if (onUltra && u != null) CameraZoom.ultraWideHw(z, u.second) else CameraZoom.split(z, hwMax).hw
         if (abs(hw - lastHw[0]) > 0.0005f) {
             lastHw[0] = hw
             try { controller.setZoomRatio(hw) } catch (e: Exception) { CameraSupport.log("zoom failed", e) }
@@ -366,18 +387,35 @@ private fun LiveCamera(start: Mode, origin: Origin, attachTo: File?, chat: Strin
         focus = o; focusOk = null; focusTouch = SystemClock.uptimeMillis()
         if (ev != 0) setEv(0)
         try {
-            val action = FocusMeteringAction.Builder(v.meteringPointFactory.createPoint(x, y)).setAutoCancelDuration(5, TimeUnit.SECONDS).build()
+            // v0.45.28: a smaller spot at high zoom, and focus + exposure + white balance together.
+            val pt = v.meteringPointFactory.createPoint(x, y, CameraZoom.meteringSize(zoom))
+            val action = FocusMeteringAction.Builder(pt, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE or FocusMeteringAction.FLAG_AWB)
+                .setAutoCancelDuration(5, TimeUnit.SECONDS).build()
             val f = controller.cameraControl?.startFocusAndMetering(action)
             if (f == null) { focusOk = false; return }
             f.addListener({ focusOk = try { f.get().isFocusSuccessful } catch (_: Exception) { false } }, ContextCompat.getMainExecutor(ctx))
         } catch (e: Exception) { CameraSupport.log("tap to focus failed", e); focusOk = false }
     }
+    /**
+     * v0.45.28: once the zoom stops moving, focus again on the middle of what's on screen (a small spot at high zoom), then
+     * back to continuous autofocus. Fixes soft pictures after zooming in (and after a logical camera moved to its telephoto).
+     */
+    fun centreFocus() {
+        val v = previewRef[0] ?: return
+        if (!ready || focus != null) return
+        try {
+            val pt = v.meteringPointFactory.createPoint(v.width / 2f, v.height / 2f, CameraZoom.meteringSize(zoom))
+            val action = FocusMeteringAction.Builder(pt, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE)
+                .setAutoCancelDuration(3, TimeUnit.SECONDS).build()
+            controller.cameraControl?.startFocusAndMetering(action)
+        } catch (e: Exception) { CameraSupport.log("refocus failed", e) }
+    }
     fun applyLens(want: String): Boolean {
         val l = CameraFlow.startLens(hasBack, hasFront, want) ?: return false
-        if (l != lens) { zoom = 1f; focus = null; ev = 0; dialOpen = false }
+        if (l != lens) { zoom = 1f; focus = null; ev = 0; dialOpen = false; onUltra = false }
         lastHw[0] = -1f
         lens = l
-        controller.cameraSelector = if (l == "front") CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
+        controller.cameraSelector = try { selectorFor(l) } catch (_: Exception) { if (l == "front") CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA }
         return true
     }
 
@@ -386,6 +424,14 @@ private fun LiveCamera(start: Mode, origin: Origin, attachTo: File?, chat: Strin
         init.addListener({
             try {
                 init.get()
+                // v0.45.28: which back camera to open, and whether a separate ultrawide can take below-1x.
+                try {
+                    val back = CameraLenses.backLenses(ctx)
+                    backId = CameraZoom.pickBack(back)
+                    val main = back.firstOrNull { it.id == backId } ?: CameraLenses.defaultBack(ctx, back)
+                    ultra = CameraZoom.ultraWide(main, back)
+                    CameraSupport.log("Blaze Camera lenses: ${back.joinToString { "${it.id}${if (it.logical) "L" else ""} ${it.minZoom}-${it.maxZoom} eq=${"%.2f".format(it.eq)}" }} pick=$backId ultra=$ultra")
+                } catch (e: Throwable) { CameraSupport.log("lens list failed", e); backId = null; ultra = null }
                 refreshLensInfo()
                 if (!applyLens(lens)) { CameraSupport.log("Blaze Camera: no lens"); onDone(false, "NoCamera|No available camera on this device"); return@addListener }
                 controller.bindToLifecycle(owner)
@@ -402,7 +448,8 @@ private fun LiveCamera(start: Mode, origin: Origin, attachTo: File?, chat: Strin
         // v0.30.x: also the lens's zoom range (min < 1 = an ultrawide; max = where digital zoom takes over).
         val obs = androidx.lifecycle.Observer<androidx.camera.core.ZoomState> { zs ->
             refreshLensInfo()
-            if (zs != null && (zs.minZoomRatio != camMin || zs.maxZoomRatio != hwMax)) {
+            // On the separate ultrawide its own range isn't the main camera's: keep the main one's.
+            if (zs != null && !onUltra && (zs.minZoomRatio != camMin || zs.maxZoomRatio != hwMax)) {
                 camMin = zs.minZoomRatio; hwMax = zs.maxZoomRatio
                 lastHw[0] = -1f; setZoom(zoom)
             }
@@ -543,6 +590,10 @@ private fun LiveCamera(start: Mode, origin: Origin, attachTo: File?, chat: Strin
     }
 
     LaunchedEffect(focus, focusTouch) { if (focus != null) { delay(3000); focus = null } }
+    LaunchedEffect(zoom) {
+        delay(CameraZoom.SETTLE_MS)
+        if (CameraZoom.refocusAfter(settledZoom[0], zoom)) { settledZoom[0] = zoom; centreFocus() }
+    }
     LaunchedEffect(dialOpen, dialTouch) { if (dialOpen) { delay(3500); dialOpen = false } }
 
     val proActions = remember {
@@ -564,7 +615,7 @@ private fun LiveCamera(start: Mode, origin: Origin, attachTo: File?, chat: Strin
         )
     }
     val (zLo, zHi) = zoomRange()
-    val pro = CameraProState(zoom = zoom, minZoom = zLo, maxZoom = zHi, hwMax = hwMax, presets = CameraZoom.presets(camMin, zHi),
+    val pro = CameraProState(zoom = zoom, minZoom = zLo, maxZoom = zHi, hwMax = hwMax, presets = CameraZoom.presets(effMin(), zHi),
         dialOpen = dialOpen, grid = grid && m != Mode.SCAN, timer = timer, countdown = countdown, focus = focus, focusOk = focusOk,
         evIndex = ev, evLower = evLower, evUpper = evUpper, evStep = evStep, tools = !CameraModes.live(m))
 

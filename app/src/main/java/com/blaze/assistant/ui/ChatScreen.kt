@@ -201,6 +201,8 @@ fun ChatScreen() {
     var input by remember { mutableStateOf(TextFieldValue("")) }
     // v0.39.0 Simple mode: who the next message goes to (@blaze / @halo / @all), typed or spoken.
     var talkTo by rememberSaveable { mutableStateOf("blaze") }
+    // v0.45.28: "Halo x Blaze" is no longer a pick (it joins in by itself): a restored "all" becomes Blaze.
+    if (talkTo != TalkArcMath.normalize(talkTo)) talkTo = TalkArcMath.normalize(talkTo)
     // v0.43.0: the Blaze / Halo / All arc, opened from the header orb (replaces the "Talk to" pills, in both modes).
     var arcOpen by remember { mutableStateOf(false) }
     var quote by rememberSaveable { mutableStateOf("") }
@@ -294,7 +296,8 @@ fun ChatScreen() {
     }
     fun onMic() {
         when {
-            voiceState == Voice.State.LISTENING -> Voice.cancelListening()
+            // v0.45.28: a tap while listening stops and sends what was heard (it used to throw it away).
+            voiceState == Voice.State.LISTENING -> Voice.stopByTap()
             voiceState == Voice.State.SPEAKING -> Voice.stopSpeaking()
             ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED -> startVoice()
             else -> micPermission.launch(Manifest.permission.RECORD_AUDIO)
@@ -665,7 +668,7 @@ fun ChatScreen() {
                 if (chatBody && viewShowing.isEmpty() && (plusOpen || showViews || arcOpen)) SheetScrim { plusOpen = false; showViews = false; arcOpen = false }
             }
             if (chatBody && viewShowing.isEmpty()) {
-                if (voiceState == Voice.State.LISTENING) ListeningStrip()
+                if (voiceState == Voice.State.LISTENING) ListeningStrip(onStop = { Voice.stopByTap() })
                 LaunchedEffect(a11yOn) { if (a11yOn) Settings.setBool("a11y_seen", true) }
                 LaunchedEffect(control) { if (control == com.blaze.assistant.phone.PhoneControl.State.CONNECTED) Settings.setBool("a11y_seen", true) }
                 // v0.20.0: say which way it dropped and fix it in one tap (Blaze's own switch, not the whole list).
@@ -1372,12 +1375,14 @@ private fun BlinkLabel(text: String) {
 }
 
 @Composable
-private fun ListeningStrip() {
+private fun ListeningStrip(onStop: () -> Unit) {
     val c = LocalBlaze.current
     val partial by Voice.partial.collectAsState()
     val level by Voice.level.collectAsState()
     val w by animateFloatAsState(0.15f + level * 0.85f, label = "lvl")
-    Column(Modifier.fillMaxWidth().background(c.paper).hairlineTop(c.hair).padding(horizontal = 20.dp, vertical = 14.dp)) {
+    // v0.45.28: tap the strip to stop listening and send.
+    Column(Modifier.fillMaxWidth().background(c.paper).hairlineTop(c.hair).clickable(onClickLabel = "Stop listening and send") { onStop() }
+        .padding(horizontal = 20.dp, vertical = 14.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             BlinkLabel("Listening")
             Spacer(Modifier.width(12.dp))

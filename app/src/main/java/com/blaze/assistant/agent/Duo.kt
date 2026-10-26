@@ -52,6 +52,11 @@ object Duo {
     private val longHint = Regex("(?i)\\b(long|detailed|full|complete|epic|in depth|in-depth|multi[- ]part|series|step by step)\\b")
     private val phoneish = Regex("(?i)\\b(open|turn on|turn off|switch on|switch off|call|text|send|message|whatsapp|alarm|timer|wifi|wi-fi|bluetooth|flashlight|torch|volume|brightness|settings|install|uninstall|screenshot|play|pause|skip)\\b")
 
+    private val bothCue = Regex("(?i)\\b(both of you|you both|you two|the two of you|blaze (and|&|x|×) halo|halo (and|&|x|×) blaze)\\b")
+
+    /** v0.45.28: the message asks for Blaze and Halo together (what the old "Halo x Blaze" arc choice did for every message). */
+    fun wantsBoth(text: String): Boolean = bothCue.containsMatchIn(text)
+
     /** A creative or multi-phase job worth two minds. Phone actions never are. */
     fun isTeamTask(text: String): Boolean {
         val t = text.trim()

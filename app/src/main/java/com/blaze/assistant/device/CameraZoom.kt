@@ -199,6 +199,60 @@ object CameraZoom {
         return (cx + (x - cx) / s) to (cy + (y - cy) / s)
     }
 
+    // ---------------------------------------------------------------- v0.45.28: lenses and focus at high zoom
+
+    /**
+     * One back camera as Camera2 describes it. [eq] = focal length / sensor width (bigger = narrower view), so two
+     * lenses' [eq] ratio is their zoom ratio to each other. [minZoom]/[maxZoom] are its CONTROL_ZOOM_RATIO_RANGE (1..max
+     * before Android 11).
+     */
+    data class Lens(val id: String, val logical: Boolean, val minZoom: Float, val maxZoom: Float, val eq: Float)
+
+    /**
+     * The back camera to open: a logical multi-camera first (setZoomRatio then moves to the ultrawide below 1x and the
+     * telephoto at high zoom by itself), the one with the widest zoom range among those; null = keep CameraX's default.
+     */
+    fun pickBack(lenses: List<Lens>): String? {
+        val logical = lenses.filter { it.logical && it.maxZoom >= 1f }
+        if (logical.isEmpty()) return null
+        return logical.maxByOrNull { (if (it.minZoom > 0f) it.maxZoom / it.minZoom else it.maxZoom) }?.id
+    }
+
+    /** A separate lens counts as an ultrawide when it sees at least this much wider than the main one (≤ 0.7x, as the 0.5x preset needs). */
+    const val UW_MAX_RATIO = 0.7f
+
+    /**
+     * The separate ultrawide to switch to below 1x, as (camera id, its zoom relative to the main lens, e.g. 0.5 / 0.6),
+     * when the main camera can't go below 1x by itself. null when the main camera already can, or there is none.
+     */
+    fun ultraWide(main: Lens?, lenses: List<Lens>): Pair<String, Float>? {
+        if (main == null || main.minZoom < 0.95f || main.eq <= 0f) return null
+        val best = lenses.filter { it.id != main.id && it.eq > 0f && it.eq / main.eq <= UW_MAX_RATIO }.minByOrNull { it.eq } ?: return null
+        val r = ((best.eq / main.eq) * 10f).roundToInt() / 10f
+        return best.id to r.coerceIn(0.3f, UW_MAX_RATIO)
+    }
+
+    /** Use the ultrawide for this total zoom? With a little hysteresis so a pinch around 1x doesn't flip lenses back and forth. */
+    fun useUltraWide(total: Float, onUltraWide: Boolean): Boolean = if (onUltraWide) total < 1f else total < 0.95f
+
+    /** On the separate ultrawide (relative zoom [uw]), the zoom ratio its own camera is set to for [total]. */
+    fun ultraWideHw(total: Float, uw: Float): Float = if (uw <= 0f) 1f else (total / uw).coerceIn(1f, 1f / uw)
+
+    /**
+     * The focus / metering spot as a fraction of the preview: the default 0.15 at 1x, smaller as the zoom grows, so at
+     * 5–10x the camera focuses on what's in the middle of the zoomed view rather than an average of a wide patch.
+     */
+    fun meteringSize(total: Float): Float {
+        val t = if (total.isNaN() || total < 1f) 1f else total
+        return (0.15f / kotlin.math.sqrt(t)).coerceIn(0.05f, 0.15f)
+    }
+
+    /** Refocus on the centre once the zoom settles after it moved this much (or crossed a lens switch). */
+    fun refocusAfter(prev: Float, now: Float): Boolean = !prev.isNaN() && !now.isNaN() && abs(now - prev) >= max(0.05f, prev * 0.08f)
+
+    /** How long the zoom must stay still before that refocus (ms). */
+    const val SETTLE_MS = 400L
+
     // ---------------------------------------------------------------- exposure
 
     /** Slider fraction 0..1 (bottom..top) to an exposure-compensation index in [lower, upper]. */

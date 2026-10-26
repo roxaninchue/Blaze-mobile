@@ -235,6 +235,17 @@ object Voice {
     /** v0.39.0 hold-to-talk: the finger came off, so stop recording and deliver what was said. */
     fun stopListening() { try { recognizer?.stopListening() } catch (_: Exception) { } }
 
+    /**
+     * v0.45.28: a tap on the mic while listening. Stop and deliver what was said; if the recogniser hasn't answered
+     * [STOP_GRACE_MS] later (some phones never do after stopListening), cancel so the mic is never stuck on.
+     */
+    const val STOP_GRACE_MS = 2_500L
+    fun stopByTap() {
+        val r = recognizer ?: run { cancelListening(); return }
+        stopListening()
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ if (recognizer === r) cancelListening() }, STOP_GRACE_MS)
+    }
+
     fun cancelListening() {
         recognizer?.let { it.cancel(); it.destroy() }
         recognizer = null

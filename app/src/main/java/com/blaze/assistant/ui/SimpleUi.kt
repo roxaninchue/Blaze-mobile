@@ -120,13 +120,14 @@ fun ReplyChipRow(chips: List<SimpleHome.Chip>, onPick: (String) -> Unit) {
 
 /**
  * Type · the big hold-to-talk mic · Photo. Hold the mic to talk (the phone's own speech recogniser, as before),
- * let go to send. A quick tap also starts listening. While Blaze works the mic becomes Stop.
+ * let go to send. A quick tap also starts listening, and a tap while listening stops and sends. While Blaze works the mic becomes Stop.
  */
 @Composable
 fun HoldToTalkBar(listening: Boolean, busy: Boolean, onHold: () -> Unit, onRelease: () -> Unit, onType: () -> Unit, onPhoto: () -> Unit, onStop: () -> Unit) {
     val c = LocalBlaze.current
     val level by com.blaze.assistant.voice.Voice.level.collectAsState()
     val grow by animateFloatAsState(if (listening) 1.06f + level * 0.12f else 1f, tween(160), label = "mic")
+    val isListening = androidx.compose.runtime.rememberUpdatedState(listening)
     Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceEvenly) {
         SideButton(Icons.Rounded.Keyboard, "Type", onType)
@@ -134,21 +135,23 @@ fun HoldToTalkBar(listening: Boolean, busy: Boolean, onHold: () -> Unit, onRelea
             Box(Modifier.size(104.dp), contentAlignment = Alignment.Center) {
                 Box(Modifier.size(104.dp).scale(grow).clip(CircleShape).background(DuoColors.blazeBlue.copy(alpha = if (listening) 0.28f else 0.14f)))
                 Box(Modifier.size(84.dp).clip(CircleShape).background(if (busy) c.ink else DuoColors.blazeBlue)
-                    .semantics { contentDescription = if (busy) "Stop Blaze" else "Hold to talk" }
+                    .semantics { contentDescription = if (busy) "Stop Blaze" else if (listening) "Stop listening and send" else "Hold to talk" }
                     .pointerInput(busy) {
                         if (busy) detectTapGestures(onTap = { onStop() })
                         else detectTapGestures(onPress = {
-                            onHold()
+                            // v0.45.28 (TalkTap): while listening, a tap stops and sends; otherwise a long hold sends when you
+                            // let go and a quick tap keeps listening until you stop talking (or tap again).
+                            val act = TalkTap.onPress(isListening.value)
+                            if (act == TalkTap.Act.START) onHold()
                             val t0 = System.currentTimeMillis()
                             val released = tryAwaitRelease()
-                            // A long hold sends when you let go; a quick tap keeps listening until you stop talking.
-                            if (released && System.currentTimeMillis() - t0 > 600) onRelease()
+                            if (TalkTap.stopOnRelease(act, System.currentTimeMillis() - t0, released)) onRelease()
                         })
                     }, contentAlignment = Alignment.Center) {
                     Icon(if (busy) Icons.Rounded.Stop else Icons.Rounded.Mic, null, tint = if (busy) c.paper else Color.White, modifier = Modifier.size(38.dp))
                 }
             }
-            Text(when { busy -> "Tap to stop"; listening -> "Listening\u2026 let go to send"; else -> "Hold to talk" },
+            Text(TalkTap.label(busy, listening),
                 style = TextStyle(fontFamily = Type.Sans, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, color = c.ink))
         }
         SideButton(Icons.Rounded.Add, "Photo", onPhoto)
