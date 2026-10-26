@@ -1151,11 +1151,16 @@ private fun Entry(m: ChatMessage, pos: GroupPos, canAct: Boolean, onQuote: (Stri
             // Only replies that streamed while on screen carry a droplet layer (history costs nothing).
             var hadLive by remember(m.id) { mutableStateOf(live) }
             LaunchedEffect(live) { if (live) hadLive = true }
+            // 0.46.2 immersive replies: the pages' pictures above the text, the source pills under it (from the turn's real tool results).
+            val found = remember(m.sources) { com.blaze.assistant.agent.ReplySources.decode(m.sources) }
+            if (!live && found.images.isNotEmpty()) { val pc = LocalContext.current
+                ReplyImages(found, low = remember { StageDevice.tier(pc) == com.blaze.assistant.stage.PerfTier.LOW }) }
             Box(Modifier.fillMaxWidth().onGloballyPositioned { tracker.root = it }) {
                 CompositionLocalProvider(LocalOrb provides tracker, LocalSpeaker provides who) { BlazeReply(m.id, shown, pos, live = fresh) }
                 if (hadLive) OrbLayer(tracker, fresh, speaker = who, latest = latest, alone = who == com.blaze.assistant.agent.Duo.Who.HALO && Agent.split.collectAsState().value)
             }
             if (m.media.isNotEmpty()) MediaStrip(m.media)
+            if (!live && found.sources.isNotEmpty()) SourcePills(found)
             if (showActs || followups.isNotEmpty()) Actions(m, Side.BLAZE, "", canAct, onQuote, allowQuote = true,
                 orbSlot = if (hadLive) ({ co -> tracker.aimRest(co) }) else null, reactable = !live)
             else {

@@ -23,6 +23,8 @@ class WaitNudgeTest {
         assertTrue(p.contains("first name is Sam") && p.contains("1 or 2 sentences") && p.contains("vary your wording"))
         assertFalse(p.contains("offer to help") || p.contains("something else meanwhile"))
         assertTrue(p.contains("Don't offer anything or ask anything"))
+        assertTrue(p.contains("PLAIN AND FACTUAL") && p.contains("No metaphors") && p.contains("say \"I\""))
+        assertFalse(Duo.HALO_SOUL.contains("poetic,") || Duo.HALO_SOUL.contains("a touch poetic"))
         val q = WaitNudge.system(Duo.Who.HALO, Duo.Who.BLAZE, null, "book a table", 10)
         assertTrue(q.startsWith(Duo.HALO_SOUL.take(40)) && q.contains("Blaze, your partner") && q.contains("don't use one"))
     }
@@ -35,11 +37,17 @@ class WaitNudgeTest {
 
     @Test fun cleanKeepsItShortAndPlain() {
         // 0.45.29: the offer sentence is dropped (a "yes" must never bind to the waiting line).
-        assertEquals("Halo's pulling the AI news together, Sam. Won't be long now.",
+        assertEquals("Halo's pulling the AI news together, Sam.",
             WaitNudge.clean("[Blaze] Halo's pulling the AI news together, Sam. Anything I can sort out for you meanwhile? Won't be long now. [[done]]"))
         assertNull(WaitNudge.clean("Want me to find you something to read while you wait?"))
         assertEquals("Blaze is on it, Sam.", WaitNudge.clean("Blaze is on it, Sam. Let me know if you need anything else."))
         assertEquals("One. Two two two.", WaitNudge.clean("One. Two two two. Three three three."))
+        // 0.46.2: no poetic or fake-progress filler (the phone's exact line), plain factual lines pass.
+        assertNull(WaitNudge.clean("Blaze\u2019s just weaving the data into something bright\u2014think of it like stitching threads of gold."))
+        assertNull(WaitNudge.clean("Blaze is working its magic on those numbers."))
+        assertNull(WaitNudge.clean("Halo is brewing up something special for you."))
+        assertEquals("Blaze is looking up 2025 car sales figures.", WaitNudge.clean("Blaze is looking up 2025 car sales figures. Almost there!"))
+        assertEquals("I'm checking the 2025 sales figures with Blaze.", WaitNudge.clean("I'm checking the 2025 sales figures with Blaze."))
         assertNull(WaitNudge.clean(""))
         assertNull(WaitNudge.clean("ok"))
         assertNull(WaitNudge.clean("```json\n{}\n```"))

@@ -1,0 +1,4 @@
+[
+  {"value": "ia-films", "display_name": "Internet Archive films", "version": "1.0.0", "icon": "https://archive.org/images/glogo.jpg", "type": "global", "disabled": false},
+  {"value": "blender-open", "display_name": "Blender open movies", "version": "1.0.0", "icon": "", "type": "global", "disabled": false}
+]

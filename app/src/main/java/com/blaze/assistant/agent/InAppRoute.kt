@@ -16,6 +16,8 @@ object InAppRoute {
         data class View(val id: String) : Route()
         /** 0.46.1: a card on the chat Stage (the browser card), shown in place, never a screen change. */
         data class Stage(val kind: String) : Route()
+        /** 0.46.2 Movies on the Stage video card: action play | search | continue, with the title / search words. */
+        data class Movie(val action: String, val query: String = "") : Route()
     }
 
     private fun r(p: String) = Regex(p, RegexOption.IGNORE_CASE)
@@ -33,6 +35,11 @@ object InAppRoute {
     private val browserCard = r("""^(?:(?:can you|could you|pls)\s+)?(?:pull up|bring up|open|show|put up|launch|start|give me|get|show me)(?: (?:up|me))?(?: (?:the|my|a|your))?(?: blaze)? (?:browser|web browser|browser card|browser widget|internet)(?: card| widget| here| on (?:the )?(?:stage|screen|chat))?(?: for me)?$|^browser(?: card)?$""")
     private val browserFull = r("""^(?:pull up|bring up|open|show|launch|start|go to|switch to|take me to)(?: (?:the|my|a))?(?: blaze)? (?:web )?browser(?: card)? (?:in |on )?(?:full ?screen|full view|full page)$|^(?:open|show|make)(?: the)? browser (?:full ?screen|big|in full view)$|^full ?screen browser$""")
 
+    // 0.46.2 Movies ("play the movie Nosferatu", "watch Sintel", "search movies about trains", "continue watching").
+    private val movieContinue = r("""^(?:continue|resume|keep) watching(?: (?:my|the))?(?: (?:movie|film|show|video))?$|^(?:continue|resume) (?:my|the) (?:movie|film)$|^pick up (?:my|the) (?:movie|film)$""")
+    private val movieSearch = r("""^(?:search|find|look up|look for|show me)(?: for)?(?: (?:free|public[- ]domain|some|old|classic))? (?:movies?|films?)(?: (?:about|for|like|with|called|named|on))? (.+)$|^(?:search|find) (?:the )?(?:movie|film) (.+)$""")
+    private val moviePlay = r("""^(?:play|watch|put on|stream|start)(?: (?:the|a))? (?:movie|film) (.+)$|^(?:play|watch|put on|stream)(?: (?:the|a))? (.+?) (?:movie|film)$|^watch (?!(?:out|this|that|it|tv|later|me|youtube|videos?)\b)(.+)$""")
+
     fun clean(text: String): String = text.trim().lowercase()
         .replace(Regex("[?.!,]+"), " ").replace(Regex("\\s+"), " ").trim()
         .removePrefix("hey blaze ").removePrefix("blaze ").removePrefix("please ").removeSuffix(" please").removeSuffix(" blaze").trim()
@@ -47,6 +54,9 @@ object InAppRoute {
             next.matches(t) -> Route.Music("next")
             prev.matches(t) -> Route.Music("previous")
             now.matches(t) -> Route.Music("now")
+            movieContinue.matches(t) -> Route.Movie("continue")
+            movieSearch.matchEntire(t) != null -> Route.Movie("search", movieSearch.matchEntire(t)!!.groupValues.drop(1).first { it.isNotBlank() }.trim())
+            moviePlay.matchEntire(t) != null -> Route.Movie("play", moviePlay.matchEntire(t)!!.groupValues.drop(1).first { it.isNotBlank() }.trim())
             browserFull.matches(t) -> Route.View("browser")
             browserCard.matches(t) -> Route.Stage("browser")
             else -> view.matchEntire(t)?.groupValues?.get(1)?.let { v ->

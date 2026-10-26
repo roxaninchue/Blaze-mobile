@@ -1,0 +1,52 @@
+{
+ "responseHeader": {
+  "status": 0,
+  "QTime": 37,
+  "params": {
+   "query": "(text:general OR text:general OR text__reviews:general) AND collection:feature_films AND mediatype:movies"
+  }
+ },
+ "response": {
+  "numFound": 452,
+  "start": 0,
+  "docs": [
+   {
+    "creator": "Jack Gold",
+    "downloads": 912548,
+    "identifier": "Escape_From_Sobibor.avi",
+    "title": "Escape From Sobibor",
+    "year": 1987
+   },
+   {
+    "downloads": 853869,
+    "identifier": "nazi_concentration_camps",
+    "licenseurl": "http://creativecommons.org/licenses/publicdomain/",
+    "runtime": "51:56",
+    "title": "Nazi Concentration Camps",
+    "year": 1945
+   },
+   {
+    "creator": "N/A",
+    "downloads": 773201,
+    "identifier": "CHILD",
+    "runtime": "19:31",
+    "title": "The Child Molester (1964)"
+   },
+   {
+    "creator": "Megamedia",
+    "downloads": 720363,
+    "identifier": "RecurringDinosaurInfestationFilms",
+    "title": "Recurring Dinosaur Infestation Films"
+   },
+   {
+    "creator": "Sam Spiegel",
+    "downloads": 662151,
+    "identifier": "TheStranger_0",
+    "licenseurl": "http://creativecommons.org/licenses/publicdomain/",
+    "runtime": "95 min",
+    "title": "The Stranger",
+    "year": 1946
+   }
+  ]
+ }
+}

@@ -61,7 +61,7 @@ object RichReplies {
         "a choice the user must make next -> a ```choices block; several details you need from the user at once -> a ```form; a how-to -> numbered steps with **bold titles**. " +
         "IN CHAT, INLINE: a diagram, chart or visual the user asks for (\"draw\", \"flowchart\", \"diagram\", \"chart\", \"graph\", \"map out\", \"visualise\") goes straight in your reply as a ```mermaid or ```chart block, drawn in the chat. " +
         "Don't write files, don't open a preview, Design view or preview_server, and don't call use_skill for it. Make a file (or preview / export it) only when the user asks to save, export, download, edit or make a file. " +
-        "Interactive blocks are fenced code blocks whose body is ONE valid JSON object (double quotes, no comments, no trailing commas): " +
+        "Interactive blocks are fenced code blocks: the kind word ALONE on the opening ``` line, the JSON on the next line(s), then a closing ```; the body is ONE valid JSON object (double quotes, no comments, no trailing commas). The examples below show kind + JSON: " +
         "```chart {\"type\":\"bar|line|pie|scatter\",\"title\":\"..\",\"labels\":[\"Jan\",\"Feb\"],\"series\":[{\"name\":\"Sales\",\"values\":[12,19]}],\"unit\":\"K\"} " +
         "(pie: one series; scatter: \"points\":[[x,y],..] with \"xLabel\"/\"yLabel\"). Use real numbers you know or found; if they're estimates, say so in the text. " +
         "```compare {\"title\":\"..\",\"columns\":[\"iPhone 16\",\"Galaxy S25\"],\"rows\":[{\"label\":\"Screen\",\"values\":[\"6.1 in\",\"6.2 in\"]}],\"verdict\":\"one line\"} (2-3 columns, up to 10 rows). " +
@@ -104,7 +104,11 @@ object RichReplies {
                     val d = Block.Diagram(kind, s.code, diagramUrl(kind, s.code), private)
                     listOf(if (open(s)) Block.Pending("diagram", s, d) else d)
                 }
-                else RichKit.LANGS[lang]?.let { listOf(interactive(it, s)) } ?: listOf(Block.Plain(s))
+                else RichKit.LANGS[lang]?.let { listOf(interactive(it, s)) }
+                    // 0.46.2: never a code box for rich JSON: "chart {…}" left in the language slot / body, or a bare chart object.
+                    ?: RichJson.kindPrefix((s.lang + " " + s.code).trim())?.let { (k, json) -> listOf(interactive(k, s.copy(lang = k, code = json))) }
+                    ?: (if (lang.isEmpty() || lang == "json") RichJson.guessKind(s.code)?.takeIf { it == "chart" }?.let { listOf(interactive(it, s.copy(lang = it))) } else null)
+                    ?: listOf(Block.Plain(s))
             }
             else -> listOf(Block.Plain(s))
         }

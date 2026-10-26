@@ -79,7 +79,7 @@ object ClaimGuard {
             "memory" -> c.name in setOf("memory_save", "memory_update", "memory_delete", "memory_merge", "remember", "forget", "memory_search", "recall_memory")
             "browser" -> c.name.startsWith("browser_") || c.name in setOf("open_url", "navigate_to")
             // 0.46.0: music_ops / video_ops put their card on the Stage too; set_timer is the Clock app's timer.
-            "stage" -> c.name.startsWith("stage_") || c.name in setOf("music_ops", "video_ops", "set_timer", "set_alarm", "media_control")
+            "stage" -> c.name.startsWith("stage_") || c.name in setOf("music_ops", "video_ops", "movies", "set_timer", "set_alarm", "media_control")
             else -> c.name in spec.tools
         }
     }

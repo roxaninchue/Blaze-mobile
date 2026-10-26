@@ -104,8 +104,11 @@ object AnswerCards {
             val l = lines[i]
             if (l.trimStart().startsWith("```")) {
                 flushText()
-                val lang = l.trimStart().removePrefix("```").trim()
+                // 0.46.2: the language is the first word only; anything after it on the opening line (JSON) is the body's first line.
+                val opener = l.trimStart().removePrefix("```").trim()
+                val lang = opener.substringBefore(' ').substringBefore('{').trim()
                 val body = mutableListOf<String>()
+                opener.removePrefix(lang).trim().removeSuffix("```").trim().takeIf { it.isNotEmpty() }?.let { body += it }
                 var j = i + 1
                 while (j < lines.size && !lines[j].trimStart().startsWith("```")) { body += lines[j]; j++ }
                 val raw = lines.subList(i, minOf(j + 1, lines.size)).joinToString("\n")

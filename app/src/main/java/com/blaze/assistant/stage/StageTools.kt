@@ -17,7 +17,7 @@ object StageTools {
      * plain Q&A stays chat, and a study / focus time is a timer card with Start (not a reminder sentence).
      */
     const val RULE = "\nSTAGE: the chat screen is a Stage you can arrange in place (never a jump to another screen). Use stage_show only when a live thing truly helps: " +
-        "a timer or pomodoro (\"study 30 min\" -> stage_show kind=timer minutes=30 title=Study: a timer card with Start, not a reminder or a sentence), music playing, a video, " +
+        "a timer or pomodoro (\"study 30 min\" -> stage_show kind=timer minutes=30 title=Study: a timer card with Start, not a reminder or a sentence), music playing, a video (a movie: the movies tool), " +
         "a quiz or flashcards to go through, a plan / checklist card, the browser (\"pull up the browser\" / \"browser card\" -> stage_show kind=browser url=optional; " +
         "the browser_ tools then drive the page shown in that card; open_view view=browser only when they ask for full screen / full view). Plain questions, chat and explanations stay normal chat replies. " +
         "Stage first: do it on the Stage before opening a /views screen; open_view only when the user asks for that view or the Stage can't host it " +

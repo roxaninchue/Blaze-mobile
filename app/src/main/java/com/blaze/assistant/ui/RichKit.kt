@@ -165,8 +165,22 @@ object RichKit {
     /** Only simple names are allowed as tool input ids (they appear in formulas). */
     private val idRe = Regex("^[A-Za-z_][A-Za-z0-9_]{0,23}$")
 
+    /** 0.46.2: schema keys in any case ("TYPE", "Title", "LABELS"): renamed to the names [chart] reads; data labels untouched. */
+    private val chartKeys = listOf("type", "kind", "title", "unit", "units", "xLabel", "yLabel", "x_label", "y_label", "labels", "x", "categories", "series",
+        "name", "label", "values", "data", "value", "y", "points").associateBy { it.lowercase() }
+    private fun canon(o: JSONObject): JSONObject {
+        val out = JSONObject()
+        for (k in o.keys()) {
+            val v = o.opt(k)
+            val v2 = when { k.equals("series", true) && v is JSONArray -> JSONArray(v.list().map { if (it is JSONObject) canon(it) else it })
+                k.equals("data", true) && v is JSONArray -> JSONArray(v.list().map { if (it is JSONObject) canon(it) else it }); else -> v }
+            out.put(chartKeys[k.lowercase()] ?: k, v2)
+        }
+        return out
+    }
+
     fun chart(body: String): Chart? {
-        val o = json(body) as? JSONObject ?: return null
+        val o = (json(body) as? JSONObject)?.let { canon(it) } ?: return null
         val type = when (o.str("type", "kind").lowercase()) {
             "bar", "bars", "column", "columns", "" -> ChartType.BAR
             "line", "lines", "area", "trend" -> ChartType.LINE

@@ -95,6 +95,8 @@ import com.blaze.assistant.stage.StageStore
 import com.blaze.assistant.stage.StageTimer
 import com.blaze.assistant.stage.StageTools
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import com.blaze.assistant.movies.StageMovies
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -114,16 +116,38 @@ object StageDevice {
 object StageVideo {
     private var player: androidx.media3.exoplayer.ExoPlayer? = null
     private var url: String = ""
+    /** 0.46.2 Movies: what's playing when it came from a movie source (resume position, subtitles, request headers). */
+    @Volatile var movie: com.blaze.assistant.movies.MoviePlay? = null
+        private set
+    private val http = androidx.media3.datasource.DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
+        .setConnectTimeoutMs(15_000).setReadTimeoutMs(20_000)
     /** Play as soon as it's ready: only for a video just shown, never for a card restored after the app was closed. */
     @Volatile var autoplay = false
     val SPEEDS = listOf(1f, 1.25f, 1.5f, 2f, 0.5f, 0.75f)
-    fun player(ctx: Context, u: String): androidx.media3.exoplayer.ExoPlayer {
-        val p = player ?: androidx.media3.exoplayer.ExoPlayer.Builder(ctx.applicationContext).build().also { player = it }
-        if (u != url) { url = u; p.setMediaItem(androidx.media3.common.MediaItem.fromUri(u)); p.prepare(); p.playWhenReady = autoplay; autoplay = false
+    fun player(ctx: Context, u: String, m: com.blaze.assistant.movies.MoviePlay? = null): androidx.media3.exoplayer.ExoPlayer {
+        val p = player ?: androidx.media3.exoplayer.ExoPlayer.Builder(ctx.applicationContext)
+            .setMediaSourceFactory(androidx.media3.exoplayer.source.DefaultMediaSourceFactory(androidx.media3.datasource.DefaultDataSource.Factory(ctx.applicationContext, http)))
+            .build().also { player = it }
+        if (u != url) {
+            saveProgress()
+            url = u; movie = m?.takeIf { it.url == u }
+            http.setDefaultRequestProperties(movie?.headers.orEmpty())
+            val item = androidx.media3.common.MediaItem.Builder().setUri(u).setMediaId(movie?.key ?: u)
+                .setMediaMetadata(androidx.media3.common.MediaMetadata.Builder().setTitle(movie?.title).build())
+                .setSubtitleConfigurations(movie?.subtitles.orEmpty().mapIndexed { i, t -> androidx.media3.common.MediaItem.SubtitleConfiguration.Builder(android.net.Uri.parse(t.url))
+                    .setMimeType(t.mime).setLanguage(t.lang.ifBlank { null }).setLabel(t.label.ifBlank { t.lang.ifBlank { "Subtitles" } }).setId("s$i").build() }).build()
+            val at = movie?.let { com.blaze.assistant.movies.Movies.lib.value.resumeAt(it.key) } ?: 0L
+            p.setMediaItem(item, at); p.prepare(); p.playWhenReady = autoplay; autoplay = false
             // Music pauses while a video plays (two sounds at once is never wanted).
             try { com.blaze.assistant.mediaapps.MusicService.current?.transport("pause") } catch (_: Exception) { } }
         return p
     }
+    /** 0.46.2 continue watching: the movie's position goes to the Movies library (called every few seconds and on close). */
+    fun saveProgress() {
+        val m = movie ?: return; val p = player ?: return
+        try { if (p.currentPosition > 0) com.blaze.assistant.movies.Movies.progress(m, p.currentPosition, p.duration.coerceAtLeast(0)) } catch (_: Exception) { }
+    }
+    fun position(): Long = try { player?.currentPosition ?: 0L } catch (_: Exception) { 0L }
     /** The next playback speed after [now] ("1" -> "1.25" … -> "0.75" -> "1"); applied to the player. */
     fun nextSpeed(now: String): String {
         val cur = now.toFloatOrNull() ?: 1f
@@ -131,13 +155,13 @@ object StageVideo {
         try { player?.setPlaybackSpeed(n) } catch (_: Exception) { }
         return if (n == n.toInt().toFloat()) n.toInt().toString() else n.toString()
     }
-    fun pause() { try { player?.pause() } catch (_: Exception) { } }
+    fun pause() { try { saveProgress(); player?.pause() } catch (_: Exception) { } }
     /** A Stage video is playing now (MainActivity takes it into picture-in-picture when the user leaves Blaze). */
     fun playing(): Boolean = try { player?.isPlaying == true } catch (_: Exception) { false }
     /** Bumped when the picture-in-picture window gives the player back, so the card's view takes the video surface again. */
     val gen = androidx.compose.runtime.mutableIntStateOf(0)
     fun current(): androidx.media3.exoplayer.ExoPlayer? = player
-    fun release() { try { player?.release() } catch (_: Exception) { }; player = null; url = "" }
+    fun release() { saveProgress(); try { player?.release() } catch (_: Exception) { }; player = null; url = ""; movie = null }
 }
 
 /**
@@ -214,7 +238,13 @@ fun StageHost(lastMessage: String, chat: @Composable (Modifier) -> Unit) {
     LaunchedEffect(hasMusic, now, musicPoke) { if (hasMusic) music = com.blaze.assistant.mediaapps.StageMusic.snapshot() }
     // A closed video card frees the shared player.
     val hasVideo = st.items.any { it.kind == StageKind.VIDEO }
-    LaunchedEffect(hasVideo) { if (!hasVideo) StageVideo.release() }
+    LaunchedEffect(hasVideo) {
+        if (!hasVideo) StageVideo.release()
+        // 0.46.2 Movies: the position is saved every 10 s while a movie card is up (continue watching / resume).
+        while (hasVideo) { delay(10_000); StageVideo.saveProgress() }
+    }
+    val movieScope = androidx.compose.runtime.rememberCoroutineScope()
+    val movieLib by com.blaze.assistant.movies.Movies.lib.collectAsState()
     val hasBrowser = st.items.any { it.kind == StageKind.BROWSER }
     LaunchedEffect(hasBrowser) { if (hasBrowser) com.blaze.assistant.browser.BrowserEngine.init(ctx) }
 
@@ -227,6 +257,7 @@ fun StageHost(lastMessage: String, chat: @Composable (Modifier) -> Unit) {
         StageKind.FLASHCARDS -> { val q = cards(i); val card = q.firstOrNull()
             StageData(now = now, cardFront = card?.front.orEmpty(), cardBack = card?.back.orEmpty(), cardsLeft = q.size) }
         StageKind.BROWSER -> StageData(now = now, browser = StageWeb.now())
+        StageKind.VIDEO -> StageData(now = now, movies = movieLib.continueWatching.take(3))
         else -> StageData(now = now)
     }
 
@@ -262,14 +293,26 @@ fun StageHost(lastMessage: String, chat: @Composable (Modifier) -> Unit) {
             }
             is StageEvent.Props -> update(i, e.props)
             is StageEvent.Browser -> StageWeb.op(ctx, e.op)
-            is StageEvent.Video -> when (e.op) {
-                "speed" -> update(i, mapOf("speed" to StageVideo.nextSpeed(i.props["speed"].orEmpty())))
-                "fullscreen" -> if (i.immersive) {
+            is StageEvent.Video -> when {
+                e.op.startsWith("pick:") || e.op.startsWith("resume:") -> movieScope.launch {
+                    update(i, mapOf("busy" to "true", "error" to ""))
+                    val r = StageMovies.choose(ctx, i.props, e.op)
+                    update(i, r + ("busy" to ""))
+                }
+                e.op == "results" -> update(i, mapOf("url" to "", "movie" to ""))
+                e.op == "speed" -> update(i, mapOf("speed" to StageVideo.nextSpeed(i.props["speed"].orEmpty())))
+                e.op == "fullscreen" -> if (i.immersive) {
                     StageStore.dispatch(StageAction.Show(i.kind, mapOf("immersive" to "false"), StageMode.HERO, null, i.id))
                     StageStore.dispatch(StageAction.SetChrome(topBar = true, reply = com.blaze.assistant.stage.ReplyBar.FULL))
                 } else { StageStore.dispatch(StageAction.Show(i.kind, mapOf("immersive" to "true"), StageMode.HERO, null, i.id)); StageStore.dispatch(StageAction.Resize(i.id, 1f)) }
+                else -> {}
             }
-            StageEvent.OpenFull -> if (i.kind == StageKind.BROWSER) com.blaze.assistant.browser.BrowserTools.show(ctx) else i.kind.fullView?.let { Views.open(it) }
+            StageEvent.OpenFull -> if (i.kind == StageKind.BROWSER) com.blaze.assistant.browser.BrowserTools.show(ctx)
+                else if (i.kind == StageKind.VIDEO && com.blaze.assistant.movies.MoviePlay.parse(i.props["movie"]) != null) {
+                    // 0.46.2: the movie goes on in Blaze Video at the same spot (the card's player pauses).
+                    val m = com.blaze.assistant.movies.MoviePlay.parse(i.props["movie"])!!; val at = StageVideo.position(); StageVideo.pause()
+                    com.blaze.assistant.mediaapps.VideoActivity.openMovie(ctx, m, at)
+                } else i.kind.fullView?.let { Views.open(it) }
             StageEvent.Expand -> StageStore.dispatch(StageAction.Expand(i.id))
             StageEvent.Shrink -> StageStore.dispatch(StageAction.Shrink(i.id))
             StageEvent.Close -> StageStore.dispatch(StageAction.Close(i.id))
@@ -279,7 +322,7 @@ fun StageHost(lastMessage: String, chat: @Composable (Modifier) -> Unit) {
 
     val videoSlot: @Composable (StageItem) -> (@Composable (Modifier) -> Unit) = { i ->
         { m -> key(StageVideo.gen.intValue) { AndroidView(factory = { c -> androidx.media3.ui.PlayerView(c).apply { useController = true; setShowSubtitleButton(true)
-                player = StageVideo.player(c, i.props["url"].orEmpty()) } },
+                player = StageVideo.player(c, i.props["url"].orEmpty(), com.blaze.assistant.movies.MoviePlay.parse(i.props["movie"])) } },
             modifier = m, onRelease = { it.player = null }) } }
     }
     // The browser card's WebView (hero only: a collapsed card draws a title row, no WebView).

@@ -48,7 +48,7 @@ fun SkillLibraryPage(rows0: List<SkillLibrary.Row>? = null, open0: String = "", 
     Label("${rows.count { it.installed }} installed \u00b7 $on on" + (rows.count { it.update }.takeIf { it > 0 }?.let { " \u00b7 $it to update" } ?: ""),
         size = 9.sp, color = c.weak, modifier = Modifier.padding(top = 10.dp, bottom = 6.dp))
     val q = query.trim()
-    val shown = rows.filter { q.isEmpty() || it.name.contains(q, true) || it.description.contains(q, true) }
+    val shown = rows.filter { q.isEmpty() || it.name.contains(q, true) || it.shown.contains(q, true) || it.description.contains(q, true) }
     if (shown.isEmpty()) { Rows { EmptyState("No skill matches \u201c$q\u201d", "Try a word from what the skill does, like \u201cemail\u201d or \u201cplan\u201d.", mark = false) }; return }
     val groups = listOf(
         Triple("Core", "Always on: how Blaze talks, works, codes, uses views and specialists, and saves workflows. Can't be switched off.", shown.filter { it.installed && it.core }),
@@ -64,7 +64,7 @@ fun SkillLibraryPage(rows0: List<SkillLibrary.Row>? = null, open0: String = "", 
             list.forEachIndexed { i, r ->
                 n++
                 val tag = when { r.update -> "update"; r.core -> "core"; r.edited -> "edited"; else -> "" }
-                KitRow(r.name, r.description.lineSequence().firstOrNull().orEmpty(), n = n, first = i == 0, pill = tag, pillOn = r.update,
+                KitRow(r.shown, r.description.lineSequence().firstOrNull().orEmpty(), n = n, first = i == 0, pill = tag, pillOn = r.update,
                     dim = !r.installed || !r.on, mono = true, onClick = { open = if (open == r.name) "" else r.name }) {
                     if (r.installed && !r.core) KitSwitch(r.on) { change { SkillLibrary.setOn(r.name, !r.on) } }
                 }

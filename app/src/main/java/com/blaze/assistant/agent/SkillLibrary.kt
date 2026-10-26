@@ -19,7 +19,13 @@ object SkillLibrary {
     data class Bundled(val name: String, val version: Int, val sha: String, val files: List<String> = listOf("SKILL.md"))
     /** [core] = one of [CoreSkills.NAMES] (v0.24.3): always on, can't be switched off or deleted, shown first. */
     data class Row(val name: String, val description: String, val bundled: Boolean, val on: Boolean,
-                   val edited: Boolean, val installed: Boolean, val update: Boolean, val core: Boolean = false)
+                   val edited: Boolean, val installed: Boolean, val update: Boolean, val core: Boolean = false, val title: String = "") {
+        /** 0.46.2: the name shown in Settings (a skill's front-matter `title`, e.g. "REA: Reverse Engineer Anything"), else its folder name. */
+        val shown: String get() = title.ifBlank { name }
+    }
+
+    /** A skill's front-matter `title:` (quotes stripped), or "". */
+    fun titleOf(md: String): String = Regex("(?m)^title:\\s*(.+)$").find(md.substringBefore("\n---", md).take(2000))?.groupValues?.get(1)?.trim()?.trim('"', '\'')?.trim().orEmpty()
 
     private lateinit var app: Context
     private fun root() = File(com.blaze.assistant.terminal.Terminal.home(), "skills").apply { mkdirs() }
@@ -79,7 +85,9 @@ object SkillLibrary {
     // ---------- on / off ----------
 
     private fun offSet(): Set<String> = Settings.str("skills_off").split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
-    fun isOn(dirName: String) = CoreSkills.isCore(dirName) || dirName !in offSet()
+    fun isOn(dirName: String) = isOnWith(dirName, offSet())
+    /** 0.46.2: on unless the user switched it off ([off] = the saved off list; empty on a fresh install, so every bundled skill starts on). */
+    fun isOnWith(dirName: String, off: Set<String>) = CoreSkills.isCore(dirName) || dirName !in off
     fun setOn(dirName: String, on: Boolean) {
         if (CoreSkills.isCore(dirName) && !on) return                       // core skills can't be switched off
         val s = offSet().toMutableSet(); if (on) s -= dirName else s += dirName
@@ -116,7 +124,8 @@ object SkillLibrary {
             val cur = runCatching { sha(File(p.dir, "SKILL.md").readText()) }.getOrDefault("")
             val edited = b != null && rec != null && cur != rec.optString("sha")
             Row(p.dir.name, p.description, b != null, isOn(p.dir.name), edited, true,
-                b != null && rec != null && b.version > rec.optInt("version"), CoreSkills.isCore(p.dir.name))
+                b != null && rec != null && b.version > rec.optInt("version"), CoreSkills.isCore(p.dir.name),
+                runCatching { titleOf(File(p.dir, "SKILL.md").readText()) }.getOrDefault(""))
         }
         val missing = bundled.filter { b -> packs.none { it.dir.name == b.name } }.map { b ->
             Row(b.name, "", true, false, false, false, false, CoreSkills.isCore(b.name))

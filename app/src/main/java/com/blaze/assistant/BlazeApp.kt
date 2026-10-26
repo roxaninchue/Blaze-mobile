@@ -70,6 +70,7 @@ class BlazeApp : Application() {
         com.blaze.assistant.device.StartGuard.step("Agent.init") { Agent.init(this) }
         // 0.46.0 Blaze Stage: the saved layout and timers (re-arms running timers' alarms).
         try { com.blaze.assistant.stage.StageStore.init(this) } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("BlazeApp: StageStore.init", e) }
+        try { com.blaze.assistant.movies.Movies.init(this) } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("BlazeApp: Movies.init", e) }
         val agentMs = android.os.SystemClock.elapsedRealtime() - tAgent
         com.blaze.assistant.device.StartGuard.step("agent.BgAgents.init") { com.blaze.assistant.agent.BgAgents.init(this) }
         com.blaze.assistant.device.StartGuard.step("routine.Routines.init") { com.blaze.assistant.routine.Routines.init(this) }

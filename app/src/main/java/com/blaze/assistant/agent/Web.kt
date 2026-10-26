@@ -106,7 +106,33 @@ object Web {
                 .replace(Regex("<(br|p|div|li|h[1-6]|tr)[^>]*>", RegexOption.IGNORE_CASE), "\n")
             (if (titled.isNotBlank()) "# $titled\n" else "") + strip(main).lines().map { it.trim() }.filter { it.length > 1 }.joinToString("\n")
         }
-        if (text.length > max) text.take(max) + "\n…(cut, ${text.length} chars total)" else text
+        val imgs = if (t.startsWith("{") || t.startsWith("[")) "" else images(body, url)
+        (if (text.length > max) text.take(max) + "\n…(cut, ${text.length} chars total)" else text) + imgs
+    }
+
+    /**
+     * 0.46.2: the page's own pictures (og:image / twitter:image, else the first large <img> in its article) as "Image: <url> (WxH)"
+     * lines at the end of fetch_page's result; the reply shows them in a small strip with the domain credited (ReplySources).
+     */
+    fun images(html: String, pageUrl: String): String {
+        fun abs(u: String) = try { java.net.URI(pageUrl).resolve(u.trim().replace("&amp;", "&")).toString() } catch (_: Exception) { "" }
+        fun meta(p: String) = Regex("""<meta[^>]+(?:property|name)=["']$p["'][^>]*content=["']([^"']+)["']|<meta[^>]+content=["']([^"']+)["'][^>]*(?:property|name)=["']$p["']""", RegexOption.IGNORE_CASE)
+            .find(html)?.let { m -> m.groupValues[1].ifBlank { m.groupValues[2] } }.orEmpty()
+        val out = LinkedHashMap<String, String>()
+        val ow = meta("og:image:width").toIntOrNull() ?: 0; val oh = meta("og:image:height").toIntOrNull() ?: 0
+        listOf(meta("og:image"), meta("og:image:secure_url"), meta("twitter:image"), meta("twitter:image:src")).map { abs(it) }.filter { it.isNotBlank() }
+            .forEach { u -> if (ReplySources.okImage(u, ow, oh)) out.putIfAbsent(ReplySources.norm(u), u + if (ow > 0 && oh > 0) " (${ow}x$oh)" else "") }
+        if (out.isEmpty()) {
+            val art = Regex("<article[\\s\\S]*?</article>", RegexOption.IGNORE_CASE).find(html)?.value ?: ""
+            Regex("""<img[^>]+>""", RegexOption.IGNORE_CASE).findAll(art).take(12).forEach { tag ->
+                val src = Regex("""\ssrc=["']([^"']+)["']""", RegexOption.IGNORE_CASE).find(tag.value)?.groupValues?.get(1).orEmpty()
+                val w = Regex("""\swidth=["']?(\d+)""", RegexOption.IGNORE_CASE).find(tag.value)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                val h = Regex("""\sheight=["']?(\d+)""", RegexOption.IGNORE_CASE).find(tag.value)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                val u = abs(src)
+                if (out.size < 2 && w >= 300 && ReplySources.okImage(u, w, h)) out.putIfAbsent(ReplySources.norm(u), "$u (${w}x${h})")
+            }
+        }
+        return if (out.isEmpty()) "" else "\n" + out.values.take(2).joinToString("\n") { "Image: $it" }
     }
 
     private fun strip(h: String) = h.replace(Regex("<[^>]+>"), "").replace("&amp;", "&").replace("&quot;", "\"").replace("&#x27;", "'")

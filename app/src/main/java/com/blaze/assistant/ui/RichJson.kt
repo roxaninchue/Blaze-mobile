@@ -105,11 +105,11 @@ object RichJson {
     }
 
     /** "table {…}" / "chart\n{…}" / "`table {…}`": the rich kind written before the JSON, and the JSON after it. */
-    private val prefixRe = Regex("""^\s*`?\s*([A-Za-z]+)\s*[:\-]?\s*(?=[{\[])""")
+    private val prefixRe = Regex("""^\s*`{0,3}\s*([A-Za-z]+)\s*[:\-]?\s*(?=[{\[])""")
     fun kindPrefix(body: String): Pair<String, String>? {
         val m = prefixRe.find(body) ?: return null
         val kind = RichKit.LANGS[m.groupValues[1].lowercase()] ?: return null
-        return kind to body.substring(m.range.last + 1).trim().removeSuffix("`").trim()
+        return kind to body.substring(m.range.last + 1).trim().removeSuffix("```").removeSuffix("`").trim()
     }
 
     /** A line of prose that is really a rich block: `table {…}` or table {…} on its own (possibly to the end of the text). */
@@ -157,6 +157,31 @@ object RichJson {
     private val fence = Regex("""(?m)^([ \t]*)```[ \t]*([A-Za-z]*)[ \t]*\n([\s\S]*?)(?:\n[ \t]*```[ \t]*$|\z)""")
 
     /**
+     * 0.46.2 (phone report: a pie chart showed as a code box labelled `CHART {"TYPE":"PIE","TITLE":"WORLD…`): the JSON written on the
+     * fence's opening line ("```chart {…}" / "```CHART {…}```" / "```json chart {…}" / "```{…}```"), so the whole line became the
+     * code language. Such an opener is split into "```kind" + the JSON on its own lines (closing fence kept or added).
+     */
+    private val openerJson = Regex("""(?m)^([ \t]*)```[ \t]*(?:(?:json|text|js|javascript)[ \t]+)?([A-Za-z]*)[ \t]*[:\-]?[ \t]*([{\[].*)$""", RegexOption.IGNORE_CASE)
+
+    /** A JSON object that is plainly a chart (a chart type plus labels / series / data): the kind for a fence with no kind word. */
+    fun guessKind(json: String): String? {
+        val o = parse(json) as? JSONObject ?: return null
+        val k = o.keys().asSequence().associateBy { it.lowercase() }
+        val type = k["type"]?.let { o.optString(it) }?.lowercase().orEmpty()
+        if (type in setOf("bar", "bars", "column", "line", "area", "pie", "donut", "doughnut", "scatter") && listOf("labels", "series", "data", "values", "points").any { it in k }) return "chart"
+        if ("columns" in k && "rows" in k) return "table"
+        return null
+    }
+
+    private fun splitOpeners(src: String): String = openerJson.replace(src) { m ->
+        val ind = m.groupValues[1]; val word = m.groupValues[2].lowercase(); var json = m.groupValues[3].trimEnd()
+        val closedHere = json.endsWith("```")
+        if (closedHere) json = json.removeSuffix("```").trimEnd()
+        val kind = RichKit.LANGS[word] ?: if (word.isEmpty() || word == "json") guessKind(json) else null
+        if (kind == null) m.value else ind + "```" + kind + "\n" + json + if (closedHere) "\n" + ind + "```" else ""
+    }
+
+    /**
      * The reply's source with rich blocks written the wrong way put right, before it is split into cards:
      *  - "```\ntable {…}\n```" / "```json\ntable {…}" -> "```table\n{…}\n```";
      *  - "```table\ntable {…}" -> the repeated kind word dropped;
@@ -164,7 +189,7 @@ object RichJson {
      */
     fun fixSource(src: String): String {
         if (!src.contains('{')) return src
-        var out = fence.replace(src) { m ->
+        var out = fence.replace(splitOpeners(src)) { m ->
             val lang = m.groupValues[2].lowercase(); val body = m.groupValues[3]
             val pre = kindPrefix(body)
             val closed = m.value.trimEnd().endsWith("```") && m.value.trimEnd().length > 3 + m.groupValues[1].length + m.groupValues[2].length
@@ -172,6 +197,8 @@ object RichJson {
             when {
                 pre != null && (lang.isEmpty() || lang == "json" || lang == "text" || RichKit.LANGS[lang] == pre.first) ->
                     m.groupValues[1] + "```" + pre.first + "\n" + pre.second + end
+                // 0.46.2: a chart's JSON in a bare / json fence is the chart.
+                pre == null && (lang.isEmpty() || lang == "json") && guessKind(body) == "chart" -> m.groupValues[1] + "```chart\n" + body + end
                 else -> m.value
             }
         }

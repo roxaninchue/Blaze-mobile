@@ -33,7 +33,9 @@ object AnswerStyle {
         "No scripts, styles, forms or iframes (they are removed). TABLES: write a table as a plain Markdown pipe table (| a | b | with a |---|---| line under the header) " +
         "or as an HTML <table>, NEVER inside a ``` code fence and never as ASCII art; code fences are only for real code. Tables, diagrams (```mermaid), charts, " +
         "comparisons, mini tools and pictures are shown automatically as a compact preview card the user taps to open in a floating window " +
-        "(zoom, pan, scroll), so don't describe how to view them and don't repeat their content in the text."
+        "(zoom, pan, scroll), so don't describe how to view them and don't repeat their content in the text. " +
+        "IMMERSIVE: pages you search or read show under your reply as source pills, and their pictures (the Image: lines of fetch_page) as a small strip, " +
+        "automatically: don't paste those links, a Sources list or image URLs. When it helps, reach for a picture, chart, table or card over a long wall of text."
 
     private val ic = setOf(RegexOption.IGNORE_CASE)
 

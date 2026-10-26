@@ -30,6 +30,7 @@ object ChatJson {
             if (m.speaker.isNotEmpty()) put("speaker", m.speaker)
             if (m.receipt.isNotEmpty()) put("receipt", m.receipt)
             if (m.trace.isNotEmpty()) put("trace", m.trace)   // v0.45.5 "What happened"
+            if (m.sources.isNotEmpty()) put("sources", m.sources)   // 0.46.2 source pills + pictures
             if (m.gid.isNotEmpty()) put("gid", m.gid)   // v0.45.0 (#37)
             if (m.reactions.isNotEmpty()) put("reactions", Reaction.json(m.reactions))   // v0.45.0 reactions
         }.toString()
@@ -75,7 +76,8 @@ object ChatJson {
             val replyTo = m.optJSONArray("reply_to")?.let { a -> (0 until a.length()).map { a.optLong(it) } }?.filter { it > 0 } ?: emptyList()
             list += ChatMessage(mid, Role.valueOf(m.getString("role")), m.getString("text"), files, m.optString("thinking"), fu, m.optString("meta"), media,
                 at = m.optLong("at"), thinkMs = m.optLong("think_ms"), startAt = m.optLong("start_at"), replyTo = replyTo, speaker = m.optString("speaker"),
-                receipt = m.optString("receipt"), gid = m.getString("gid"), reactions = Reaction.list(m.optJSONArray("reactions")), trace = m.optString("trace"))
+                receipt = m.optString("receipt"), gid = m.getString("gid"), reactions = Reaction.list(m.optJSONArray("reactions")), trace = m.optString("trace"),
+                sources = m.optString("sources"))
             if (m.has("mark")) marks[mid] = m.getInt("mark")
         }
         return ParsedChat(o, list, marks, maxId)

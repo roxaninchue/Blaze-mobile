@@ -175,6 +175,48 @@
             android:theme="@style/Theme.Blaze"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode"
             android:windowSoftInputMode="adjustResize" />
+        <!-- 0.46.2 Movies: one-tap add-source links (only the url parameter is read; the user still taps Install). -->
+        <activity
+            android:name=".movies.AddSourceActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:excludeFromRecents="true"
+            android:noHistory="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="blaze" android:host="add-source" />
+            </intent-filter>
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="blazeinchue.pages.dev" android:path="/add-source" />
+                <data android:scheme="https" android:host="blazeinchue.pages.dev" android:path="/add-source/" />
+            </intent-filter>
+        </activity>
+        <!-- 0.46.2 Movies: "Open with Blaze" for video files from other apps (only the URI is read; plays in Blaze Video). -->
+        <activity
+            android:name=".movies.MovieOpenActivity"
+            android:exported="true"
+            android:label="Blaze Video"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:excludeFromRecents="true"
+            android:noHistory="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" android:mimeType="video/*" />
+                <data android:scheme="file" android:mimeType="video/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="video/*" />
+            </intent-filter>
+        </activity>
         <activity
             android:name=".mediaapps.VideoActivity"
             android:exported="false"

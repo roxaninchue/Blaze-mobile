@@ -326,6 +326,11 @@
       "name": "price-scout",
       "version": 1,
       "sha256": "d42bcac0c7827d71c3794da5eeebe12eeefd095eb94151060d98e5168647c464"
+    },
+    {
+      "name": "reverse-engineer-anything",
+      "version": 1,
+      "sha256": "2a1e90d2972aae31d49c294cc0d47a027d2c9b623f35d3fcbbea8d62241fac6a"
     }
   ]
 }

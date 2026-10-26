@@ -306,7 +306,7 @@ object ToolTruth {
     val PHONE_CORE = setOf("open_app", "read_screen", "tap", "type_text", "scroll", "press_button", "wait", "search_in_app", "open_url",
         "navigate_to", "compose_sms", "set_alarm", "set_timer", "process", "processes", "add_calendar_event", "calendar_events", "add_contact",
         "find_contact", "device_setting", "phone_mode", "open_settings_page", "open_settings", "list_routines", "memory_save", "get_weather", "send_sms",
-        "message_contact", "call_number", "dial", "music_ops", "video_ops", "blaze_now", "load_tools", "find_tool")
+        "message_contact", "call_number", "dial", "music_ops", "video_ops", "movies", "blaze_now", "load_tools", "find_tool")
 
     /** Rarely needed on a phone turn: dropped first when the list is over the cap. */
     val LOW = listOf("jamendo_setup", "install_skill", "skill_file", "write_skill", "skill_manage", "brand_kit", "blazerouter", "update_brief",

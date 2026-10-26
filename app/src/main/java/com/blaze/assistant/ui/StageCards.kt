@@ -58,6 +58,7 @@ import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Lightbulb
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Movie
+import androidx.compose.material.icons.rounded.VideoLibrary
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.NotificationsOff
@@ -145,7 +146,9 @@ data class StageBrowserNow(val hasTab: Boolean = false, val title: String = "", 
 
 @Immutable
 data class StageData(val now: Long = 0L, val timer: TimerState? = null, val music: StageMusicLogic.Snapshot = StageMusicLogic.Snapshot(),
-                     val cardFront: String = "", val cardBack: String = "", val cardsLeft: Int = 0, val browser: StageBrowserNow = StageBrowserNow())
+                     val cardFront: String = "", val cardBack: String = "", val cardsLeft: Int = 0, val browser: StageBrowserNow = StageBrowserNow(),
+                     /** 0.46.2 Movies: continue watching, shown on an empty video card. */
+                     val movies: List<com.blaze.assistant.movies.Progress> = emptyList())
 
 sealed class StageEvent {
     data class Timer(val op: String, val minutes: Double = 1.0) : StageEvent()
@@ -164,7 +167,7 @@ sealed class StageEvent {
     data class Props(val props: Map<String, String>) : StageEvent()
     /** back | forward | reload | stop | go:<text> */
     data class Browser(val op: String) : StageEvent()
-    /** speed | fullscreen */
+    /** speed | fullscreen | pick:<i> (a search result) | resume:<i> (continue watching) | results (back to the results) */
     data class Video(val op: String) : StageEvent()
     object OpenFull : StageEvent()
     object Expand : StageEvent()
@@ -240,7 +243,7 @@ fun StageHero(item: StageItem, d: StageData, modifier: Modifier = Modifier, low:
                 when (item.kind) {
                     StageKind.TIMER -> TimerFace(item, d.timer, d.now, low, on)
                     StageKind.MUSIC -> MusicFace(item, d.music, on)
-                    StageKind.VIDEO -> VideoFace(item, video, on)
+                    StageKind.VIDEO -> VideoFace(item, d, video, on)
                     StageKind.QUIZ -> QuizFace(item, on)
                     StageKind.FLASHCARDS -> CardsFace(item, d, on)
                     StageKind.PLAN -> PlanFace(item, on)
@@ -448,13 +451,17 @@ private fun MusicQueue(s: StageMusicLogic.Snapshot, m: StageMusicLogic.Card, mod
 // ---------------------------------------------------------------- video
 
 @Composable
-private fun VideoFace(item: StageItem, video: (@Composable (Modifier) -> Unit)?, on: (StageEvent) -> Unit) {
+private fun VideoFace(item: StageItem, d: StageData, video: (@Composable (Modifier) -> Unit)?, on: (StageEvent) -> Unit) {
     val c = LocalBlaze.current
     val url = item.props["url"].orEmpty()
+    val results = remember(item.props["results"]) { com.blaze.assistant.movies.StageMoviesLogic.results(item.props["results"]) }
+    val err = item.props["error"].orEmpty()
     if (video != null && url.isNotBlank() && !StageVideoUrl.isYouTube(url)) {
         Column(Modifier.fillMaxSize()) {
             video(Modifier.weight(1f).fillMaxWidth().clip(RoundedCornerShape(14.dp)))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                if (results.isNotEmpty()) StageIconButton(Icons.Rounded.VideoLibrary, "Back to the movie results", size = 40.dp) { on(StageEvent.Video("results")) }
+                Spacer(Modifier.weight(1f))
                 val sp = item.props["speed"].orEmpty().ifBlank { "1" }
                 ValueChip(sp + "x", "Playback speed ${sp}x. Tap to change") { on(StageEvent.Video("speed")) }
                 StageIconButton(Icons.Rounded.Speed, "Playback speed", size = 40.dp) { on(StageEvent.Video("speed")) }
@@ -465,12 +472,50 @@ private fun VideoFace(item: StageItem, video: (@Composable (Modifier) -> Unit)?,
         }
         return
     }
+    // 0.46.2 Movies: search results (tap = play here), else Continue watching, else the Blaze Video button.
+    val busy = item.props["busy"] == "true"
+    if (results.isNotEmpty() || item.props["query"] != null) {
+        Column(Modifier.fillMaxSize()) {
+            val failed = item.props["failed"].orEmpty()
+            if (results.isEmpty()) Text("Nothing found for \u201c${item.props["query"].orEmpty()}\u201d", color = c.sub, fontSize = 13.sp)
+            if (failed.isNotBlank()) Text("Didn't answer: $failed", color = c.sub, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (err.isNotBlank()) Text(err, color = c.sub, fontSize = 12.sp, maxLines = 2)
+            LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
+                itemsIndexed(results) { i, r -> MovieRow(r.title, listOf(r.tag, sourceName(r.source)).filter { it.isNotBlank() }.joinToString(" \u00b7 "), busy) { on(StageEvent.Video("pick:$i")) } }
+            }
+        }
+        return
+    }
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        if (d.movies.isNotEmpty()) {
+            Text("Continue watching", color = c.ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.fillMaxWidth().semantics { heading() })
+            d.movies.forEachIndexed { i, pr -> MovieRow(pr.play.title, (pr.fraction * 100).toInt().toString() + "% watched", busy) { on(StageEvent.Video("resume:$i")) } }
+            if (err.isNotBlank()) Text(err, color = c.sub, fontSize = 12.sp, maxLines = 2)
+            Spacer(Modifier.height(6.dp))
+            StageIconButton(Icons.AutoMirrored.Rounded.OpenInNew, "Open Movies in Blaze Video", size = 40.dp) { on(StageEvent.OpenFull) }
+            return@Column
+        }
         Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(14.dp)).background(Color.Black.copy(alpha = if (c.dark) 0.6f else 0.85f)), contentAlignment = Alignment.Center) {
             StageIconButton(Icons.Rounded.PlayArrow, "Open in Blaze Video", primary = true, size = 60.dp) { on(StageEvent.OpenFull) }
         }
         Spacer(Modifier.height(8.dp))
         Text(if (url.isBlank()) "No video picked" else if (StageVideoUrl.isYouTube(url)) "YouTube plays in Blaze Video" else url.substringAfterLast('/').take(60), color = c.sub, fontSize = 13.sp, maxLines = 1)
+    }
+}
+
+private fun sourceName(id: String): String = when { id == "archive" -> "Internet Archive"; id == "blender" -> "Blender"; id == "local" -> "Your videos"; id == "jellyfin" -> "Jellyfin"; id.startsWith("p:") -> id.removePrefix("p:"); else -> id }
+
+/** One movie line on the video card: title, a small detail line, and a play icon (the whole row plays it). */
+@Composable
+private fun MovieRow(title: String, sub: String, busy: Boolean, onPlay: () -> Unit) {
+    val c = LocalBlaze.current
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(enabled = !busy, role = Role.Button, onClickLabel = "Play $title") { onPlay() }
+        .padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f).padding(start = 4.dp)) {
+            Text(title, color = c.ink, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (sub.isNotBlank()) Text(sub, color = c.sub, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        StageIconButton(Icons.Rounded.PlayArrow, "Play $title", size = 40.dp, enabled = !busy) { onPlay() }
     }
 }
 

@@ -48,7 +48,9 @@ data class ChatMessage(val id: Long, val role: Role, val text: String, val files
                        /** v0.45.0 reactions (R1): saved with the message, synced as their own small items. */
                        val reactions: List<Reaction> = emptyList(),
                        /** v0.45.5 "What happened": model, route, tools, timings, errors and request id of this reply (TurnTrace JSON); "" = none. */
-                       val trace: String = "")
+                       val trace: String = "",
+                       /** 0.46.2 the pages this reply's turn searched / read, and their pictures (ReplySources JSON); "" = none. */
+                       val sources: String = "")
 
 /** Splits a raw reply into what's shown, hidden reasoning (<think> tags) and follow-up suggestions. */
 object ReplyParts {
@@ -596,6 +598,12 @@ data class Attachment(val name: String, val parts: List<JSONObject>, val thumb: 
                             val res = com.blaze.assistant.stage.StageStore.run(app, com.blaze.assistant.stage.StageTools.SHOW, JSONObject().put("kind", r.kind))
                             if (com.blaze.assistant.stage.StageStore.state.value.items.any { it.kind.id == r.kind }) "The browser card is on the chat; its open-in-full-view button gives the whole screen." else res
                         } catch (e: Exception) { com.blaze.assistant.device.CrashLog.quiet("Agent: in-app stage", e); "Couldn't put the browser card up: " + (e.message ?: "unknown error") + "." }
+                        s.selfTurn(text.trim(), reply, byVoice, "\u26A1 Blaze itself")
+                    }
+                    is InAppRoute.Route.Movie -> scope.launch {
+                        // 0.46.2: "play the movie …", "search movies …", "continue watching" -> the Stage video card (official sources first).
+                        val reply = try { com.blaze.assistant.movies.MovieTools.route(app, r.action, r.query, text) }
+                            catch (e: Exception) { com.blaze.assistant.device.CrashLog.quiet("Agent: in-app movies", e); "Couldn't reach Movies: " + (e.message ?: "unknown error") + "." }
                         s.selfTurn(text.trim(), reply, byVoice, "\u26A1 Blaze itself")
                     }
                     is InAppRoute.Route.View -> {
@@ -1333,6 +1341,7 @@ When you finish, say what you did in one short sentence.
         t.put(com.blaze.assistant.life.LifeLogs.tool())
         t.put(com.blaze.assistant.mediaapps.MediaFetch.tool())
         t.put(com.blaze.assistant.mediaapps.VideoTools.tool())   // v0.34.0
+        t.put(com.blaze.assistant.movies.MovieTools.tool())   // 0.46.2 Movies
         t.put(com.blaze.assistant.mediaapps.MusicTools.tool())   // v0.34.0
         t.put(com.blaze.assistant.media.GalleryOps.tool())   // v0.34.0
         t.put(com.blaze.assistant.device.CameraMathTool.tool())   // v0.34.0
@@ -1764,9 +1773,12 @@ When you finish, say what you did in one short sentence.
 
         /** Media made during this turn; shown under the final reply. */
         val pendingMedia = mutableListOf<String>()
+        /** 0.46.2 pages searched / read during this turn (source pills + pictures under the final reply). */
+        val pendingSources = ReplySources.Collector()
 
         fun addReply(liveId: Long, raw: String, thinking: String, fu: List<String> = emptyList(), meta: String = "", receipt: String = "", how: String = "") {
             val media = synchronized(pendingMedia) { pendingMedia.toList().also { pendingMedia.clear() } }
+            val found = pendingSources.take()
             val p = ReplyParts.split(raw, final = true).let { if (it.followups.isEmpty() && fu.isNotEmpty()) it.copy(followups = fu) else it }
             val think = listOf(thinking, p.thinking).filter { it.isNotBlank() }.joinToString("\n\n")
             val tms = if (think.isNotBlank()) thinkClock.ms() else 0L
@@ -1777,9 +1789,11 @@ When you finish, say what you did in one short sentence.
             val parts = RapidMessages.split(p.text, known)
             parts.forEachIndexed { i, part ->
                 // v0.26.2: never a bare "Done." (the loop stops empty answers before this; a canned turn always has text).
-                val text = Duo.clean(part.text).ifEmpty { "I didn't get an answer that time. Tap Retry." }
                 val isFirst = i == 0
                 val isLast = i == parts.size - 1
+                // 0.46.2: links a source pill shows are taken out of the text (they'd show twice).
+                val text = Duo.clean(part.text).let { if (isLast && !found.isEmpty) ReplySources.stripInline(it, found) else it }.ifEmpty { "I didn't get an answer that time. Tap Retry." }
+                val src2 = if (isLast) ReplySources.encode(found) else ""
                 val th = if (isFirst) think else ""
                 val ms = if (isFirst) tms else 0L
                 val fu2 = if (isLast) QuickReplies.filter(p.followups, lastUserText()) else emptyList()
@@ -1788,10 +1802,10 @@ When you finish, say what you did in one short sentence.
                 val rc2 = if (isLast) receipt else ""
                 val tr2 = if (isLast) how else ""
                 if (isFirst && liveId >= 0) msgs = msgs.map {
-                    if (it.id == liveId) it.copy(role = Role.BLAZE, text = text, thinking = th, followups = fu2, meta = meta2, media = media2, thinkMs = ms, replyTo = part.refs, speaker = speakerOf(voice), receipt = rc2, trace = tr2) else it }
+                    if (it.id == liveId) it.copy(role = Role.BLAZE, text = text, thinking = th, followups = fu2, meta = meta2, media = media2, thinkMs = ms, replyTo = part.refs, speaker = speakerOf(voice), receipt = rc2, trace = tr2, sources = src2) else it }
                 else {
                     val id = ids.getAndIncrement()
-                    msgs = msgs + ChatMessage(id, Role.BLAZE, text, thinking = th, followups = fu2, meta = meta2, media = media2, thinkMs = ms, replyTo = part.refs, speaker = speakerOf(voice), receipt = rc2, trace = tr2)
+                    msgs = msgs + ChatMessage(id, Role.BLAZE, text, thinking = th, followups = fu2, meta = meta2, media = media2, thinkMs = ms, replyTo = part.refs, speaker = speakerOf(voice), receipt = rc2, trace = tr2, sources = src2)
                 }
             }
         }
@@ -4455,10 +4469,11 @@ When you finish, say what you did in one short sentence.
                 "web_search" -> { add(Role.STEP, "Searching the web for \u201c${args.optString("query").take(50)}\u201d")
                     val r = ToolCache.cached(name, args, lastUserText(), isPrivate) { Web.search(args.optString("query")) }
                     if (!r.startsWith("[Cached")) ToolCache.prefetch(r, unmetered(), Settings.lowData, isPrivate) { u -> Web.fetch(u) }
+                    pendingSources.addSearch(r.removePrefix("[Cached]").trimStart())
                     r }
                 "fetch_page" -> { add(Role.STEP, "Reading ${args.optString("url").removePrefix("https://").take(50)}")
                     val a = JSONObject(args.toString()).put("url", ToolLeak.fixBlazeUrl(args.optString("url")))
-                    ToolCache.cached(name, a, lastUserText(), isPrivate) { Web.fetch(a.optString("url")) } }
+                    ToolCache.cached(name, a, lastUserText(), isPrivate) { Web.fetch(a.optString("url")) }.also { pendingSources.addFetch(a.optString("url"), it) } }
                 "blazerouter" -> { add(Role.STEP, "BlazeRouter: " + args.optString("action")); BlazeRouter.run(app, args) }
                 CommandRegistry.TOOL -> {
                     val cn = args.optString("command").trim().removePrefix("/").substringBefore(' ').lowercase()
@@ -4831,6 +4846,8 @@ When you finish, say what you did in one short sentence.
                         com.blaze.assistant.mediaapps.MusicTools.run(app, args) }
                     name == com.blaze.assistant.mediaapps.VideoTools.TOOL -> { add(Role.STEP, com.blaze.assistant.mediaapps.VideoTools.describe(args))
                         com.blaze.assistant.mediaapps.VideoTools.run(app, args) }
+                    name == com.blaze.assistant.movies.MovieTools.TOOL -> { add(Role.STEP, com.blaze.assistant.movies.MovieTools.describe(args))
+                        com.blaze.assistant.movies.MovieTools.run(app, args, lastUserText()) }
                     name == com.blaze.assistant.mediaapps.MediaFetch.TOOL -> { add(Role.STEP, com.blaze.assistant.mediaapps.MediaFetch.describe(args))
                         kotlinx.coroutines.withContext(Dispatchers.IO) { com.blaze.assistant.mediaapps.MediaFetch.run(app, args) } }
                     name == com.blaze.assistant.life.LifeLogs.TOOL -> { add(Role.STEP, com.blaze.assistant.life.LifeLogs.describe(args))

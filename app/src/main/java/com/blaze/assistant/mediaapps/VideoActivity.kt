@@ -139,6 +139,11 @@ class VideoActivity : ComponentActivity(), com.blaze.assistant.ui.BackRule.ToCha
         /** v0.34.0: plays a library video (agent tool video_ops play). */
         fun openAndPlay(ctx: Context, key: String) = ctx.startActivity(Intent(ctx, VideoActivity::class.java)
             .putExtra(EXTRA_PLAY, key).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+        const val EXTRA_MOVIE = "blaze_video_movie"; const val EXTRA_AT = "blaze_video_at"; const val EXTRA_ADD_SOURCE = "blaze_video_add_source"
+        /** 0.46.2 Movies: play a movie (from the Stage card's "open in full view", or a file opened from another app) at [at] ms (-1 = resume). */
+        fun openMovie(ctx: Context, p: com.blaze.assistant.movies.MoviePlay, at: Long = -1L) = ctx.startActivity(Intent(ctx, VideoActivity::class.java)
+            .putExtra(EXTRA_MOVIE, p.toJson().toString()).putExtra(EXTRA_AT, at)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_GRANT_READ_URI_PERMISSION))
         /** The open Video app (same process), for the agent's video_ops tool. */
         @Volatile var live: VideoActivity? = null
             private set
@@ -167,6 +172,7 @@ class VideoActivity : ComponentActivity(), com.blaze.assistant.ui.BackRule.ToCha
 
     private fun onEnded() {
         val t = current.value ?: return
+        if (t.source == "movie") { movie?.let { com.blaze.assistant.movies.Movies.progress(it, player.duration.coerceAtLeast(1), player.duration) }; return }
         if (t.source != "stream") MediaPrefs.markFinished(this, t.key, System.currentTimeMillis())
         if (!MediaPrefs.autoplay(this) || t.source == "stream") return
         val next = VideoSmart.next(t, MediaLib.videos.value) ?: return
@@ -290,6 +296,19 @@ class VideoActivity : ComponentActivity(), com.blaze.assistant.ui.BackRule.ToCha
     }
 
     private fun handlePlay(i: Intent?) {
+        // 0.46.2 an add-source link: the Movies tab shows the source and a single Install button.
+        i?.getStringExtra(EXTRA_ADD_SOURCE)?.let { u ->
+            i.removeExtra(EXTRA_ADD_SOURCE)
+            com.blaze.assistant.movies.AddSourceLink.parse(com.blaze.assistant.movies.AddSourceLink.make(u, https = false))?.let { ok ->
+                pendingSource.value = ok; tab.value = "movies"; browse.value = "movies" }
+            return
+        }
+        i?.getStringExtra(EXTRA_MOVIE)?.let { j ->
+            i.removeExtra(EXTRA_MOVIE)
+            val at = i.getLongExtra(EXTRA_AT, -1L)
+            com.blaze.assistant.movies.MoviePlay.parse(j)?.takeIf { it.url.isNotBlank() }?.let { p -> window.decorView.post { playMovie(p, at) } }
+            return
+        }
         val key = i?.getStringExtra(EXTRA_PLAY)?.takeIf { it.isNotBlank() } ?: return
         i.removeExtra(EXTRA_PLAY)
         lifecycleScope.launch {
@@ -327,6 +346,7 @@ class VideoActivity : ComponentActivity(), com.blaze.assistant.ui.BackRule.ToCha
         enableEdgeToEdge()
         intent?.getStringExtra(MusicActivity.EXTRA_TAB)?.takeIf { it.isNotBlank() }?.let { tab.value = it }
         com.blaze.assistant.mediaapps.store.JamendoSource.init(this)
+        com.blaze.assistant.movies.Movies.init(this)
         lifecycleScope.launch(Dispatchers.IO) { MediaLib.ensure(this@VideoActivity); Downloads.resumePending(this@VideoActivity); smartCleanup() }
         intros = MediaPrefs.intros(this).toMutableMap()
         live = this
@@ -378,14 +398,56 @@ class VideoActivity : ComponentActivity(), com.blaze.assistant.ui.BackRule.ToCha
 
     fun savePos() {
         val t = current.value ?: return
+        if (t.source == "movie") { movie?.let { if (player.currentPosition > 0) com.blaze.assistant.movies.Movies.progress(it, player.currentPosition, player.duration.coerceAtLeast(0)) }; return }
         if (t.source == "stream") return
         MediaLib.savePosition(t.key, player.currentPosition, player.duration.coerceAtLeast(0))
         com.blaze.assistant.agent.AwarenessHooks.video(player, t)
     }
 
+    // ---------------------------------------------------------------- 0.46.2 Movies
+    /** The movie playing now (Movies tab, a Stage card opened in full view, or a file from another app). */
+    var movie: com.blaze.assistant.movies.MoviePlay? = null
+        private set
+
+    /** Plays a movie from any Movies source: its stream (with the source's request headers) and subtitles, resumed where it was left. */
+    fun playMovie(p: com.blaze.assistant.movies.MoviePlay, at: Long = -1L) {
+        if (!::player.isInitialized) return
+        savePos()
+        current.value?.let { com.blaze.assistant.agent.AwarenessHooks.videoLeft(player, it, clear = false) }
+        upNext.value = null; heightCap = 0
+        movie = p
+        http.setDefaultRequestProperties(p.headers)
+        val t = Track("movie:" + p.key, p.url, p.title, sourceLabel(p.source), "", 0, p.image, "movie", 0, "", "video", "", p.source)
+        current.value = t
+        playUris = listOf(p.url)
+        resetSubs(p.subtitles.filter { it.mime == "text/vtt" }.mapIndexed { i, s -> StoreSubtitle("mv$i", s.url, s.lang, s.label.ifBlank { s.lang }) })
+        Subs.pick(subsAvailable.value, SubsLoader.pref(this))?.let { subsLoaded += it; pendingSub = it.id }
+        subsLoaded.addAll(subsAvailable.value.filter { s -> subsLoaded.none { it.id == s.id } })
+        val pos = if (at >= 0) at else com.blaze.assistant.movies.Movies.lib.value.resumeAt(p.key)
+        load(pos, true)
+        tab.value = "player"
+        com.blaze.assistant.agent.AwarenessHooks.video(player, t)
+    }
+
+    /** The browse tab under the player sheet (library | movies | store), so collapsing the player goes back where the user was. */
+    val browse = mutableStateOf("library")
+    /** 0.46.2 a source from an add-source link, waiting for the user's Install tap (null = none). */
+    val pendingSource = mutableStateOf<String?>(null)
+    private val pickMovie = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+            val name = runCatching { contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c -> if (c.moveToFirst()) c.getString(0) else null } }.getOrNull()
+            playMovie(com.blaze.assistant.movies.MovieOpenActivity.play(uri, name ?: uri.lastPathSegment.orEmpty()))
+        }
+    }
+    fun pickMovieFile() { runCatching { pickMovie.launch(arrayOf("video/*")) } }
+
+    private fun sourceLabel(id: String) = when { id == "archive" -> "Internet Archive"; id == "blender" -> "Blender open movie"; id == "local" -> "Your video"; id == "jellyfin" -> "Jellyfin"; id.startsWith("p:") -> id.removePrefix("p:"); else -> id }
+
     /** Plays a library video from where it was left. */
     fun play(t: Track) {
         savePos()
+        movie = null; http.setDefaultRequestProperties(emptyMap())
         current.value?.takeIf { it.key != t.key }?.let { com.blaze.assistant.agent.AwarenessHooks.videoLeft(player, it, clear = false) }
         upNext.value = null
         current.value = t
@@ -567,6 +629,7 @@ class VideoActivity : ComponentActivity(), com.blaze.assistant.ui.BackRule.ToCha
         val picks = VideoSmart.capped("video", d, src, heightCap) ?: VideoSmart.streamFor("video", d, src, MediaPrefs.saving(this))
         if (picks.isEmpty()) return
         upNext.value = null
+        savePos(); movie = null; http.setDefaultRequestProperties(emptyMap())
         lastWatch = item to src
         lastDetail = d
         if (at == 0L) retriedKey = ""
@@ -672,7 +735,7 @@ class VideoActivity : ComponentActivity(), com.blaze.assistant.ui.BackRule.ToCha
         player.stop()
         player.clearMediaItems()
         current.value = null
-        if (tab.value == "player") tab.value = "library"
+        if (tab.value == "player") tab.value = browse.value
     }
 
     override fun onDestroy() {
@@ -693,7 +756,7 @@ private fun VideoApp(a: VideoActivity) {
     val store = remember { StoreState("video") }
     BackHandler(full) { a.setFullscreen(false) }
     // v0.34.1: Back collapses the player sheet; the video keeps playing in the mini-player.
-    BackHandler(!full && tab == "player") { a.tab.value = "library" }
+    BackHandler(!full && tab == "player") { a.tab.value = a.browse.value }
     // Wave A item 26: Back from the library or the store goes to the agent chat (not the launcher).
     BackHandler(BackToChat.step(full, tab) == BackToChat.Step.TO_CHAT) { a.leaveToChat() }
 
@@ -708,12 +771,15 @@ private fun VideoApp(a: VideoActivity) {
                 BackButton({ a.leaveToChat() }, desc = "Back to chat")
                 Spacer(Modifier.weight(1f))
                 // v0.34.1: one Library entry (the player is a sheet over it now, not a tab).
-                AppPill(listOf("library" to "Library", "store" to "Store"), if (tab == "store") "store" else "library", onPick = { a.tab.value = it })
+                // 0.46.2: Movies (official sources, your videos, Jellyfin, sources you add) between Library and Store.
+                AppPill(listOf("library" to "Library", "movies" to "Movies", "store" to "Store"), if (tab == "player") a.browse.value else tab, onPick = { a.tab.value = it; a.browse.value = it })
                 Spacer(Modifier.weight(1f)); com.blaze.assistant.ui.ThemeSwitch(Modifier.width(48.dp))
             }
             Box(Modifier.weight(1f)) {
                 when (tab) {
                     "store" -> StoreView("video", store) { item, d, src -> a.watch(item, d, src) }
+                    "movies" -> MoviesTab(onPlay = { a.playMovie(it) }, onPickFile = { a.pickMovieFile() }, incoming = a.pendingSource.value,
+                        onIncomingDone = { a.pendingSource.value = null })
                     else -> VideoLibrary(a)
                 }
             }
@@ -722,7 +788,7 @@ private fun VideoApp(a: VideoActivity) {
         AnimatedVisibility(tab != "player" && cur != null, Modifier.align(Alignment.BottomCenter), enter = MotionTokens.enterUp(), exit = MotionTokens.exitDown()) {
             VideoMini(a)
         }
-        PlayerSheet(tab == "player", onCollapse = { a.tab.value = "library" }) { PlayerTab(a) }
+        PlayerSheet(tab == "player", onCollapse = { a.tab.value = a.browse.value }) { PlayerTab(a) }
     }
 }
 

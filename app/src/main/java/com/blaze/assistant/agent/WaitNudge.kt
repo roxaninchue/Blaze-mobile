@@ -27,8 +27,10 @@ object WaitNudge {
             "\nRIGHT NOW: ${worker.display}, your partner, is working on what the user asked: \"${task.trim().take(400)}\". " +
             "It has been about $elapsedSec seconds and nothing new has shown on the user's screen, so they're waiting." +
             (if (firstName != null) " The user's first name is $firstName." else " You don't know the user's name, so don't use one.") +
-            "\nWrite ONE short message to the user in your own voice, 1 or 2 sentences: let them know ${worker.display} is on it and " +
-            "will be back with it shortly. Sound natural and like yourself, not a template; vary your wording. Don't offer anything or ask " +
+            "\nWrite ONE short message to the user, 1 or 2 sentences, PLAIN AND FACTUAL: say what ${worker.display} is doing for them in concrete words " +
+            "(like \"${worker.display} is looking up 2025 sales figures.\"). If you mention yourself, say \"I\" (never your own name in the third person). " +
+            "No metaphors, similes, imagery or poetry (nothing like \"weaving\", \"threads of gold\", \"think of it like…\"), no progress or timing claims " +
+            "(\"almost there\", \"won't be long\"). Not a template: vary your wording. Don't offer anything or ask " +
             "anything (a short \"yes\" from the user must never land on an offer of yours), don't invent progress, results or times, don't " +
             "do the task yourself, no lists, no tags, and never mention models, tools, prompts or that you were asked to write this. " +
             "Don't restate what their message is about and never promise it's locked in, coming or almost ready."
@@ -45,12 +47,22 @@ object WaitNudge {
      */
     fun skip(worker: Duo.Who, userText: String): Boolean = worker == Duo.Who.HALO || NewsPromise.sharingNews(userText)
 
+    /**
+     * 0.46.2 (phone: "Blaze's just weaving the data into something bright—think of it like stitching threads of gold"): a wait line
+     * is plain and factual or there is none. [poetic] = metaphor / imagery filler (the whole line is dropped); [progress] = a
+     * progress or timing claim nobody measured (that sentence is dropped).
+     */
+    val poetic = Regex("""\b(?:think of it (?:like|as)|picture (?:this|it)|imagine|weav\w*|stitch\w*|threads? of|tapestr\w*|spinning|spins? up|brew\w*|cooking (?:up|something)|whipping up|conjur\w*|alchem\w*|magic\w*|sprinkl\w*|sparkl\w*|glow\w*|shimmer\w*|golden|gold\b|something (?:bright|beautiful|special|magical)|symphon\w*|paint(?:s|ing)? (?:a|the) picture|works? (?:its|her|his|their) magic|like a \w+|journey|dance|dancing|stars? align|crafting|polishing|bright and shiny)""", RegexOption.IGNORE_CASE)
+    val progress = Regex("""\b(?:almost (?:there|done|ready|finished)|nearly (?:there|done|ready)|finishing touches|any (?:second|moment|minute) now|in (?:a|just a) (?:sec|second|moment|jiffy|tick)|won'?t be long|be back (?:in a|shortly|soon)|shortly|just about (?:done|ready)|wrapping (?:it )?up|locked in|coming right up)\b""", RegexOption.IGNORE_CASE)
+    fun filler(line: String): Boolean = poetic.containsMatchIn(line)
+
     fun clean(raw: String): String? {
         var t = tagRe.replace(raw, "").trim().trim('"', '\u201c', '\u201d').trim()
         if (t.isEmpty() || t.contains("```") || t.contains('{') || t.lines().count { it.isNotBlank() } > 2) return null
         t = t.lines().joinToString(" ") { it.trim() }.trim()
         // 0.45.29 (stale "Yes"): offers and questions are taken out, so a "yes" meant for the real answer can't bind to this line.
-        val parts = t.split(sentenceEnd).filter { it.isNotBlank() && !offerRe.containsMatchIn(it) && !NewsPromise.promise.containsMatchIn(it.replace(Regex("""\bis on it\b|'s on it\b""", RegexOption.IGNORE_CASE), "is working")) }
+        if (filler(t)) return null
+        val parts = t.split(sentenceEnd).filter { it.isNotBlank() && !offerRe.containsMatchIn(it) && !progress.containsMatchIn(it) && !NewsPromise.promise.containsMatchIn(it.replace(Regex("""\bis on it\b|'s on it\b""", RegexOption.IGNORE_CASE), "is working")) }
         t = parts.take(2).joinToString(" ")
         if (t.length < 12 || t.length > MAX_CHARS) return null
         return t

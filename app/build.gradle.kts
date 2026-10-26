@@ -13,8 +13,8 @@ android {
         applicationId = "com.blaze.assistant"
         minSdk = 26
         targetSdk = 34
-        versionCode = 178
-        versionName = "0.46.1"
+        versionCode = 179
+        versionName = "0.46.2"
         // v0.30.1 Music Store: Jamendo client_id, from the environment or -Pjamendo.clientId at build time. Never hard-coded;
         // empty = "not configured" (the user can paste one in the Music Store instead).
         buildConfigField("String", "JAMENDO_CLIENT_ID", "\"" + (System.getenv("JAMENDO_CLIENT_ID") ?: (project.findProperty("jamendo.clientId") as String?) ?: "").replace("\"", "") + "\"")
@@ -248,6 +248,11 @@ dependencies {
     implementation("androidx.media3:media3-effect:$media3")
     implementation("com.google.mediapipe:tasks-genai:0.10.24")   // v0.33.0 Offline Brain
     implementation(project(":storeapi"))
+    // 0.46.2 Movies: user-added provider modules run in QuickJS (dokar3/quickjs-kt, Apache-2.0; 1.0.0-alpha13 is the last build on
+    // Kotlin 2.0) with a Jsoup-backed cheerio shim (Jsoup, MIT). Unit tests swap in the JVM build (natives for linux x64/arm64).
+    implementation("io.github.dokar3:quickjs-kt-android:1.0.0-alpha13")
+    implementation("org.jsoup:jsoup:1.17.2")
+    testImplementation("io.github.dokar3:quickjs-kt-jvm:1.0.0-alpha13")
     // The YouTube Store is a plug-in: compiled in only when the youtube/ folder (Gradle :youtube) exists.
     if (rootProject.findProject(":youtube") != null) implementation(project(":youtube"))
     testImplementation("junit:junit:4.13.2")
@@ -262,4 +267,10 @@ dependencies {
     testImplementation("androidx.test:core:1.6.1")
     testImplementation("androidx.test.ext:junit:1.2.1")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+}
+
+// 0.46.2: JVM unit tests run the real QuickJS engine from quickjs-kt-jvm; the Android build of the same classes (whose native
+// library only loads on a phone) is kept off the unit-test runtime classpath so the two never clash.
+configurations.configureEach {
+    if (name.endsWith("UnitTestRuntimeClasspath")) exclude(group = "io.github.dokar3", module = "quickjs-kt-android")
 }

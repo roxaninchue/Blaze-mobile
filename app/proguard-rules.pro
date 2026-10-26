@@ -35,3 +35,8 @@
 -dontwarn com.google.protobuf.ProtoField
 -dontwarn com.google.protobuf.ProtoPresenceBits
 -dontwarn com.google.protobuf.ProtoPresenceCheckedField
+
+# 0.46.2 Movies: QuickJS (quickjs-kt) calls back into its Kotlin classes over JNI; keep the whole (small) library. Jsoup optional deps.
+-keep class com.dokar.quickjs.** { *; }
+-dontwarn com.google.re2j.**
+-dontwarn org.jspecify.**
