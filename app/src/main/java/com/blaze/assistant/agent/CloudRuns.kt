@@ -824,7 +824,8 @@ object CloudRuns {
     fun eligible(mainChat: Boolean, private: Boolean, online: Boolean): Boolean = try {
         // 0.46.3 brain order: a Cloud run is Blaze Cloud, which now comes after the on-device brain; while that is ready the
         // turn stays on the phone's loop (on-device → Nous → Blaze Cloud)
-        !(try { BackupBrain.ready() } catch (_: Throwable) { false }) &&
+        // 0.46.4: only a warm on-phone brain keeps the turn off the run (a cold one is never waited for)
+        !(try { BackupBrain.warm() } catch (_: Throwable) { false }) &&
         mainChat && !private && online && Settings.bool(PREF, true) && Settings.gatewayToken().isNotBlank() && !client().store.isOff()
     } catch (_: Throwable) { false }
 

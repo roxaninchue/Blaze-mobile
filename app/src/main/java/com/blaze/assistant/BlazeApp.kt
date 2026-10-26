@@ -93,6 +93,7 @@ class BlazeApp : Application() {
         com.blaze.assistant.device.StartGuard.step("terminal.Terminal.init") { com.blaze.assistant.terminal.Terminal.init(this) }
         // v0.45.26: the on-device backup brain (installs quietly on Wi-Fi, starts only when Blaze Cloud struggles) and
         // "ready out of the box" Linux tools for Linuxes installed before this version. Both wait a minute after start.
+        try { com.blaze.assistant.device.Thermal.init(this) } catch (_: Throwable) { com.blaze.assistant.device.CrashLog.write("thermal init failed") }
         if (!com.blaze.assistant.device.StartGuard.safeStart) com.blaze.assistant.device.StartGuard.step("agent.BackupBrain.init") { com.blaze.assistant.agent.BackupBrain.init(this) }
         // Wave B-4: the on-phone Linux desktop was removed; once after the update, free what it left (packages, caches, prefs).
         if (!com.blaze.assistant.device.StartGuard.safeStart && !Settings.bool(com.blaze.assistant.terminal.LinuxDesktopCleanup.PREF_DONE, false)) {

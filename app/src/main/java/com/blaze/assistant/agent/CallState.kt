@@ -27,6 +27,10 @@ class CallState(val parent: CallState? = null) {
     @Volatile var heavy = false
     /** 0.46.0: this turn is likely to write a rich block (table / chart…): a lower temperature (RichRepair.TEMPERATURE). */
     @Volatile var rich = false
+    /** 0.46.4: told of every real chunk of this call (true = reply text or a tool call, false = thinking); keep-alives never. */
+    @Volatile var progress: ((Boolean) -> Unit)? = null
+    /** 0.46.4: the caller's own [BrainRace.Kind] (Halo's side lane = CHAT); null = decided per call. */
+    @Volatile var raceKind: BrainRace.Kind? = null
     @Volatile var turnModel: TurnModel? = null
 
     /** Wall-clock time of the latest streamed chunk of a call in this state (or a child's). */
@@ -59,7 +63,7 @@ class CallState(val parent: CallState? = null) {
     }
 
     /** A child for one call: same turn flags and route pin, its own results. */
-    fun fork(): CallState = CallState(this).also { it.lite = lite; it.quick = quick; it.heavy = heavy; it.turnModel = turnModel }
+    fun fork(): CallState = CallState(this).also { it.lite = lite; it.quick = quick; it.heavy = heavy; it.turnModel = turnModel; it.raceKind = raceKind }
 
     /** Hands this call's results to its parent (the turn reads them after the call, as it read the globals before). */
     fun publish() {

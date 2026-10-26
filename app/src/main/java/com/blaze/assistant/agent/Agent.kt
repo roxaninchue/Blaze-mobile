@@ -2525,7 +2525,8 @@ When you finish, say what you did in one short sentence.
             com.blaze.assistant.device.Haptics.tick(app)
             persist()
             if (sideJob?.isActive == true) return
-            sideJob = scope.launch(ctxTag + Agent.sideFlag.asContextElement(true) + CallState().element()) {
+            // 0.46.4: Halo's side lane is always chat-fast (BrainRace CHAT: fastest brain, 8 s first token, hedged), never behind Blaze's turn
+            sideJob = scope.launch(ctxTag + Agent.sideFlag.asContextElement(true) + CallState().also { it.raceKind = BrainRace.Kind.CHAT }.element()) {
                 split = true
                 try {
                     while (true) { val (mid, t) = sideQueue.poll() ?: break; haloSide(mid, t, soloWho.other) }
@@ -2561,9 +2562,12 @@ When you finish, say what you did in one short sentence.
                 persist()
                 return
             }
-            val raw = try { duoCall(who, req, roomTools(if (sched) Duo.SIDE_SCHEDULE_TOOLS else emptySet()), -1L, side = true) {
+            // 0.46.4: Halo answers within a couple of seconds: if no word came by BrainRace.HALO_HOLD_MS, a plain line says
+            // where Blaze is (the app's own state, no model); the model's reply replaces it when it comes.
+            val raw = try { BrainRace.haloReply(BrainRace.HALO_HOLD_MS, { if (who == Duo.Who.HALO) BrainRace.haloHolding(runningTask(), status) else "" }, { live.show(it) }) { say ->
+                duoCall(who, req, roomTools(if (sched) Duo.SIDE_SCHEDULE_TOOLS else emptySet()), -1L, side = true) {
                 // 0.45.19: a handoff line ("Passed to Blaze, let me know…") never shows, not even while it streams.
-                if (!Ack.isGeneric(it)) live.show(it) } }
+                if (!Ack.isGeneric(it)) say(it) } } }
                 catch (e: CancellationException) { live.end(""); throw e }
                 catch (e: Exception) { live.end(""); add(Role.ERROR, e.message ?: "${who.display} lost the connection."); return }
             val relay = Duo.isRelay(raw)
@@ -3242,7 +3246,8 @@ When you finish, say what you did in one short sentence.
                 // 0.45.20: offline no longer forces the local loop: the run's send waits for the network with the bubble at
                 // Sending (contract §1), unless the Offline Brain can answer here and now.
                 val offlineBrain = try { OfflineBrain.on && OfflineBrain.ready() } catch (_: Throwable) { false }
-                cloudTurn = if (!bulk && voice != Duo.Who.HALO && CloudRuns.eligible(agentId == null, isPrivate, FastLane.online(app) || !offlineBrain))
+                // 0.46.4 (BrainRace): only long work goes as a Cloud run; short turns go direct through the hedged brain race.
+                cloudTurn = if (!bulk && voice != Duo.Who.HALO && BrainRace.cloudRunFor(lite, longWork) && CloudRuns.eligible(agentId == null, isPrivate, FastLane.online(app) || !offlineBrain))
                     CloudRuns.Turn(id, "t-$id-$turnFrom-$turnStart") else null
                 val ct = cloudTurn
                 val turnGids = msgs.dropWhile { it.id != turnFrom }.filter { it.role == Role.USER }.map { it.gid }
@@ -3345,15 +3350,20 @@ When you finish, say what you did in one short sentence.
                         if (ct != null && !ct.off) {
                             var ended = false
                             // 0.45.20: the step's limit starts once the gateway has the message (an offline send keeps retrying).
-                            val got = CloudRuns.timedAfterSent(ct, minOf(budget, TurnDeadline.CLOUD_STEP_MS)) {
-                                CloudRuns.step(ct, r, tools, onText, { line -> scope.launch { if (mood != Mood.IDLE) status = line } },
+                            // 0.46.4: a run that shows nothing (queued on the gateway, or thinking) for 20 s, or stalls 30 s, is given up
+                            // and the step goes direct through the brain race (keep-alive beats are not progress).
+                            val runSent = java.util.concurrent.atomic.AtomicLong(0L); val runSeen = java.util.concurrent.atomic.AtomicLong(0L)
+                            val runText: ((String) -> Unit)? = onText?.let { f -> { p: String -> runSeen.set(System.currentTimeMillis()); f(p) } }
+                            val got = CloudRuns.timedAfterSent(ct, minOf(budget, TurnDeadline.CLOUD_STEP_MS)) { HedgeRace.watch(BrainRace.TASK_LIMITS.firstMs, BrainRace.TASK_LIMITS.stallMs,
+                                { if (ct.sent.isCompleted) runSent.updateAndGet { v -> if (v == 0L) System.currentTimeMillis() else v } else 0L }, { runSeen.get() }) {
+                                CloudRuns.step(ct, r, tools, runText, { line -> scope.launch { if (mood != Mood.IDLE) status = line } },
                                     { _ -> val g = ackGate; val u = turnFrom; val said = lastUserText(); scope.launch {
                                         // 0.45.29: the gateway's `ack` text is never shown; it only marks the turn as a task (after Ack.FAST_MS).
                                         if (g != null) { kotlinx.coroutines.delay(Ack.holdMs(g.at, System.currentTimeMillis())); if (job?.isActive == true) trackTask(g, u, said) } } },
-                                    { o -> runEvent(ct, o) }).also { ended = true }
-                            }
+                                    { o -> if (o.optString("type") == "needs_device") runSeen.set(System.currentTimeMillis()); runEvent(ct, o) }).also { ended = true }
+                            } }
                             if (got != null) return got
-                            if (!ended) { ct.off = true; LlmClient.lastCloudError = "cloud run: step over ${TurnDeadline.CLOUD_STEP_MS / 1000}s"; add(Role.STEP, TurnDeadline.CLOUD_SLOW) }
+                            if (!ended) { ct.off = true; LlmClient.lastCloudError = "cloud run: nothing shown in time"; add(Role.STEP, TurnDeadline.CLOUD_SLOW); scope.launch { if (mood != Mood.IDLE) status = BrainRace.SWITCHING } }
                         }
                         val left = maxOf(5_000L, budget - (System.currentTimeMillis() - t0))
                         return kotlinx.coroutines.withTimeoutOrNull(left) { LlmClient.complete(r, tools, onText, onThink, lane) }

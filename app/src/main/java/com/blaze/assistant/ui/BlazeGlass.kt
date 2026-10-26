@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
@@ -207,7 +208,10 @@ object EdgePath {
 @Composable
 fun EdgeParticles(modifier: Modifier = Modifier, energy: Float = 1f) {
     var time by remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(Unit) {
+    // 0.46.4: frozen (no frames) while the phone is warm or saving battery
+    val hot by com.blaze.assistant.device.Thermal.hot.collectAsState()
+    LaunchedEffect(hot) {
+        if (hot) return@LaunchedEffect
         var last = 0L
         while (true) {
             withFrameMillis { now -> if (last == 0L) last = now; if (now - last >= 40) { time += (now - last) / 1000f; last = now } }

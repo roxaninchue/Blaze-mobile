@@ -6,6 +6,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -97,10 +98,12 @@ fun Modifier.duoShimmer(speaker: Duo.Who, tracking: Boolean, layout: () -> TextL
         }
     }
     val active = tracking || glow.value > 0.01f || sweep.value >= 0f
-    LaunchedEffect(active) {
-        if (!active) return@LaunchedEffect
+    // 0.46.4 heat audit: ~30 fps instead of every display frame, and a still glow while the phone is warm (Thermal)
+    val hot by com.blaze.assistant.device.Thermal.hot.collectAsState()
+    LaunchedEffect(active, hot) {
+        if (!active || hot) return@LaunchedEffect
         var last = 0L
-        while (true) withFrameNanos { now -> if (last != 0L) clock.floatValue += (now - last) / 1_000_000_000f; last = now }
+        while (true) { withFrameNanos { now -> if (last != 0L) clock.floatValue += (now - last) / 1_000_000_000f; last = now }; kotlinx.coroutines.delay(16) }
     }
     if (!active) return this
     val main = DuoColors.main(speaker); val light = DuoColors.light(speaker)

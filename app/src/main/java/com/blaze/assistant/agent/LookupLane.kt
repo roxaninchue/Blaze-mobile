@@ -52,6 +52,8 @@ object LookupLane {
     fun isLookup(text: String): Boolean {
         val t = text.trim()
         if (t.length < 6 || t.length > 240 || t.contains('\n')) return false
+        // 0.46.4: greetings and small talk ("what's up??") never take the lane (SmallTalk)
+        if (SmallTalk.ruleChat(t)) return false
         if (personal.containsMatchIn(t) || needsInteraction.containsMatchIn(t) || notWeb.containsMatchIn(t)) return false
         if (t.startsWith("http", true) || t.startsWith("@")) return false
         return ask.containsMatchIn(t)
@@ -158,7 +160,8 @@ object LookupLane {
     /** The model's instructions: answer only from the pages, name which back it, say when a page needs interaction. */
     const val SYSTEM = "Answer the question only from the numbered pages below. Reply with one JSON object: " +
         "{\"answer\":\"2-5 plain sentences, the direct answer first\",\"sources\":[page numbers that state it],\"needs_browser\":false}. " +
-        "Set needs_browser true only if the facts are behind a sign-in, a form or a click. If the pages disagree, say so in the answer. No links in the text."
+        "Set needs_browser true only if the facts are behind a sign-in, a form or a click. If the pages disagree, say so in the answer. No links in the text. " +
+        "Answer the question itself in your own words; never describe the pages or results (no \"The page lists…\", \"This site says…\")."
 
     fun prompt(q: String, pages: List<Page>): String = buildString {
         append("Question: ").append(q).append("\n\n")

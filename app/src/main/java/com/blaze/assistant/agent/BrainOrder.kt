@@ -81,16 +81,19 @@ object BrainOrder {
 
 /** 0.46.3: usage and health per brain, recorded on the phone (the daily effort meter will read it). Pure core. */
 class BrainLedger(private val now: () -> Long = { System.currentTimeMillis() }) {
-    data class Row(var calls: Int = 0, var fails: Int = 0, var ms: Long = 0, var lastOk: Long = 0, var lastFail: Long = 0, var lastError: String = "")
+    data class Row(var calls: Int = 0, var fails: Int = 0, var ms: Long = 0, var lastOk: Long = 0, var lastFail: Long = 0, var lastError: String = "", var ttft: Long = 0)
     val rows = linkedMapOf<BackupRoute.Step, Row>()
     @Synchronized fun ok(s: BackupRoute.Step, ms: Long) { val r = rows.getOrPut(s) { Row() }; r.calls++; r.ms += ms; r.lastOk = now() }
     @Synchronized fun fail(s: BackupRoute.Step, why: String) { val r = rows.getOrPut(s) { Row() }; r.fails++; r.lastFail = now(); r.lastError = why.take(120) }
+    /** 0.46.4: first-token time (ms), smoothed (new = 0.6 × old + 0.4 × this call); the chat router puts the fastest first. */
+    @Synchronized fun ttft(s: BackupRoute.Step, ms: Long) { val r = rows.getOrPut(s) { Row() }; r.ttft = if (r.ttft <= 0) ms.coerceAtLeast(1) else ((r.ttft * 6 + ms.coerceAtLeast(1) * 4) / 10) }
+    @Synchronized fun ttft(s: BackupRoute.Step): Long? = rows[s]?.ttft?.takeIf { it > 0 }
     /** "answering", "failing", or "not used yet", from the newest outcome. */
     @Synchronized fun health(s: BackupRoute.Step): String { val r = rows[s] ?: return "not used yet"; return if (r.lastOk >= r.lastFail) "answering" else "failing" }
     @Synchronized fun toJson(): String = org.json.JSONObject().also { o -> rows.forEach { (k, r) -> o.put(k.name, org.json.JSONObject().put("calls", r.calls).put("fails", r.fails).put("ms", r.ms)
-        .put("lastOk", r.lastOk).put("lastFail", r.lastFail).put("err", r.lastError)) } }.toString()
+        .put("lastOk", r.lastOk).put("lastFail", r.lastFail).put("err", r.lastError).put("ttft", r.ttft)) } }.toString()
     @Synchronized fun load(json: String) { try { val o = org.json.JSONObject(json); o.keys().forEach { k -> val r = o.getJSONObject(k)
-        rows[BackupRoute.Step.valueOf(k)] = Row(r.optInt("calls"), r.optInt("fails"), r.optLong("ms"), r.optLong("lastOk"), r.optLong("lastFail"), r.optString("err")) } } catch (_: Exception) { } }
+        rows[BackupRoute.Step.valueOf(k)] = Row(r.optInt("calls"), r.optInt("fails"), r.optLong("ms"), r.optLong("lastOk"), r.optLong("lastFail"), r.optString("err"), r.optLong("ttft")) } } catch (_: Exception) { } }
 
     companion object {
         /** The app's ledger (saved in Settings "brain_usage_v1"). */
