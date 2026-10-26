@@ -12,7 +12,9 @@ package com.blaze.assistant.stage
  */
 enum class StageKind(val id: String, val label: String, val fullView: String?) {
     TIMER("timer", "Timer", null), MUSIC("music", "Music", "music"), VIDEO("video", "Video", "video"),
-    QUIZ("quiz", "Quiz", "learn"), FLASHCARDS("flashcards", "Flashcards", "learn"), PLAN("plan", "Plan", null), NOTE("note", "Note", null);
+    QUIZ("quiz", "Quiz", "learn"), FLASHCARDS("flashcards", "Flashcards", "learn"), PLAN("plan", "Plan", null), NOTE("note", "Note", null),
+    /** 0.46.1: Blaze's browser (the current tab of the built-in browser, one shared WebView) as a card. */
+    BROWSER("browser", "Browser", "browser");
     companion object {
         fun of(s: String?): StageKind? {
             val k = s?.trim()?.lowercase().orEmpty()
@@ -23,6 +25,7 @@ enum class StageKind(val id: String, val label: String, val fullView: String?) {
                 "cards", "deck", "learn" -> FLASHCARDS
                 "today", "todo", "checklist", "agenda", "plan_card" -> PLAN
                 "text", "card", "notes" -> NOTE
+                "web", "website", "tab", "browser_card", "internet", "browse", "page", "webpage", "web_page" -> BROWSER
                 else -> null
             }
         }
@@ -51,6 +54,8 @@ data class StageItem(
     val scale: Float = 1f,
     /** Immersive hero: top bar slides off and the reply bar becomes the pill while it is the hero. */
     val immersive: Boolean = false,
+    /** 0.46.1 paint order among floating widgets: the last one touched (dragged, tapped, shown) is in front ([StageLayers]). */
+    val z: Long = 0,
 )
 
 /** How the chat stream sits on the Stage. LAST = the newest [ChatLayout.count] messages docked; WIDGET = a small chat tile. */
@@ -92,6 +97,8 @@ sealed class StageAction {
     /** The hero shrinks back into a widget. */
     data class Shrink(val id: String) : StageAction()
     data class Resize(val id: String, val scale: Float) : StageAction()
+    /** 0.46.1: the user touched (pressed, dragged) a widget: it comes to the front. */
+    data class Touch(val id: String) : StageAction()
     data class SetChat(val mode: ChatMode, val count: Int? = null, val slot: StageSlot? = null, val scale: Float? = null) : StageAction()
     data class SetChrome(val topBar: Boolean? = null, val reply: ReplyBar? = null) : StageAction()
     data class Layout(val preset: String) : StageAction()
@@ -108,7 +115,7 @@ object StageReducer {
     val PRESETS = listOf("normal", "focus", "split", "chat", "widgets_top", "widgets_side", "widgets_bottom", "minimal")
 
     /** Kinds that only ever have one item (a second music / video show updates the one there). */
-    private val single = setOf(StageKind.MUSIC, StageKind.VIDEO)
+    private val single = setOf(StageKind.MUSIC, StageKind.VIDEO, StageKind.BROWSER)
     /** Kinds that keep running on their own; they leave the widget slots last. */
     private val running = setOf(StageKind.MUSIC, StageKind.TIMER, StageKind.VIDEO)
 
@@ -117,6 +124,7 @@ object StageReducer {
         StageKind.VIDEO -> StageSlot.FLOAT
         StageKind.QUIZ, StageKind.FLASHCARDS -> StageSlot.SIDE
         StageKind.PLAN, StageKind.NOTE -> StageSlot.BOTTOM
+        StageKind.BROWSER -> StageSlot.TOP
     }
 
     private fun newId(kind: StageKind, seq: Long) = kind.id + seq
@@ -129,7 +137,7 @@ object StageReducer {
         } ?: StageResult(s, null, "Nothing called ${a.id} on the Stage.", handled = false)
         is StageAction.Move -> s.byId(a.id)?.let { it0 ->
             // Moving the hero to a slot makes it a widget there.
-            val moved = it0.copy(slot = a.slot, mode = StageMode.WIDGET, x = a.x ?: it0.x, y = a.y ?: it0.y, order = s.seq + 1)
+            val moved = it0.copy(slot = a.slot, mode = StageMode.WIDGET, x = a.x ?: it0.x, y = a.y ?: it0.y, order = s.seq + 1, z = s.seq + 1)
             val st = s.copy(items = s.items.map { if (it.id == a.id) moved else it }, seq = s.seq + 1)
             StageResult(if (it0.mode == StageMode.HERO) leaveHero(st) else st, a.id, "${it0.kind.label} moved to ${a.slot.name.lowercase()}.")
         } ?: StageResult(s, null, "Nothing called ${a.id} on the Stage.", handled = false)
@@ -142,6 +150,11 @@ object StageReducer {
         is StageAction.Shrink -> s.byId(a.id)?.takeIf { it.mode == StageMode.HERO }?.let { h ->
             StageResult(leaveHero(s.copy(items = s.items.map { if (it.id == h.id) it.copy(mode = StageMode.WIDGET, order = s.seq + 1) else it }, seq = s.seq + 1)), h.id, "${h.kind.label} is a widget now.")
         } ?: StageResult(s, a.id, "", handled = false)
+        is StageAction.Touch -> s.byId(a.id)?.let { it0 ->
+            val top = s.items.maxOf { it.z }
+            if (it0.z == top && s.items.count { it.z == top } == 1) StageResult(s, a.id, "", handled = false)   // already in front
+            else StageResult(s.copy(items = s.items.map { if (it.id == a.id) it.copy(z = s.seq + 1) else it }, seq = s.seq + 1), a.id, "")
+        } ?: StageResult(s, null, "", handled = false)
         is StageAction.Resize -> s.byId(a.id)?.let { _ ->
             StageResult(s.copy(items = s.items.map { if (it.id == a.id) it.copy(scale = a.scale.coerceIn(0.4f, 1f)) else it }), a.id, "Resized.")
         } ?: StageResult(s, null, "Nothing called ${a.id} on the Stage.", handled = false)
@@ -164,7 +177,7 @@ object StageReducer {
         val slot = a.slot?.takeIf { it != StageSlot.FLOAT || a.mode == StageMode.WIDGET } ?: existing?.slot ?: defaultSlot(a.kind)
         val immersive = a.props["immersive"]?.let { it == "true" } ?: (existing?.immersive ?: false)
         val item = (existing ?: StageItem(id, a.kind)).copy(props = (existing?.props.orEmpty() + a.props - "immersive").filterValues { it.isNotEmpty() },
-            mode = a.mode, slot = slot, order = seq, immersive = immersive)
+            mode = a.mode, slot = slot, order = seq, immersive = immersive, z = seq)
         var items = s.items.filter { it.id != id }
         var note = if (existing == null) "${a.kind.label} is on the Stage" else "${a.kind.label} updated"
         var st = s
@@ -241,4 +254,37 @@ object StageReducer {
             else -> ChatLayout(ChatMode.LAST, n)
         }
     }
+}
+
+/**
+ * 0.46.1 paint order on the Stage (report: a dragged widget slid UNDER the chat bubbles). Higher = drawn on top:
+ * the chat stream at the bottom, then the hero, docked widgets, the side rail and floating widgets (last touched in front),
+ * and an item being dragged above everything (StageHost draws it in its own top layer while the finger is down).
+ * Pure; StageLayersTest.
+ */
+object StageLayers {
+    const val CHAT = 0f
+    const val HERO = 1f
+    const val DOCK = 2f
+    const val SIDE = 3f
+    const val FLOAT = 4f
+    const val DRAG = 100f
+    /** The lift while dragging (cheap: a graphicsLayer scale + a small shadow elevation, no blur). */
+    const val DRAG_SCALE = 1.06f
+
+    /** z for one element; [dragging] = the id under the finger (or null). */
+    fun z(item: StageItem, s: StageState, dragging: String? = null): Float = when {
+        item.id == dragging -> DRAG
+        item.mode == StageMode.HERO -> HERO
+        item.slot == StageSlot.FLOAT -> FLOAT + rank(item, s) * 0.01f
+        item.slot == StageSlot.SIDE -> SIDE
+        else -> DOCK
+    }
+
+    private fun rank(item: StageItem, s: StageState): Int =
+        s.widgets.filter { it.slot == StageSlot.FLOAT }.sortedWith(compareBy<StageItem>({ it.z }, { it.order })).indexOfFirst { it.id == item.id }.coerceAtLeast(0)
+
+    /** Everything on the Stage bottom to top ("chat" stands for the chat stream). */
+    fun paintOrder(s: StageState, dragging: String? = null): List<String> =
+        (listOf("chat" to CHAT) + s.items.map { it.id to z(it, s, dragging) }).sortedBy { it.second }.map { it.first }
 }

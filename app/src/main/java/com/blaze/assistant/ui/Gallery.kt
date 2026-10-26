@@ -130,14 +130,17 @@ fun MediaStrip(paths: List<String>) {
                 "audio" -> Row(Modifier.widthIn(max = 330.dp).fillMaxWidth().hairline(c.hair).clickable { Player.toggle(p) }.padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(34.dp).clip(BlazeShapes.pill).background(c.ink), contentAlignment = Alignment.Center) {
-                        Text(if (playing == p) "\u275A\u275A" else "\u25B6", style = TextStyle(fontSize = 13.sp, color = c.paper))
+                        androidx.compose.material3.Icon(if (playing == p) androidx.compose.material.icons.Icons.Rounded.Pause else androidx.compose.material.icons.Icons.Rounded.PlayArrow,
+                            contentDescription = if (playing == p) "Pause" else "Play", tint = c.paper, modifier = Modifier.size(18.dp))
                     }
                     Spacer(Modifier.width(12.dp))
                     Text(f.nameWithoutExtension.replace('_', ' '), modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
                         style = TextStyle(fontFamily = Type.Sans, fontSize = 14.sp, color = c.ink))
                 }
-                else -> Row(Modifier.hairline(c.hair).clickable { try { ctx.startActivity(Media.viewIntent(f)) } catch (_: Exception) { } }.padding(12.dp)) {
-                    Text("\u25B6  " + f.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = TextStyle(fontFamily = Type.Sans, fontSize = 13.sp, color = c.ink))
+                else -> Row(Modifier.hairline(c.hair).clickable { try { ctx.startActivity(Media.viewIntent(f)) } catch (_: Exception) { } }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Rounded.PlayArrow, contentDescription = "Open", tint = c.ink, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(f.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = TextStyle(fontFamily = Type.Sans, fontSize = 13.sp, color = c.ink))
                 }
             }
             Row(Modifier.padding(top = 4.dp, bottom = 8.dp)) {

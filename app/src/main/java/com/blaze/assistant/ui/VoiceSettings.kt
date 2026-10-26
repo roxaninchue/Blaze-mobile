@@ -30,7 +30,8 @@ fun VoiceTuning() {
     Spacer(Modifier.height(22.dp))
     Label("Blaze's voice", modifier = Modifier.padding(bottom = 6.dp))
     Row(Modifier.fillMaxWidth().hairline(c.hair).clickable { Voice.preview() }.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text("▶  Hear it", modifier = Modifier.weight(1f), style = TextStyle(fontFamily = Type.Sans, fontSize = 15.sp, color = c.ink))
+        androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Rounded.PlayArrow, contentDescription = null, tint = c.ink, modifier = Modifier.padding(end = 8.dp).size(18.dp))
+        Text("Hear it", modifier = Modifier.weight(1f), style = TextStyle(fontFamily = Type.Sans, fontSize = 15.sp, color = c.ink))
         Label(voices.firstOrNull { it.name == voiceName }?.let { nice(it) } ?: "Phone default", size = 10.sp)
     }
 

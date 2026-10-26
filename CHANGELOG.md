@@ -1,3 +1,19 @@
+## v0.46.1: Blaze Stage polish: a real music player card, icons instead of words, a browser card, and the basics on every card (versionCode 178)
+- Music card: previous / next, shuffle, repeat (off, all, one) and a queue you can open on the card (play any song, play next, move up or down, remove). The cover shows the song's own art (its saved cover or the picture inside the file) or a themed placeholder. The seek bar is draggable, shows elapsed and remaining time, and follows the song; a finished song no longer shows a full bar at 2:24 / 2:24, and Play starts it again.
+- The music card, its mini widget, the notification and the lock screen are the same player: Stage music now always shows the media notification (cover, play / pause, previous / next, seek), headset and Bluetooth buttons work, and calls or other apps' sound pause or duck it. Songs without a saved cover show their embedded picture there too.
+- Icons, not words: every Stage button is a clean rounded icon with a spoken label for TalkBack (play, pause, start, skip, shuffle, repeat, queue, shrink, more…). The pause sign that drew as a blue emoji box on the music widget is gone, everywhere in the app.
+- Denser, tidier cards, and the card menu (⋯) is now a compact grid of icons (shrink or make big, full view, move to top / side / bottom, chat modes, focus, reset, close); long-press an icon to see what it does.
+- Browser card: "pull up the browser" or "browser card" puts Blaze's browser on the chat as a card: an address / search bar, back, forward, reload, a loading line and open in full view. It shows the same page Blaze works on with its browser tools, so you can watch and take over in place. The full Browser screen opens only when you ask for full screen / full view. The page is only drawn while the card is big; small, it's a title row and the page sleeps when Blaze is idle.
+- Blaze no longer says a card is open when it isn't ("Browser's open…" with nothing on screen): it shows the card for real, or says plainly that it didn't.
+- Timer: presets (5, 15, 25, 45 min) and a shorter / longer stepper before it starts, take off or add a minute while it runs, reset, the alert sound (ring, vibrate only or silent), the progress ring and, for a pomodoro, which cycle you're on.
+- Video: speed (0.5x to 2x), full screen on the Stage, captions when the video has them, and open in Blaze Video.
+- Quiz: back and next, a hint (the question's own hint or one wrong option taken away), the score as you go, and at the end a review of the ones you missed with a button to retry only those.
+- Flashcards: flip, know / don't know, shuffle and progress (card n of total, how many you knew).
+- Plan and note cards can be edited on the card: tick items, change, delete or add lines, and edit the note text.
+- Dragging: a widget you drag stays on top of everything (the chat, other widgets, the top and reply bars) with a slight lift, and docked or dropped widgets never hide behind chat bubbles; the last widget you touched comes to the front.
+- Still cheap on every phone: only position, size and fade animate, the music and timer cards update once a second, and cards that are small or closed don't draw their page or video.
+- Updates in place from 0.45.26 to 0.46.0.
+
 ## v0.46.0: Blaze Stage, the chat screen becomes one playground (versionCode 177)
 - Blaze Stage: things happen right on the chat instead of jumping to another screen. "Let's play some music" puts a music player on the chat; "study 30 min" puts a timer card with a Start button there (not a reminder sentence). Kinds: timer / pomodoro, music, video, quiz, flashcards, plan / checklist and note.
 - One big card (the hero) at a time: when a new one arrives the old one shrinks into a small widget and keeps running (music keeps playing while the timer runs). Up to 4 widgets sit in the top strip, the side rail, above the reply bar, or anywhere you drop them.

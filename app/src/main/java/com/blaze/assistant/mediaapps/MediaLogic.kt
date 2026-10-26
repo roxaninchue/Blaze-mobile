@@ -60,7 +60,7 @@ object QueueLogic {
         }
     }
 
-    /** The index before [current] (the ⏮ button after the first 3 s restarts the song instead; that's the player's). */
+    /** The index before [current] (the previous button after the first 3 s restarts the song instead; that's the player's). */
     fun prevIndex(current: Int, size: Int, repeat: Repeat, order: List<Int>): Int {
         if (size <= 0 || current !in 0 until size) return -1
         val o = if (order.size == size) order else (0 until size).toList()

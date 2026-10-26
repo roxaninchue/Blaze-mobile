@@ -67,10 +67,17 @@ class StageShotsTest {
         StageItem("cards5", StageKind.FLASHCARDS, mapOf("deck" to "CIT102 loops")),
         StageItem("plan6", StageKind.PLAN, mapOf("title" to "Friday", "items" to """["Lab at 10","Quiz at 14:00","Gym"]""", "done" to "0")),
         StageItem("note7", StageKind.NOTE, mapOf("title" to "Note", "text" to "Bring the calculator and the lab coat.")),
+        StageItem("browser8", StageKind.BROWSER),
+        StageItem("music9", StageKind.MUSIC, mapOf("queue" to "true")),
     )
+    private val queue = listOf("Midnight Drive" to "Lo-fi Lusaka", "Copper Sun" to "Kalindula Trio", "Rain on Tin" to "Zed Beats", "Night Bus" to "Lo-fi Lusaka")
+        .mapIndexed { i, (t, a) -> com.blaze.assistant.mediaapps.StageMusicLogic.Entry("k$i", t, a) }
+    private val musicNow = com.blaze.assistant.mediaapps.StageMusicLogic.Snapshot(true, true, "Midnight Drive", "Lo-fi Lusaka", 72_000, 201_000, 3,
+        shuffle = true, repeat = com.blaze.assistant.mediaapps.Repeat.ALL, queue = queue, index = 0)
     private fun data(i: StageItem) = when (i.kind) {
         StageKind.TIMER -> StageData(now = t0 + 61_000, timer = timer)
-        StageKind.MUSIC -> StageData(now = t0, music = StageMusicNow(true, "Midnight Drive", "Lo-fi Lusaka", 72_000, 201_000, true))
+        StageKind.MUSIC -> StageData(now = t0, music = musicNow)
+        StageKind.BROWSER -> StageData(now = t0, browser = StageBrowserNow(true, "Blaze – Home", "https://blaze.example/", 60, canBack = true))
         StageKind.FLASHCARDS -> StageData(now = t0, cardFront = "What does a for loop repeat?", cardBack = "Its body, once per item", cardsLeft = 12)
         else -> StageData(now = t0)
     }
@@ -119,6 +126,29 @@ class StageShotsTest {
         assertTrue(frames >= 30)
     }
 
+    @Test fun menuGridAndEndedMusic() {
+        rule.mainClock.autoAdvance = false
+        rule.setContent {
+            CompositionLocalProvider(LocalBlaze provides DarkColors) {
+                Column(Modifier.fillMaxSize().background(DarkColors.paper).padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StageMenuGrid(listOf("Shrink", "Full view", "Top", "Side", "Bottom", "Chat", "Tile", "Hide", "Focus", "Reset", "Close").map {
+                        StageMenuAction(androidx.compose.material.icons.Icons.Rounded.Close, it) {} }) {}
+                    // The 0.46.0 bug: an ended song drew a full bar at 2:24 / 2:24 before playing.
+                    StageHero(items[1].copy(mode = StageMode.HERO), StageData(now = t0, music = musicNow.copy(playing = false, posMs = 144_000, durMs = 144_000, state = 4)),
+                        modifier = Modifier.fillMaxWidth().height(420.dp)) {}
+                }
+            }
+        }
+        rule.mainClock.advanceTimeBy(600)
+        val bmp = capture("stage-menu-and-ended-music")
+        assertTrue(distinct(bmp) > 12)
+        rule.onNodeWithText("0:00").assertExists()
+        rule.onNodeWithText("-2:24").assertExists()
+        rule.onNodeWithContentDescription("Play").assertExists()
+        rule.onNodeWithContentDescription("Shuffle on").assertExists()
+        rule.onNodeWithContentDescription("Repeat all").assertExists()
+    }
+
     @Test fun timerCardHasStartAndLabels() {
         val fresh = StageTimer.create("timer1", "Study", 30.0)
         var op = ""
@@ -129,7 +159,7 @@ class StageShotsTest {
             }
         }
         rule.onNodeWithText("30:00").assertExists()
-        rule.onNodeWithText("Start").performClick()
+        rule.onNodeWithContentDescription("Start the Study timer").performClick()
         assertEquals("start", op)
         rule.onNodeWithContentDescription("Timer options").assertExists()
         rule.onNodeWithContentDescription("Shrink Timer to a widget").assertExists()

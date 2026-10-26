@@ -221,7 +221,10 @@ object FastLane {
 
     private suspend fun execute(ctx: Context, name: String, a: JSONObject, confirm: suspend (String, String, String) -> Boolean): String? = when (name) {
         "open_app" -> if (a.optString("name").lowercase().removePrefix("the ").trim() in setOf("browser", "blaze browser", "web browser", "your browser", "internet"))
-            { com.blaze.assistant.browser.BrowserTools.show(ctx); "Browser's open." }
+            { // 0.46.1: the browser is a card on the chat Stage by default (the full screen only when the Stage is off).
+              if (com.blaze.assistant.stage.StageStore.enabled) withContext(Dispatchers.Main) {
+                  com.blaze.assistant.stage.StageStore.run(ctx, com.blaze.assistant.stage.StageTools.SHOW, JSONObject().put("kind", "browser")); "The browser card is on the chat." }
+              else { com.blaze.assistant.browser.BrowserTools.show(ctx); "Browser's open." } }
             else PhoneTools.run(ctx, "open_app", JSONObject().put("app_name", a.optString("name"))).let {
             if (it.startsWith("Opened") || it.startsWith("Opening")) it else null }
         "open_settings_page" -> com.blaze.assistant.phone.AndroidControl.run(ctx, "open_settings_page", a).takeIf { it.startsWith("Opened") }

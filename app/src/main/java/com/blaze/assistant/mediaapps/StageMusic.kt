@@ -22,11 +22,28 @@ object StageMusic {
         return try { Now(true, s.isPlayingNow(), s.nowTitle(), s.nowArtist(), s.positionMs(), s.durationMs(), s.queueSize()) } catch (_: Exception) { Now(true, false, "", "", 0L, 0L, 0) }
     }
 
-    /** play | pause | next | previous (main thread). */
+    /** 0.46.1 the whole card state (queue, shuffle, repeat, position). Main thread. */
+    fun snapshot(): StageMusicLogic.Snapshot = MusicService.current?.let { try { it.snapshot() } catch (_: Exception) { null } } ?: StageMusicLogic.Snapshot()
+
+    /**
+     * play | pause | next | previous | shuffle | repeat | seek:<ms> | at:<i> | up:<i> | down:<i> | remove:<i> | next_up:<i>
+     * (main thread). All of it goes to the one MusicService, so the notification, lock screen and widget follow.
+     */
     fun op(ctx: Context, op: String) {
         val s = MusicService.current
-        if (s != null) { s.transport(op); return }
-        if (op == "play") { MusicService.pendingResume = true; startQuiet(ctx) }
+        if (s == null) { if (op == "play") { MusicService.pendingResume = true; startQuiet(ctx) }; return }
+        val (cmd, arg) = StageMusicLogic.parse(op) ?: return
+        when (cmd) {
+            "shuffle" -> s.setShuffle(!s.shuffleOn())
+            "repeat" -> s.cycleRepeat()
+            "seek" -> arg?.let { s.seekTo(it) }
+            "at" -> arg?.let { s.playAt(it.toInt()) }
+            "up" -> arg?.let { s.moveItem(it.toInt(), it.toInt() - 1) }
+            "down" -> arg?.let { s.moveItem(it.toInt(), it.toInt() + 1) }
+            "remove" -> arg?.let { s.removeAt(it.toInt()) }
+            "next_up" -> arg?.let { s.playNext(it.toInt()) }
+            else -> s.transport(cmd)
+        }
     }
 
     /**

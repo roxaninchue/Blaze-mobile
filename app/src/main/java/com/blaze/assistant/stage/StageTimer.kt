@@ -106,6 +106,26 @@ object StageTimer {
         return if (m >= 60) "${m / 60} h" + (if (m % 60 > 0) " ${m % 60} min" else "") else "$m min"
     }
 
+    /** 0.46.1 timer card presets (minutes) shown before it starts. */
+    val PRESETS = listOf(5.0, 15.0, 25.0, 45.0)
+
+    /** "25", "0.5" (props text for minutes). */
+    fun minutesText(m: Double): String = if (m == Math.floor(m)) m.toLong().toString() else "%.2f".format(java.util.Locale.US, m).trimEnd('0').trimEnd('.')
+
+    /** The custom-length stepper: +/- one step (1 min under 10, 5 min above), clamped 1 min..12 h. */
+    fun step(minutes: Double, up: Boolean): Double {
+        val st = if (minutes < 10.0 || (!up && minutes <= 10.0)) 1.0 else 5.0
+        val n = if (up) minutes + st else minutes - st
+        return n.coerceIn(1.0, 720.0)
+    }
+
+    /** "Cycle 2 of 4" for a pomodoro (focus phases are the even ones), null for a plain timer. */
+    fun cycle(t: TimerState): Pair<Int, Int>? {
+        if (t.phases.size < 2) return null
+        val total = (t.phases.size + 1) / 2
+        return (t.phase / 2 + 1).coerceAtMost(total) to total
+    }
+
     /** Minutes from loose words: "30", "30 min", "1h30", "1.5 hours", "90s", "half an hour". Null when none. */
     fun parseMinutes(s: String?): Double? {
         val t = s?.trim()?.lowercase() ?: return null

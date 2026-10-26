@@ -48,7 +48,10 @@ class MusicService : MediaLibraryService() {
             .setCustomCacheKey(if (StreamCache.cacheableUrl(t.uri)) StreamCache.key(t.key) else null)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(t.title).setArtist(t.artist.ifBlank { null })
                 .setAlbumTitle(t.album.ifBlank { null })
-                .setArtworkUri(t.art.takeIf { it.isNotBlank() }?.let { if (it.startsWith("http")) Uri.parse(it) else Uri.fromFile(java.io.File(it)) })
+                .setArtworkUri(t.art.takeIf { it.isNotBlank() }?.let { if (it.startsWith("http")) Uri.parse(it) else Uri.fromFile(java.io.File(it)) }
+                    // 0.46.1: a local song with no saved cover uses its embedded picture (read by [EmbeddedArtLoader]) in the
+                    // notification and on the lock screen.
+                    ?: EmbeddedArtLoader.uriFor(t.uri))
                 .setIsPlayable(true).build()).build()
 
         /** v0.34.0: songs (library keys) to play as soon as the service starts (agent music_ops while it's stopped). */
@@ -265,7 +268,11 @@ class MusicService : MediaLibraryService() {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MusicActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         session = MediaLibrarySession.Builder(this, player, controls).setSessionActivity(open)
+            .setBitmapLoader(androidx.media3.session.CacheBitmapLoader(EmbeddedArtLoader(this, androidx.media3.datasource.DataSourceBitmapLoader(this))))
             .setCustomLayout(layout()).build()
+        // 0.46.1: the Stage starts this service with no screen and no controller connected; adding the session here is what
+        // makes media3 post the media notification (lock screen, shade, MediaStyle with art, seek, prev / play / next).
+        try { session?.let { addSession(it) } } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("MusicService.addSession", e) }
         current = this
         main.post(sleepTick)
         main.post(fadeTick)
@@ -292,12 +299,40 @@ class MusicService : MediaLibraryService() {
     fun seekTo(ms: Long) { player.seekTo(ms.coerceAtLeast(0L)) }
     fun transport(op: String) {
         when (op) {
-            "play" -> { if (player.playbackState == Player.STATE_IDLE) player.prepare(); player.play() }
+            // 0.46.1: an ENDED queue used to stay at its end (the card showed a full bar and Play did nothing).
+            "play" -> when (StageMusicLogic.playOp(player.playbackState)) {
+                "restart" -> { player.seekToDefaultPosition(player.currentMediaItemIndex.coerceAtLeast(0)); player.play() }
+                "prepare_play" -> { player.prepare(); player.play() }
+                else -> player.play()
+            }
             "pause" -> player.pause()
             "next" -> if (player.hasNextMediaItem()) player.seekToNextMediaItem() else player.seekToNext()
             "previous" -> player.seekToPrevious()
         }
     }
+
+    // ---------------- 0.46.1 the Stage music card (main thread; read once a second) ----------------
+    fun snapshot(): StageMusicLogic.Snapshot {
+        val n = player.mediaItemCount
+        val q = (0 until n).map { i -> val m = player.getMediaItemAt(i); val md = m.mediaMetadata
+            StageMusicLogic.Entry(m.mediaId, md.title?.toString().orEmpty(), md.artist?.toString().orEmpty(),
+                MediaLib.find(m.mediaId)?.art ?: md.artworkUri?.toString()?.takeIf { it.startsWith("http") }.orEmpty(), m.localConfiguration?.uri?.toString().orEmpty()) }
+        val tl = player.currentTimeline
+        val order = if (tl.isEmpty || !player.shuffleModeEnabled) emptyList() else buildList {
+            var k = tl.getFirstWindowIndex(true)
+            while (k != C.INDEX_UNSET && size < n) { add(k); k = tl.getNextWindowIndex(k, Player.REPEAT_MODE_OFF, true) }
+        }
+        return StageMusicLogic.Snapshot(true, player.isPlaying, nowTitle(), nowArtist(), positionMs(), durationMs(), player.playbackState,
+            player.shuffleModeEnabled, when (player.repeatMode) { Player.REPEAT_MODE_ALL -> Repeat.ALL; Player.REPEAT_MODE_ONE -> Repeat.ONE; else -> Repeat.OFF },
+            q, player.currentMediaItemIndex, order)
+    }
+    fun shuffleOn(): Boolean = player.shuffleModeEnabled
+    fun setShuffle(on: Boolean) { player.shuffleModeEnabled = on; session?.setCustomLayout(layout()) }
+    fun cycleRepeat() { player.repeatMode = nextRepeat(player.repeatMode); session?.setCustomLayout(layout()) }
+    fun playAt(i: Int) { if (i in 0 until player.mediaItemCount) { player.seekToDefaultPosition(i); player.prepare(); player.play() } }
+    fun moveItem(from: Int, to: Int) { val n = player.mediaItemCount; if (from in 0 until n && to in 0 until n && from != to) { player.moveMediaItem(from, to); saveQueue() } }
+    fun removeAt(i: Int) { if (StageMusicLogic.canRemove(i, player.currentMediaItemIndex, player.mediaItemCount)) { player.removeMediaItem(i); saveQueue() } }
+    fun playNext(i: Int) { val to = StageMusicLogic.playNextTarget(i, player.currentMediaItemIndex, player.mediaItemCount); if (to >= 0) moveItem(i, to) }
 
     /** v0.34.0: plays library songs by key (mixes, smart playlists, agent). Main thread. */
     fun playKeys(keys: List<String>, shuffle: Boolean = false): Int {
@@ -453,4 +488,37 @@ object AutoTree {
     const val LIKED = "blaze:liked"
     const val FOR_YOU = "blaze:foryou"
     const val PLAYLISTS = "blaze:playlists"
+}
+
+/**
+ * 0.46.1 cover art for the notification / lock screen: a local song without a saved cover gets a "blazeart:" uri that this
+ * loader answers with the song's embedded picture (MediaMetadataRetriever, off the main thread); everything else goes to
+ * media3's own loader.
+ */
+class EmbeddedArtLoader(ctx: android.content.Context, private val base: androidx.media3.common.util.BitmapLoader) : androidx.media3.common.util.BitmapLoader {
+    private val app = ctx.applicationContext
+    private val pool = com.google.common.util.concurrent.MoreExecutors.listeningDecorator(java.util.concurrent.Executors.newSingleThreadExecutor())
+    companion object {
+        const val SCHEME = "blazeart"
+        fun uriFor(media: String): Uri? = if (media.startsWith("content:") || media.startsWith("file:") || media.startsWith("/"))
+            Uri.Builder().scheme(SCHEME).authority("embedded").appendQueryParameter("u", media).build() else null
+    }
+    override fun supportsMimeType(mimeType: String): Boolean = base.supportsMimeType(mimeType)
+    override fun decodeBitmap(data: ByteArray): ListenableFuture<android.graphics.Bitmap> = base.decodeBitmap(data)
+    override fun loadBitmap(uri: Uri): ListenableFuture<android.graphics.Bitmap> {
+        if (uri.scheme != SCHEME) return base.loadBitmap(uri)
+        val media = uri.getQueryParameter("u").orEmpty()
+        return pool.submit(java.util.concurrent.Callable {
+            val r = android.media.MediaMetadataRetriever()
+            try {
+                if (media.startsWith("/")) r.setDataSource(media) else r.setDataSource(app, Uri.parse(media))
+                val b = r.embeddedPicture ?: throw java.io.IOException("no embedded art")
+                val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                android.graphics.BitmapFactory.decodeByteArray(b, 0, b.size, o)
+                var smp = 1; while (o.outWidth / (smp * 2) >= 512) smp *= 2
+                android.graphics.BitmapFactory.decodeByteArray(b, 0, b.size, android.graphics.BitmapFactory.Options().apply { inSampleSize = smp })
+                    ?: throw java.io.IOException("bad art")
+            } finally { try { r.release() } catch (_: Exception) { } }
+        })
+    }
 }

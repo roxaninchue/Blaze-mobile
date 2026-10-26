@@ -37,7 +37,9 @@ object ViewRouter {
         """\d+(?:\.\d+)?\s*-?\s*(?:min|mins|minute|minutes|hr|hrs|hour|hours)\b.{0,24}\b(?:timer|study|studying|focus|work|session|revision|reading)|""" +
         """timer (?:for|of) (?:\d|an? |half)|""" +
         """(?:study|studying|focus|revise|revising|read|reading)\s+(?:for\s+)?(?:\d+(?:\.\d+)?|an?|half an?)\s*(?:min|mins|minute|minutes|hr|hrs|hour|hours)\b|""" +
-        """(?:play|put on) (?:some |me some |a little )?(?:music|songs|tunes)|play (?:my|some) (?:mix|playlist|songs))"""
+        """(?:play|put on) (?:some |me some |a little )?(?:music|songs|tunes)|play (?:my|some) (?:mix|playlist|songs)|""" +
+        // 0.46.1: the browser as a card on the chat ("pull up browser card", "show the browser here").
+        """browser (?:card|widget)|(?:pull|bring) up (?:the |a |my )?(?:web )?browser)"""
 
     val specs = listOf(
         Spec("stage", "Stage", "live cards right on the chat (no screen change): timers and pomodoros, music playing, a video, a quiz or flashcards to go through, a plan or checklist",
@@ -139,7 +141,9 @@ object ViewRouter {
     fun hint(s: Spec): String = when (s.id) {
         "stage" -> "\nREQUIRED VIEW THIS TURN: Stage (in place on the chat, no screen change). A timer, study or focus time -> stage_show kind=timer minutes=N title=… " +
             "(pomodoro=true for a pomodoro; autostart only if they said start / go): a timer card with a Start button. Don't make a reminder, an alarm or set_timer for it, and don't answer with just a sentence. " +
-            "Music -> stage_show kind=music query=<what to play, or empty> (it plays in place; never open the Music screen unless they ask). Then reply in one short line."
+            "Music -> stage_show kind=music query=<what to play, or empty> (it plays in place; never open the Music screen unless they ask). " +
+            "The browser -> stage_show kind=browser (url= a page or search, optional); the browser_ tools then drive the page in that card; open_view view=browser only for full screen / full view. " +
+            "Then reply in one short line, and never say a card is open unless stage_show succeeded."
         "learn" -> "\nREQUIRED VIEW THIS TURN: Learn. Put the cards in a Learn deck with flashcards action=add (deck = topic or course code + topic, " +
             "cards = [{front, back}], 10-25 cards, one fact each), then go through them on the chat Stage with stage_show kind=flashcards deck=<that deck> " +
             "(or kind=quiz questions=[…] for a multiple-choice quiz); open_view view=learn only when the user asks for the Learn view or the Stage is off. Then reply in one or two lines (deck name, card count). " +

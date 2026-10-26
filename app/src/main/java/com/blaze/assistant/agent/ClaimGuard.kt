@@ -147,6 +147,65 @@ object ClaimGuard {
         return if (rest.length < 12) line else "$line\n\n$rest"
     }
 
+    // ---------------- 0.46.1: "open" claims about Stage cards ----------------
+
+    /** Card words in a claim, by Stage kind id. */
+    private val cardNouns: Map<String, String> = linkedMapOf(
+        "browser" to """browser(?: card| widget)?|web ?browser""",
+        "timer" to """timer(?: card)?|pomodoro|countdown""",
+        "music" to """music (?:card|player)|mini ?player|player""",
+        "quiz" to """quiz(?: card)?""",
+        "flashcards" to """flash ?cards?(?: card)?""",
+        "plan" to """plan(?: card)?|checklist""",
+        "video" to """video(?: card| player)?""",
+    )
+
+    /**
+     * 0.46.0 report: "pull up browser card" got "Browser's open, tap Exit…" and no card. A sentence that says a card is open /
+     * up / on the screen ("Browser's open", "the timer card is up", "the browser is on your screen") is a card claim.
+     */
+    fun cardClaims(reply: String): Map<String, String> {
+        val out = LinkedHashMap<String, String>()
+        for (s in sentences(reply)) {
+            if (pastTime.containsMatchIn(s) || Regex("""\b(not|never|couldn't|can't|cannot|didn't|isn't|wasn't|unable|failed)\b|n't\b""", ic).containsMatchIn(s)) continue
+            // "The browser is open in the background" is about background browsing, not a card.
+            if (Regex("""\b(?:background|in (?:a|the|another) tab|chrome|on your pc)\b""", ic).containsMatchIn(s)) continue
+            for ((kind, n) in cardNouns) {
+                val claim = Regex("""\b(?:$n)\b(?:'s|\u2019s|\s+is|\s+are|\s+card is|\s+should be)?\s+(?:now\s+|already\s+|all\s+)?(?:open(?:ed)?|up|showing|ready|on (?:your |the )?(?:screen|stage|chat))\b|""" +
+                    """\b(?:opened|pulled up|brought up|put up|showing|here's|here is)\s+(?:the\s+|your\s+|a\s+)?(?:$n)\b""", ic)
+                if (claim.containsMatchIn(s)) { out.putIfAbsent(kind, s) }
+            }
+        }
+        return out
+    }
+
+    /**
+     * The first card kind the reply says is open with no card behind it: no stage_show of that kind succeeded this turn (and
+     * for the browser, no browser_show either) and none is on the Stage now ([onStage] = kind ids). Null when all are backed.
+     */
+    fun unbackedCard(reply: String, ok: List<Call>, onStage: Set<String>): String? {
+        for (kind in cardClaims(reply).keys) {
+            if (kind in onStage) continue
+            val shown = ok.any { c -> c.name == "stage_show" && com.blaze.assistant.stage.StageKind.of(c.args.optString("kind"))?.id == kind } ||
+                (kind == "browser" && ok.any { it.name == "browser_show" || (it.name == "open_view" && it.args.optString("view").equals("browser", true)) }) ||
+                (kind == "music" && ok.any { it.name == "music_ops" }) || (kind == "timer" && ok.any { it.name == "set_timer" })
+            if (!shown) return kind
+        }
+        return null
+    }
+
+    /** The one re-prompt for an unbacked card claim. */
+    fun cardNudge(kind: String): String = "[Blaze check] Your reply says the $kind card is open, but no $kind card is on the screen: nothing showed it this turn. " +
+        "Show it for real now with stage_show kind=$kind" + (if (kind == "browser") " (url optional)" else "") + ", then reply in one short line about what the tool did."
+
+    /** The claim sentences swapped for an honest line. */
+    fun cardHonest(reply: String, kind: String): String {
+        val bad = cardClaims(reply)[kind]
+        val rest = sentences(reply).filterNot { it == bad }.joinToString(" ").trim()
+        val line = "The $kind card isn't on the screen: I didn't manage to put it up this time. Say \u201ctry again\u201d and I'll have another go."
+        return if (rest.length < 12) line else "$line\n\n$rest"
+    }
+
     // ---------------- v0.28.7: sends ----------------
 
     /** Tools whose success means a message really left the phone. */

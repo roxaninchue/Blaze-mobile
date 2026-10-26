@@ -18,7 +18,8 @@ object StageTools {
      */
     const val RULE = "\nSTAGE: the chat screen is a Stage you can arrange in place (never a jump to another screen). Use stage_show only when a live thing truly helps: " +
         "a timer or pomodoro (\"study 30 min\" -> stage_show kind=timer minutes=30 title=Study: a timer card with Start, not a reminder or a sentence), music playing, a video, " +
-        "a quiz or flashcards to go through, a plan / checklist card. Plain questions, chat and explanations stay normal chat replies. " +
+        "a quiz or flashcards to go through, a plan / checklist card, the browser (\"pull up the browser\" / \"browser card\" -> stage_show kind=browser url=optional; " +
+        "the browser_ tools then drive the page shown in that card; open_view view=browser only when they ask for full screen / full view). Plain questions, chat and explanations stay normal chat replies. " +
         "Stage first: do it on the Stage before opening a /views screen; open_view only when the user asks for that view or the Stage can't host it " +
         "(every Stage card has its own \"Open in full view\"). A new hero turns the old one into a small widget; both keep running. " +
         "Rearrange with stage_move (any element: an item id, chat, top_bar, reply_bar) and stage_layout (normal = restore). After stage_show reply in one short line."
@@ -35,15 +36,15 @@ object StageTools {
         .put("pomodoro", JSONObject().put("type", "boolean")).put("break_minutes", JSONObject().put("type", "number")).put("cycles", JSONObject().put("type", "integer"))
         .put("autostart", JSONObject().put("type", "boolean").put("description", "timer: start now (only when the user said start / go); default shows Start"))
         .put("query", str("music: what to play (song, artist, mix name, or empty to resume / Blaze DJ)"))
-        .put("url", str("video: a video file path or direct link (YouTube opens in Blaze Video)"))
+        .put("url", str("video: a video file path or direct link (YouTube opens in Blaze Video); browser: the page or search words to open (empty = the current tab)"))
         .put("deck", str("flashcards: Learn deck name (add cards first with flashcards action=add)"))
-        .put("questions", JSONObject().put("type", "array").put("description", "quiz: [{q, options:[..], answer: index or text}]").put("items", JSONObject().put("type", "object")))
+        .put("questions", JSONObject().put("type", "array").put("description", "quiz: [{q, options:[..], answer: index or text, hint (optional)}]").put("items", JSONObject().put("type", "object")))
         .put("items", JSONObject().put("type", "array").put("description", "plan: checklist lines").put("items", JSONObject().put("type", "string")))
         .put("text", str("note: the text"))
         .put("immersive", JSONObject().put("type", "boolean").put("description", "hero fills the screen (top bar off, reply bar as a pill)"))
 
     fun definitions(): List<JSONObject> = listOf(
-        fn(SHOW, "Put a live card on the chat Stage, in place: a big hero (default) or a small widget. kinds: timer (pomodoro), music, video, quiz, flashcards, plan, note. Returns the id.",
+        fn(SHOW, "Put a live card on the chat Stage, in place: a big hero (default) or a small widget. kinds: timer (pomodoro), music, video, quiz, flashcards, plan, note, browser. Returns the id.",
             contentProps().put("kind", en(*StageKind.entries.map { it.id }.toTypedArray())).put("mode", en("hero", "widget")).put("slot", en("top", "side", "bottom", "float")), listOf("kind")),
         fn(UPDATE, "Change a Stage card: new content, or timer control (start | pause | reset | add with minutes).",
             contentProps().put("id", str("the card id from stage_show")).put("control", en("start", "pause", "reset", "add")), listOf("id")),
@@ -65,7 +66,7 @@ object StageTools {
     /** Tool args -> props (flat strings; arrays as JSON). */
     fun propsFrom(a: JSONObject): Map<String, String> {
         val out = LinkedHashMap<String, String>()
-        for (k in listOf("title", "query", "url", "deck", "text")) a.optString(k).trim().takeIf { it.isNotEmpty() }?.let { out[k] = it.take(4000) }
+        for (k in listOf("title", "query", "url", "deck", "text", "sound")) a.optString(k).trim().takeIf { it.isNotEmpty() }?.let { out[k] = it.take(4000) }
         if (a.has("minutes")) StageTimer.parseMinutes(a.opt("minutes")?.toString())?.let { out["minutes"] = trimNum(it) }
         if (a.has("break_minutes")) StageTimer.parseMinutes(a.opt("break_minutes")?.toString())?.let { out["break_minutes"] = trimNum(it) }
         if (a.has("cycles")) out["cycles"] = a.optInt("cycles", 4).coerceIn(1, 8).toString()
@@ -80,8 +81,8 @@ object StageTools {
 
     private fun trimNum(d: Double) = if (d == Math.floor(d)) d.toLong().toString() else "%.2f".format(java.util.Locale.US, d).trimEnd('0').trimEnd('.')
 
-    data class Question(val q: String, val options: List<String>, val answer: Int) {
-        fun toJson(): JSONObject = JSONObject().put("q", q).put("options", JSONArray(options)).put("answer", answer)
+    data class Question(val q: String, val options: List<String>, val answer: Int, val hint: String = "") {
+        fun toJson(): JSONObject = JSONObject().put("q", q).put("options", JSONArray(options)).put("answer", answer).also { if (hint.isNotBlank()) it.put("hint", hint) }
     }
 
     /** Quiz questions in the shapes models write: {q|question, options|choices, answer: index | letter | text}. Bad ones dropped. */
@@ -100,7 +101,7 @@ object StageTools {
             }
             else -> -1
         }
-        if (idx !in opts.indices) null else Question(q.take(400), opts.take(6).map { it.take(200) }, idx)
+        if (idx !in opts.indices) null else Question(q.take(400), opts.take(6).map { it.take(200) }, idx, o.optString("hint").trim().take(200))
     }.take(30)
 
     fun questions(json: String?): List<Question> = try { quiz(JSONArray(json ?: "[]")) } catch (_: Exception) { emptyList() }
@@ -172,7 +173,7 @@ object StageTools {
 
     fun encode(s: StageState, aspect: Float = 0f): String = JSONObject().put("v", SCHEMA).put("aspect", aspect.toDouble())
         .put("items", JSONArray(s.items.map { i -> JSONObject().put("id", i.id).put("kind", i.kind.id).put("props", JSONObject(i.props as Map<*, *>))
-            .put("mode", i.mode.name).put("slot", i.slot.name).put("order", i.order).put("x", i.x.toDouble()).put("y", i.y.toDouble()).put("scale", i.scale.toDouble()).put("imm", i.immersive) }))
+            .put("mode", i.mode.name).put("slot", i.slot.name).put("order", i.order).put("x", i.x.toDouble()).put("y", i.y.toDouble()).put("scale", i.scale.toDouble()).put("imm", i.immersive).put("z", i.z) }))
         .put("chat", chatJson(s.chat)).put("heroChat", chatJson(s.heroChat)).put("top", s.topBar).put("reply", s.reply.name).put("seq", s.seq).toString()
 
     private fun chatJson(c: ChatLayout) = JSONObject().put("mode", c.mode.name).put("count", c.count).put("slot", c.slot.name).put("scale", c.scale.toDouble())
@@ -199,7 +200,7 @@ object StageTools {
             if (turned && slot == StageSlot.FLOAT && kind != StageKind.VIDEO) slot = StageReducer.defaultSlot(kind)
             fun f(k: String, d: Double, lo: Float, hi: Float) = i.optDouble(k, d).toFloat().let { if (it.isNaN()) d.toFloat() else it }.coerceIn(lo, hi)
             StageItem(id, kind, props, if (i.optString("mode") == "HERO") StageMode.HERO else StageMode.WIDGET, slot,
-                i.optLong("order"), f("x", 0.7, 0f, 0.85f), f("y", 0.2, 0f, 0.9f), f("scale", 1.0, 0.4f, 1f), i.optBoolean("imm"))
+                i.optLong("order"), f("x", 0.7, 0f, 0.85f), f("y", 0.2, 0f, 0.9f), f("scale", 1.0, 0.4f, 1f), i.optBoolean("imm"), i.optLong("z"))
         } }.distinctBy { it.id }.let { l -> val keep = StageReducer.cap(l.filter { it.mode == StageMode.WIDGET }).first.map { it.id }.toSet()
             l.filter { it.mode == StageMode.HERO || it.id in keep } }
         // Never two heroes, and the reply bar is never gone (PILL at worst).

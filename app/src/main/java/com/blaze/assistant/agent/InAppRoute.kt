@@ -14,6 +14,8 @@ object InAppRoute {
     sealed class Route {
         data class Music(val action: String) : Route()
         data class View(val id: String) : Route()
+        /** 0.46.1: a card on the chat Stage (the browser card), shown in place, never a screen change. */
+        data class Stage(val kind: String) : Route()
     }
 
     private fun r(p: String) = Regex(p, RegexOption.IGNORE_CASE)
@@ -25,6 +27,11 @@ object InAppRoute {
     private val prev = r("""^(?:play )?(?:the )?(?:previous|last) (?:song|track)$|^go back a (?:song|track)$""")
     private val now = r("""^(?:what'?s|what is) (?:playing|this song)(?: now)?$|^what song is (?:this|playing)$""")
     private val view = r("""^(?:open|show|go to|take me to|switch to)(?: me)?(?: (?:the|my))? (blaze music|music player|music|projects|gallery|terminal|blaze settings|memory|schedule|design(?: studio)?|home)(?: (?:screen|page|tab|view))?(?: in blaze)?$""")
+
+    // 0.46.1 (report: "pull up browser card" opened the full-screen browser): the browser is a Stage card by default; the full
+    // Browser screen only when they say full screen / full view.
+    private val browserCard = r("""^(?:(?:can you|could you|pls)\s+)?(?:pull up|bring up|open|show|put up|launch|start|give me|get|show me)(?: (?:up|me))?(?: (?:the|my|a|your))?(?: blaze)? (?:browser|web browser|browser card|browser widget|internet)(?: card| widget| here| on (?:the )?(?:stage|screen|chat))?(?: for me)?$|^browser(?: card)?$""")
+    private val browserFull = r("""^(?:pull up|bring up|open|show|launch|start|go to|switch to|take me to)(?: (?:the|my|a))?(?: blaze)? (?:web )?browser(?: card)? (?:in |on )?(?:full ?screen|full view|full page)$|^(?:open|show|make)(?: the)? browser (?:full ?screen|big|in full view)$|^full ?screen browser$""")
 
     fun clean(text: String): String = text.trim().lowercase()
         .replace(Regex("[?.!,]+"), " ").replace(Regex("\\s+"), " ").trim()
@@ -40,6 +47,8 @@ object InAppRoute {
             next.matches(t) -> Route.Music("next")
             prev.matches(t) -> Route.Music("previous")
             now.matches(t) -> Route.Music("now")
+            browserFull.matches(t) -> Route.View("browser")
+            browserCard.matches(t) -> Route.Stage("browser")
             else -> view.matchEntire(t)?.groupValues?.get(1)?.let { v ->
                 Route.View(when {
                     v.contains("music") -> "music"

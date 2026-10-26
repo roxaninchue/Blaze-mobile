@@ -588,6 +588,16 @@ data class Attachment(val name: String, val parts: List<JSONObject>, val thumb: 
                             catch (e: Exception) { com.blaze.assistant.device.CrashLog.quiet("Agent: in-app music", e); "Couldn't reach Blaze Music: " + (e.message ?: "unknown error") + "." }
                         s.selfTurn(text.trim(), reply, byVoice, "♫ Blaze Music")
                     }
+                    is InAppRoute.Route.Stage -> scope.launch {
+                        // 0.46.1: the card in place on the chat (the Stage off: the full Browser screen, as asked before 0.46).
+                        val reply = if (!com.blaze.assistant.stage.StageStore.enabled) {
+                            com.blaze.assistant.ui.Views.open(r.kind); "Opened the Browser."
+                        } else try {
+                            val res = com.blaze.assistant.stage.StageStore.run(app, com.blaze.assistant.stage.StageTools.SHOW, JSONObject().put("kind", r.kind))
+                            if (com.blaze.assistant.stage.StageStore.state.value.items.any { it.kind.id == r.kind }) "The browser card is on the chat; its open-in-full-view button gives the whole screen." else res
+                        } catch (e: Exception) { com.blaze.assistant.device.CrashLog.quiet("Agent: in-app stage", e); "Couldn't put the browser card up: " + (e.message ?: "unknown error") + "." }
+                        s.selfTurn(text.trim(), reply, byVoice, "\u26A1 Blaze itself")
+                    }
                     is InAppRoute.Route.View -> {
                         val v = com.blaze.assistant.ui.Views.find(r.id)
                         if (v != null) com.blaze.assistant.ui.Views.open(v.id, if (v.id == "design") (try { Designs.current()?.path } catch (_: Exception) { null }).orEmpty() else "")
@@ -3469,6 +3479,26 @@ When you finish, say what you did in one short sentence.
                                 textOut = ClaimGuard.honest(shown, bad)
                                 reply.put("content", textOut)
                                 pendingFollowups = emptyList()
+                            }
+                        } else if (com.blaze.assistant.stage.StageStore.enabled) {
+                            // 0.46.1: "Browser's open" / "the timer card is up" with no card on the Stage -> one re-prompt to show it, then the truth.
+                            val onStage = com.blaze.assistant.stage.StageStore.state.value.items.map { it.kind.id }.toSet()
+                            val card = synchronized(turnOk) { ClaimGuard.unbackedCard(shown, turnOk.toList(), onStage) }
+                            if (card != null) {
+                                if (!claimNudged && nudgesLeft > 0 && step < maxSteps - 3) {
+                                    claimNudged = true
+                                    nudgeCount++
+                                    nudgesLeft--
+                                    ViewRouter.byId("stage")?.let { groupsOn += it.groups }
+                                    if (liveId >= 0) { msgs = msgs.filterNot { it.id == liveId }; liveId = -1L }
+                                    add(Role.STEP, RetryGuard.label(RetryGuard.Kind.CLAIM, "Stage"))
+                                    history.put(JSONObject().put("role", "user").put("content", RetryGuard.anchor(ClaimGuard.cardNudge(card), lastUserText())))
+                                    continue
+                                } else {
+                                    textOut = ClaimGuard.cardHonest(shown, card)
+                                    reply.put("content", textOut)
+                                    pendingFollowups = emptyList()
+                                }
                             }
                         }
                     }

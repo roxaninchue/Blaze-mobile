@@ -87,6 +87,12 @@ object StageStore {
             "pause" -> StageTimer.pause(t, now)
             "reset" -> StageTimer.reset(t)
             "add" -> StageTimer.add(t, (minutes * 60_000).toLong(), now)
+            "sub" -> StageTimer.add(t, -(minutes * 60_000).toLong(), now)
+            // 0.46.1 presets / custom length (before it starts, or to start over at a new length).
+            "set" -> { _state.value.byId(id)?.let { item ->
+                    dispatch(StageAction.Update(id, mapOf("minutes" to StageTimer.minutesText(minutes), "autostart" to "")))
+                    _state.value.byId(id)?.let { replaceTimer(ctx, it) } }
+                return }
             else -> t
         }
         putTimer(ctx, n)
@@ -109,6 +115,9 @@ object StageStore {
     }
 
     private const val CH = "stage_timer"; private const val CH_ALERT = "stage_timer_done"
+    /** 0.46.1 the timer card's sound choice: ring (default), vibrate only, or silent (a quiet notification). */
+    private const val CH_VIBRATE = "stage_timer_vibrate"; private const val CH_SILENT = "stage_timer_silent"
+    val SOUNDS = listOf("ring", "vibrate", "silent")
     const val ACT_ALARM = "com.blaze.assistant.stage.ALARM"; const val ACT_PAUSE = "com.blaze.assistant.stage.PAUSE"; const val ACT_STOP = "com.blaze.assistant.stage.STOP"
     private fun nid(id: String) = 0x5A00 + (id.hashCode() and 0xFF)
     private fun pi(ctx: Context, act: String, id: String) = PendingIntent.getBroadcast(ctx, (act + id).hashCode(),
@@ -118,6 +127,8 @@ object StageStore {
         if (Build.VERSION.SDK_INT >= 26) {
             it.createNotificationChannel(NotificationChannel(CH, "Stage timers", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) })
             it.createNotificationChannel(NotificationChannel(CH_ALERT, "Timer alerts", NotificationManager.IMPORTANCE_HIGH))
+            it.createNotificationChannel(NotificationChannel(CH_VIBRATE, "Timer alerts (vibrate)", NotificationManager.IMPORTANCE_HIGH).apply { setSound(null, null); enableVibration(true) })
+            it.createNotificationChannel(NotificationChannel(CH_SILENT, "Timer alerts (silent)", NotificationManager.IMPORTANCE_DEFAULT).apply { setSound(null, null); enableVibration(false) })
         }
     }
 
@@ -156,10 +167,12 @@ object StageStore {
     private fun alert(ctx: Context, t: TimerState) {
         val text = if (t.done) "Time's up." else "${t.phaseName} \u00b7 ${StageTimer.words(t.phases[t.phase])}"
         try {
-            nm(ctx).notify(nid(t.id) + 0x100, NotificationCompat.Builder(ctx, CH_ALERT).setSmallIcon(R.drawable.ic_stat_blaze)
+            val ch = when (_state.value.byId(t.id)?.props?.get("sound")) { "vibrate" -> CH_VIBRATE; "silent" -> CH_SILENT; else -> CH_ALERT }
+            nm(ctx).notify(nid(t.id) + 0x100, NotificationCompat.Builder(ctx, ch).setSmallIcon(R.drawable.ic_stat_blaze)
                 .setContentTitle(t.label).setContentText(text).setAutoCancel(true).setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setCategory(NotificationCompat.CATEGORY_ALARM).setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-                .setDefaults(NotificationCompat.DEFAULT_ALL).setContentIntent(open(ctx)).build())
+                .setDefaults(when (ch) { CH_ALERT -> NotificationCompat.DEFAULT_ALL; CH_VIBRATE -> NotificationCompat.DEFAULT_VIBRATE; else -> 0 })
+                .setSilent(ch == CH_SILENT).setContentIntent(open(ctx)).build())
         } catch (_: Throwable) { }
     }
 
@@ -207,7 +220,21 @@ object StageStore {
         StageKind.VIDEO -> if (item.props["url"].isNullOrBlank()) " No video given: the card offers Blaze Video." else { com.blaze.assistant.ui.StageVideo.autoplay = true; "" }
         StageKind.FLASHCARDS -> com.blaze.assistant.agent.Flashcards.queue(item.props["deck"].orEmpty()).size.let { n ->
             if (n == 0) " That deck has nothing due (or doesn't exist): add cards with flashcards action=add." else " $n card${if (n == 1) "" else "s"} to go." }
+        StageKind.BROWSER -> browserShown(ctx, args.optString("url").trim().ifBlank { args.optString("query").trim() })
         else -> ""
+    }
+
+    /** 0.46.1 the browser card shows the built-in browser's current tab (the one browser_* tools drive); a url opens there. */
+    private suspend fun browserShown(ctx: Context, url: String): String {
+        val e = com.blaze.assistant.browser.BrowserEngine
+        withContext(Dispatchers.Main) { e.init(ctx) }
+        return if (url.isNotEmpty()) {
+            val r = try { e.open(ctx, url, newTab = false) } catch (x: Exception) { "Couldn't open $url: ${x.message}" }
+            " The browser card shows it; browser_* tools act on this page. " + r.take(1800)
+        } else withContext(Dispatchers.Main) {
+            if (e.tabs.isEmpty()) { e.newTab(ctx, "https://www.google.com/"); " The browser card is up with a new tab (search page)." }
+            else " The browser card shows the current tab: ${e.tab()?.title.orEmpty().take(80)} (${e.tab()?.url.orEmpty().take(120)})."
+        }
     }
 }
 
