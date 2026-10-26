@@ -1,6 +1,7 @@
 package com.blaze.assistant.ui
 
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -248,7 +249,7 @@ private fun MdText(md: String, tail: Boolean = false, live: Boolean = false) {
     val hasLink = remember(shown) { ChatLinks.hasLinks(shown) }
     val linked = openLink != null && hasLink
     val mod2 = if (!linked) mod else mod.pointerInput(shown) {
-        androidx.compose.foundation.gestures.detectTapGestures(onTap = { p ->
+        detectTapGestures(onTap = { p ->
             val l = holder[1] as? androidx.compose.ui.text.TextLayoutResult ?: return@detectTapGestures
             ChatLinks.at(shown, l.getOffsetForPosition(p))?.let { openLink?.invoke(it) }
         })
