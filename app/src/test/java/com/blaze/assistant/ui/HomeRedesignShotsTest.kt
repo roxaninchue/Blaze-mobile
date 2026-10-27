@@ -2,6 +2,7 @@ package com.blaze.assistant.ui
 
 import android.graphics.Bitmap
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
@@ -86,5 +87,42 @@ class HomeRedesignShotsTest {
             }
         }
         Unit
+    }
+
+    /** 0.48.0: the new Home with the composer as the app wires it (one chat bar at the bottom, the grid above it). */
+    @Test fun homeWithChatBar() {
+        capture("home-with-chat-bar") {
+            androidx.compose.runtime.CompositionLocalProvider(LocalBlaze provides DarkColors) {
+                Box(Modifier.fillMaxSize()) {
+                    androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
+                        Box(Modifier.weight(1f)) { HomeRedesignContent(HomeRedesignSample.state(), playIntro = false, drawSky = true) }
+                    }
+                    Box(Modifier.align(androidx.compose.ui.Alignment.BottomCenter)) {
+                        com.blaze.assistant.ui.composer.BlazeChatBar(com.blaze.assistant.ui.composer.ComposerState())
+                    }
+                }
+            }
+        }
+    }
+
+    /** 0.48.0: chat over the new Home (Robolectric draws no RenderEffect blur, so the frame shows the dim only). */
+    @Test fun chatOverNewHome() {
+        val now = System.currentTimeMillis()
+        val msgs = listOf(
+            com.blaze.assistant.agent.ChatMessage(1, com.blaze.assistant.agent.Role.USER, "What's on today?", at = now - 120_000),
+            com.blaze.assistant.agent.ChatMessage(2, com.blaze.assistant.agent.Role.BLAZE, "Standup at 10:00, then the dentist at 15:30.", at = now - 110_000))
+        val st = com.blaze.assistant.ui.composer.ComposerState().apply { chatOpen = true }
+        capture("chat-over-new-home") {
+            androidx.compose.runtime.CompositionLocalProvider(LocalBlaze provides DarkColors) {
+                Box(Modifier.fillMaxSize()) {
+                    HomeRedesignContent(HomeRedesignSample.state(), playIntro = false, drawSky = true)
+                    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)))
+                    androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
+                        Box(Modifier.weight(1f)) { com.blaze.assistant.ui.composer.ChatOverHomeContent(st, msgs, busy = true, now = now) }
+                        com.blaze.assistant.ui.composer.BlazeChatBar(st)
+                    }
+                }
+            }
+        }
     }
 }
