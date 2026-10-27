@@ -118,7 +118,8 @@ class BackRuleTest {
         val btc = chat.substringAfter("fun backToChat() {").substringBefore("\n    }\n")
         for (k in listOf("settingsPage = null", "showViews = false", "plusOpen = false", "arcOpen = false", "avatarMenu = false", "showSearch = false",
             "GalleryUi.open.value = false", "Agent.roomOpen.value = -1L", "ThemePickerState.open.value = false", "Views.showing.value = \"\"",
-            "switchTab(ChatNav.CHAT)", "settleTo(1f)")) assertTrue("backToChat: $k", btc.contains(k))
+            // RC2: the sheet settles through HomeRoute (Home when the new Home is the root, the chat sheet otherwise)
+            "switchTab(ChatNav.CHAT)", "HomeRoute.sheetAfterBack(")) assertTrue("backToChat: $k", btc.contains(k))
         // Back from Chat no longer drops to Home (that loop made Back unable to leave Blaze).
         assertFalse(chat.contains("BackHandler(enabled = swipeMode && sheetP > 0.5f && nav.tab == ChatNav.CHAT && !nav.inProjectChat) { settleTo(0f) }"))
         // openView handles exactly the specials BackRule knows.
@@ -140,5 +141,16 @@ class BackRuleTest {
         assertEquals("view:design", BackRule.front(BackRule.shellFor(Views.find("design")!!)!!))
         assertEquals("page:memory", BackRule.front(BackRule.shellFor(Views.find("memory")!!)!!))
         assertEquals("page:settings", BackRule.front(BackRule.shellFor(Views.find("settings")!!)!!))
+    }
+
+    /** RC2 (HomeRoute): with the new Home as root, Home keeps its own Back and everything else, the plain chat included, goes Home. */
+    @Test fun homeIsTheRootWithTheNewHome() = fiveTimes("home root") {
+        assertEquals(BackRule.Action.OWN, BackRule.action(BackRule.Shell(swipeHome = true, homeRoot = true)))
+        assertEquals(BackRule.Action.TO_CHAT, BackRule.action(BackRule.Shell(homeRoot = true)))
+        for (o in listOf(BackRule.Shell(settingsPage = "memory", homeRoot = true), BackRule.Shell(view = "design", homeRoot = true),
+            BackRule.Shell(gallery = true, homeRoot = true), BackRule.Shell(tab = ChatNav.PROJECTS, homeRoot = true)))
+            assertEquals("$o", BackRule.Action.TO_CHAT, BackRule.action(o))
+        assertEquals(BackRule.Action.OWN, BackRule.action(BackRule.Shell(onboarding = true, homeRoot = true)))
+        assertEquals(BackRule.Action.OWN, BackRule.action(BackRule.Shell(inCall = true, homeRoot = true)))
     }
 }

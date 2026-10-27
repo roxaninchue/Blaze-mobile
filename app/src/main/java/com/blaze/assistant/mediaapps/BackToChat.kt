@@ -48,6 +48,8 @@ object BackToChat {
     fun chatIntent(a: Activity): Intent =
         Intent(a, com.blaze.assistant.MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            // RC2 (HomeRoute): with the new Home on, coming back lands on Home, not the old chat screen
+            .putExtra(com.blaze.assistant.ui.HomeRoute.EXTRA_HOME, true)
 
     /** Bring the chat forward. [finish] closes the media screen; false leaves it in PiP. */
     fun go(a: Activity, finish: Boolean = true) {

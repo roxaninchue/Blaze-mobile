@@ -158,6 +158,11 @@ class MainActivity : FragmentActivity(), com.blaze.assistant.ui.BackRule.Shelled
     private fun handle(i: android.content.Intent?) {
         i ?: return
         if (authLink(i)) return
+        // RC2 (HomeRoute): Back out of Music / Video / Browser / Terminal / Blaze Phone lands on the new Home
+        if (i.getBooleanExtra(com.blaze.assistant.ui.HomeRoute.EXTRA_HOME, false)) {
+            i.removeExtra(com.blaze.assistant.ui.HomeRoute.EXTRA_HOME)
+            if (com.blaze.assistant.ui.HomeRedesign.enabled) com.blaze.assistant.ui.homeRequests.value = com.blaze.assistant.ui.homeRequests.value + 1
+        }
         // v0.45.0: internal extras only count when Blaze itself sent the intent (IntentKey); another app can still open
         // Blaze, use the assistant button / voice command, or share into the message box.
         val ok = IntentKey.Policy.allowed(i.action, i.getBooleanExtra(EXTRA_LISTEN, false), i.getStringExtra(Notifier.EXTRA_OPEN_CHAT) != null,

@@ -11,6 +11,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.blaze.assistant.home.WeatherKind
 import com.blaze.assistant.ui.splash.CloudGlyphPainter
@@ -58,13 +62,118 @@ class HomeRedesignShotsTest {
         HomeRedesignContent(HomeRedesignSample.state(withTasks, night), playIntro = false, drawSky = true, frozenU = frozenU)
     }
 
+    private fun save(name: String): Bitmap {
+        val root = rule.activity.window.decorView
+        val bmp = Bitmap.createBitmap(root.width.coerceAtLeast(1), root.height.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+        root.draw(android.graphics.Canvas(bmp))
+        val dir = File(System.getProperty("blaze.shotsDir") ?: "build/shots", "HomeRedesignShotsTest").apply { mkdirs() }
+        File(dir, "$name.png").outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        return bmp
+    }
+
+    /** Advance the (manual) clock [ms] in 100 ms frames, letting native rendering catch up now and then. */
+    private fun run(ms: Long) {
+        var t = 0L
+        while (t < ms) { rule.mainClock.advanceTimeBy(100); t += 100; if (t % 1000 == 0L) { rule.waitForIdle(); Thread.sleep(60) } }
+        rule.waitForIdle(); Thread.sleep(250); rule.mainClock.advanceTimeBy(100); rule.waitForIdle()
+    }
+
+    /**
+     * RC2 (frames gone after the intro): every card has its full frame, i.e. a dark navy fill inside each cell (sampled in
+     * the card's padding, away from text) and a light outline brighter than that fill at the cell's edge. Positions in dp
+     * from HomeGridLook (17 dp sides and gaps, rows 179 / 171, top padding 12).
+     */
+    private fun assertFrames(b: Bitmap, withTasks: Boolean, label: String) {
+        val d = b.width / 360f
+        fun px(x: Float, y: Float) = b.getPixel((x * d).toInt(), (y * d).toInt())
+        fun blue(p: Int) = p and 0xFF
+        fun lum(p: Int) = ((p shr 16) and 0xFF) + ((p shr 8) and 0xFF) + (p and 0xFF)
+        val sky = px(180f, 101f)
+        assertTrue("$label: the gutter between the top cards is sky (${Integer.toHexString(sky)})", blue(sky) > 150)
+        val inside = mutableListOf(23f to 101f, 337f to 101f, 23f to 293f)
+        if (withTasks) inside += 337f to 293f else inside += 337f to 254f
+        for ((x, y) in inside) {
+            val p = px(x, y)
+            assertTrue("$label: card fill at ($x, $y) dp is navy, got ${Integer.toHexString(p)}", blue(p) < 140)
+        }
+        // the outline: the left edge of the weather card (17 dp) is lighter than its fill 6 dp in
+        val edge = px(17.6f, 101f); val fill = px(23f, 101f)
+        assertTrue("$label: outline ${Integer.toHexString(edge)} vs fill ${Integer.toHexString(fill)}", lum(edge) > lum(fill) + 15)
+    }
+
     @Test fun settled() {
         val b = home("home-settled")
         // the cards are dark navy over a blue sky: the top-left card's middle is darker than the sky at the edge
         val card = b.getPixel(b.width / 4, b.height / 6); val sky = b.getPixel(2, b.height / 3)
         assertTrue((card and 0xFF) < (sky and 0xFF))
+        assertFrames(b, true, "settled")
     }
-    @Test fun settledNoTasks() { home("home-settled-no-todo", withTasks = false) }
+    @Test fun settledNoTasks() { assertFrames(home("home-settled-no-todo", withTasks = false), false, "settled, no to-do") }
+
+    /** RC2: the intro played live to the end (first run): the settled grid keeps every card frame. */
+    private fun afterIntro(name: String, withTasks: Boolean) {
+        rule.mainClock.autoAdvance = false
+        rule.setContent { HomeRedesignContent(HomeRedesignSample.state(withTasks), playIntro = true, drawSky = true) }
+        run(9_500)
+        assertFrames(save(name), withTasks, name)
+    }
+    @Test fun settledAfterIntro() = afterIntro("home-after-intro", true)
+    @Test fun settledAfterIntroNoTodo() = afterIntro("home-after-intro-no-todo", false)
+
+    /** RC2: the intro skipped by a tap during the card emergence. */
+    @Test fun settledAfterSkip() {
+        rule.mainClock.autoAdvance = false
+        rule.setContent { HomeRedesignContent(HomeRedesignSample.state(), playIntro = true, drawSky = true) }
+        run(3_800)
+        rule.onRoot().performTouchInput { click(center) }
+        run(600)
+        assertFrames(save("home-after-skip"), true, "after a skip")
+    }
+
+    /** RC2: reduce motion ("Remove animations"): no intro, settled from the first frame. */
+    @Test fun settledReduceMotion() {
+        MotionTokens.setEnabledForTests(false)
+        try { assertFrames(capture("home-reduce-motion") {
+            HomeRedesignContent(HomeRedesignSample.state(), playIntro = !HomeIntroClock.played && MotionTokens.enabled, drawSky = true) }, true, "reduce motion") }
+        finally { MotionTokens.setEnabledForTests(true) }
+    }
+
+    /**
+     * RC2: back from a view. The app shows a view (Settings, Music...) in place of Home and Home leaves the composition;
+     * coming back re-creates Home with the intro already played. Here a stand-in view is shown first, then Home again.
+     */
+    @Test fun settledAfterReturningFromAView() {
+        rule.mainClock.autoAdvance = false
+        val inView = androidx.compose.runtime.mutableStateOf(true)
+        rule.setContent {
+            if (inView.value) Box(Modifier.fillMaxSize().background(Color(0xFF101010)))
+            else HomeRedesignContent(HomeRedesignSample.state(), playIntro = false, drawSky = true)
+        }
+        run(300)
+        rule.runOnIdle { inView.value = false }
+        run(500)
+        assertFrames(save("home-after-view"), true, "after a view")
+    }
+
+    /** RC2 card focus: a card lifted over the blurred Home. */
+    private fun focused(name: String, card: com.blaze.assistant.home.HomeGrid.Card, software: Boolean) = capture(name) {
+        HomeRedesignContent(HomeRedesignSample.state().let { it.copy(allTopics = it.topics + HomeRedesignSample.extraTopics()) },
+            playIntro = false, drawSky = true, focus = HomeFocusState(card), forceSoftwareBlur = software)
+    }
+    @Test fun focusedInterests() {
+        focused("focus-interests", com.blaze.assistant.home.HomeGrid.Card.INTERESTS, software = false)
+        rule.onNodeWithText("Formula One").assertIsDisplayed()
+    }
+    @Test fun focusedWeather() {
+        focused("focus-weather", com.blaze.assistant.home.HomeGrid.Card.WEATHER, software = false)
+        rule.onNodeWithText("Open the forecast").assertIsDisplayed()
+    }
+    @Test fun focusedLowRamBlur() {
+        val b = focused("focus-interests-lowram", com.blaze.assistant.home.HomeGrid.Card.INTERESTS, software = true)
+        // the sides are dimmed (the blurred, dimmed Home): darker than the open sky
+        val side = b.getPixel(4, b.height / 2)
+        assertTrue("dim on the sides: ${Integer.toHexString(side)}", (side and 0xFF) < 170)
+    }
     @Test fun settledNight() { home("home-settled-night", night = true) }
     @Test fun splash() { home("intro-0-splash", frozenU = -900L) }
     @Test fun splashNight() { home("intro-0-splash-night", night = true, frozenU = -900L) }

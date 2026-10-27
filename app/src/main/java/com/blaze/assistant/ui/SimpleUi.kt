@@ -258,11 +258,20 @@ fun HomeSurface(progress: Float, onAsk: (String) -> Unit, onQuote: (String) -> U
     // under "Swipe up to chat" (on a dark Home, a light ink scene used to); with a theme, Home and the strip both show it.
     // 0.47 chat composer: the bottom Blaze button ("Swipe up to chat" strip) is replaced by the chat bar (profile · Message Blaze · +);
     // chat and Spotlight open over the blurred Home. Swiping up on the bar still slides the full chat over Home.
-    com.blaze.assistant.ui.composer.BlazeComposerHome(
-        barModifier = Modifier.graphicsLayer { alpha = (1f - progress * 2f).coerceIn(0f, 1f) }
+    // RC2: asks from Home (Quick actions, the board's "ask" buttons) open the chat OVER Home (the composer), not the full
+    // chat sheet; a quote goes into the bar. The bar fades while a Home card is focused, and a tap on it closes the card.
+    val composer = com.blaze.assistant.ui.composer.rememberComposerState()
+    com.blaze.assistant.ui.composer.BlazeComposerHome(state = composer,
+        barModifier = Modifier.graphicsLayer { alpha = (1f - progress * 2f).coerceIn(0f, 1f) * (1f - HomeFocusBus.amount) }
+            .then(if (HomeFocusBus.active) Modifier.pointerInput(Unit) {
+                awaitPointerEventScope { while (true) { val e = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                    e.changes.forEach { it.consume() }; if (e.changes.any { !it.pressed }) HomeFocusBus.close?.invoke() } }
+            } else Modifier)
             .draggable(drag, androidx.compose.foundation.gestures.Orientation.Vertical, onDragStarted = onDragStart, onDragStopped = onDragStop),
         onLeaveHome = onOpen) {
-        HomePane(onAsk = onAsk, onQuote = onQuote, edgeToEdge = true, bottom = {
+        HomePane(onAsk = { t -> if (HomeRoute.askOverHome(com.blaze.assistant.ui.HomeRedesign.enabled)) composer.send(t) else onAsk(t) },
+            onQuote = { t -> if (HomeRoute.askOverHome(com.blaze.assistant.ui.HomeRedesign.enabled)) { composer.text = t; composer.openChat() } else onQuote(t) },
+            askToast = !com.blaze.assistant.ui.HomeRedesign.enabled, edgeToEdge = true, bottom = {
             Spacer(Modifier.fillMaxWidth().navigationBarsPaddingCompat().height((com.blaze.assistant.ui.composer.ChatBarTokens.HEIGHT_DP + 8).dp))
         })
     }

@@ -216,7 +216,8 @@ fun rememberHomeGridState(ctx: Context, widgets: List<Widget>, data: Map<String,
     val actions = remember(widgets, routineHours, hour) {
         QuickActions.build(com.blaze.assistant.agent.SimpleHome.starters(hour).map { it.label to it.prompt }, InterestsFeed.labels(widgets), routineHours)
     }
-    return HomeGridState(board, topics, music, tasks, count, next, actions, h24, now)
+    val allTopics = remember(widgets, data) { InterestsFeed.topics(widgets, data, max = 24) }
+    return HomeGridState(board, topics, music, tasks, count, next, actions, h24, now, allTopics)
 }
 
 /** The next calendar event in the coming 7 days (title, start), or null without READ_CALENDAR. Call off the main thread. */
@@ -250,6 +251,10 @@ fun HomeRedesignContent(
     chatBar: (@Composable BoxScope.() -> Unit)? = null,
     /** Screenshot tests: pin the intro clock at this many ms after the splash ended (null = run live). */
     frozenU: Long? = null,
+    /** RC2 card focus (which card is lifted; saved across rotation / recreation). */
+    focus: HomeFocusState = rememberHomeFocusState(),
+    /** Tests: the low-RAM blur path (one cached software blur) even where RenderEffect exists. */
+    forceSoftwareBlur: Boolean = false,
 ) {
     val cards = remember(s.hasTasks) { HomeGrid.order(s.hasTasks).size - 1 }
     // The intro decides its variant once (the cloud must match the icon it lands on).
@@ -278,11 +283,21 @@ fun HomeRedesignContent(
     }
     val introOn = intro != null && !intro.done
     val scroll = rememberScrollState()
+    val backdrop = rememberHomeBackdrop(forceSoftware = forceSoftwareBlur)
+    // the host's chat bar fades while a card is lifted; a tap on its area closes the card
+    androidx.compose.runtime.DisposableEffect(focus) {
+        HomeFocusBus.close = { focus.close() }
+        onDispose { if (HomeFocusBus.close != null) HomeFocusBus.close = null; HomeFocusBus.active = false; HomeFocusBus.amount = 0f }
+    }
+    androidx.compose.runtime.SideEffect { HomeFocusBus.active = focus.isOpen }
+    LaunchedEffect(focus) { androidx.compose.runtime.snapshotFlow { focus.progress.value }.collect { HomeFocusBus.amount = it } }
 
     Box(Modifier.fillMaxSize().then(if (intro != null) Modifier.onGloballyPositioned {
         intro.bounds[HomeIntroKeys.ROOT] = it.boundsInRoot(); intro.rootHeight = it.findRootCoordinates().size.height.toFloat()
     } else Modifier)) {
+        Box(Modifier.fillMaxSize().homeBackdropSource(backdrop)) {
         if (drawSky) HomeSkyBackground(night = intro?.night ?: s.board.night, modifier = Modifier.fillMaxSize())
+        androidx.compose.runtime.CompositionLocalProvider(LocalHomeFocus provides if (introOn) null else focus) {
         Column(Modifier.fillMaxSize().verticalScroll(scroll, enabled = !introOn).padding(top = 12.dp, bottom = if (reserveBottom) 112.dp else 24.dp)) {
             HomeGridV2(s, intro?.takeIf { !it.done }, onWeather = onWeather, onTopic = onTopic, onPickInterests = onPickInterests,
                 onMusic = onMusic, onMusicToggle = onMusicToggle, onTodo = onTodo, onNextUp = onNextUp, onAction = onAction) {
@@ -293,8 +308,13 @@ fun HomeRedesignContent(
                 }
             }
         }
+        }
+        }
         if (introOn) IntroOverlay(intro!!)
-        if (chatBar != null) Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding()) { chatBar() }
+        if (chatBar != null) Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding()
+            .graphicsLayer { alpha = 1f - focus.progress.value }) { chatBar() }
+        if (focus.shown && !introOn) HomeFocusOverlay(focus, s, backdrop, onWeather = onWeather, onTopic = onTopic, onPickInterests = onPickInterests,
+            onMusic = onMusic, onMusicToggle = onMusicToggle, onTodo = onTodo, onNextUp = onNextUp, onAction = onAction)
     }
 }
 

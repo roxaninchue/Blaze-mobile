@@ -234,6 +234,8 @@ fun HomePane(onAsk: (String) -> Unit, onQuote: (String) -> Unit = {},
               * chat" strip) sits ON it, so no other scene shows through behind the strip.
               */
              edgeToEdge: Boolean = false, bottom: (@Composable () -> Unit)? = null,
+             /** RC2: false when asks open the chat over Home (no "The answer is in Chat" toast). */
+             askToast: Boolean = true,
              /** 0.47: the chat composer's slot on the redesigned Home (drawn at the bottom over the grid). */
              chatBar: (@Composable androidx.compose.foundation.layout.BoxScope.() -> Unit)? = null) {
     val base = LocalBlaze.current.mono
@@ -339,7 +341,7 @@ fun HomePane(onAsk: (String) -> Unit, onQuote: (String) -> Unit = {},
                 }, onSkip = { HomeBoard.finishOnboarding(emptySet(), emptySet(), "", skipped = true); onboarded = true })
             } else if (redesign) {
                 // Lazy start: the new Home (splash, grid) is composed from the frame after Blaze's first frame; the sky is the first frame.
-                if (firstFrameShown()) HomeRedesignScreen(onAsk = { t -> onAsk(t); toast = "Asked Blaze. The answer is in Chat." }, onOpenLink = { u -> open(u, null) },
+                if (firstFrameShown()) HomeRedesignScreen(onAsk = { t -> onAsk(t); if (askToast) toast = "Asked Blaze. The answer is in Chat." }, onOpenLink = { u -> open(u, null) },
                     onAllWidgets = { showBoard = true }, onPickInterests = { onboarded = false }, drawSky = false,
                     reserveBottom = false, chatBar = chatBar)
             } else {

@@ -158,7 +158,7 @@ object Dates {
 
 /** Open-Meteo forecast + geocoding (no key). */
 object OpenMeteo {
-    data class Place(val name: String, val lat: Double, val lon: Double, val country: String = "")
+    data class Place(val name: String, val lat: Double, val lon: Double, val country: String = "", val countryCode: String = "")
 
     fun forecastUrl(lat: Double, lon: Double, fahrenheit: Boolean): String =
         "https://api.open-meteo.com/v1/forecast?latitude=${"%.4f".format(Locale.US, lat)}&longitude=${"%.4f".format(Locale.US, lon)}" +
@@ -171,7 +171,7 @@ object OpenMeteo {
 
     fun parsePlace(json: String): Place? = try {
         val r = JSONObject(json).optJSONArray("results")?.optJSONObject(0)
-        r?.let { Place(it.optString("name"), it.getDouble("latitude"), it.getDouble("longitude"), it.optString("country")) }
+        r?.let { Place(it.optString("name"), it.getDouble("latitude"), it.getDouble("longitude"), it.optString("country"), it.optString("country_code")) }
     } catch (_: Exception) { null }
 
     /** Countries that use °F by default. */

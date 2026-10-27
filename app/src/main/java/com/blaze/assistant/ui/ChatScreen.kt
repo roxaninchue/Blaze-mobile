@@ -337,7 +337,9 @@ fun ChatScreen() {
     var showSearch by remember { mutableStateOf(false) }
     // v0.39.0 Simple mode: who the next message goes to (@blaze / @halo / @all) and whether the keyboard composer is out.
     val simpleMode by com.blaze.assistant.agent.SimpleMode.simpleFlow.collectAsState()
-    val swipeMode by com.blaze.assistant.agent.SwipeNav.swipeFlow.collectAsState()
+    val swipeSetting by com.blaze.assistant.agent.SwipeNav.swipeFlow.collectAsState()
+    // RC2 (HomeRoute): with the new Home on, navigation is Swipe and Home is the root
+    val swipeMode = HomeRoute.swipe(swipeSetting, HomeRedesign.enabled)
     var typing by rememberSaveable { mutableStateOf(false) }
     var avatarMenu by remember { mutableStateOf(false) }
     var plusOpen by remember { mutableStateOf(false) }
@@ -521,7 +523,17 @@ fun ChatScreen() {
         if (swipeMode && (question != null || pendingConfirmNow != null || fixNow != null || listenReq > 0) && sheetP < 1f) settleTo(1f)
     }
     val homeReq by homeRequests.collectAsState()
-    LaunchedEffect(homeReq) { if (homeReq > 0) { if (swipeMode) settleTo(0f) else go(navNow().switchTab(ChatNav.HOME)) } }
+    LaunchedEffect(homeReq) {
+        if (homeReq > 0) {
+            if (swipeMode) {
+                // RC2: every route home (open_view home, /home, Back out of Music / Video / Browser...) lands on the new Home, views closed
+                settingsPage = null; showViews = false; plusOpen = false; arcOpen = false; avatarMenu = false; showSearch = false
+                GalleryUi.open.value = false; Views.showing.value = ""
+                val n = navNow(); if (n.tab != ChatNav.CHAT || n.inProjectChat) go(n.switchTab(ChatNav.CHAT))
+                settleTo(0f)
+            } else go(navNow().switchTab(ChatNav.HOME))
+        }
+    }
     // Awareness: which surface is in front (Home or Chat).
     val surface by remember(swipeMode) { derivedStateOf { if (!swipeMode) (if (navNow().tab == ChatNav.HOME) "home" else "chat") else com.blaze.assistant.agent.SwipeNav.surfaceOf(sheetP) } }
     LaunchedEffect(surface) { try { com.blaze.assistant.agent.Awareness.set(com.blaze.assistant.agent.Awareness.Now("surface", "Showing", com.blaze.assistant.agent.SwipeNav.awarenessLine(surface), "Blaze")) } catch (_: Throwable) { } }
@@ -533,17 +545,19 @@ fun ChatScreen() {
         GalleryUi.open.value = false; Agent.roomOpen.value = -1L; ThemePickerState.open.value = false
         Views.showing.value = ""
         val n = navNow(); if (n.tab != ChatNav.CHAT || n.inProjectChat) go(n.switchTab(ChatNav.CHAT))
-        if (swipeMode && sheetP < 1f) settleTo(1f)
+        // RC2 (HomeRoute): with the new Home as root, Back lands on Home (sheet down), never on the old chat screen
+        HomeRoute.sheetAfterBack(swipeMode, HomeRoute.homeRoot(swipeMode, HomeRedesign.enabled, Agent.privateChat.value), sheetP)?.let { settleTo(it) }
     }
     SideEffect {
         // Read when Back is pressed (State reads, never a stale snapshot of this composition).
         BackRule.shellNow = {
-            val n = navNow(); val swipe = com.blaze.assistant.agent.SwipeNav.swipeFlow.value
+            val n = navNow(); val swipe = HomeRoute.swipe(com.blaze.assistant.agent.SwipeNav.swipeFlow.value, HomeRedesign.enabled)
             BackRule.Shell(onboarding = onboard, gate = !onboard && gate, inCall = false,
                 tab = n.tab, inProjectChat = n.inProjectChat, swipeHome = swipe && sheetP < 0.5f,
                 settingsPage = settingsPage, view = if (n.inProjectChat) "" else Views.showing.value,
                 viewsSheet = showViews, plusMenu = plusOpen, arc = arcOpen, avatarMenu = avatarMenu, search = showSearch,
-                gallery = GalleryUi.open.value, room = Agent.roomOpen.value >= 0, themePicker = ThemePickerState.open.value)
+                gallery = GalleryUi.open.value, room = Agent.roomOpen.value >= 0, themePicker = ThemePickerState.open.value,
+                homeRoot = HomeRoute.homeRoot(swipe, HomeRedesign.enabled, Agent.privateChat.value))
         }
         BackRule.toChat = { backToChat() }
     }

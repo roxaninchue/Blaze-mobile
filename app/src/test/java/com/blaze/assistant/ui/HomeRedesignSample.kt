@@ -26,6 +26,11 @@ object HomeRedesignSample {
         return ws to d
     }
 
+    /** Two more tracked interests than the grid shows (the focused Interests card lists all of them). */
+    fun extraTopics(): List<InterestsFeed.Topic> = listOf(
+        InterestsFeed.Topic("n3", "Formula One", "f1", "Ferrari brings a new floor to Austin", "Autosport \u00b7 1 h ago", "https://example.com/d"),
+        InterestsFeed.Topic("n4", "Football", "soccer", "Zambia names its squad for the qualifiers", "BBC Sport \u00b7 2 h ago", "https://example.com/e"))
+
     fun state(withTasks: Boolean = true, night: Boolean = false): HomeGridState {
         val (ws, d) = newsWidgets()
         val tasks = if (withTasks) listOf(TodoFeed.Task("Buy groceries", true), TodoFeed.Task("Gym at 6 PM", false), TodoFeed.Task("Read 20 pages", false)) else emptyList()

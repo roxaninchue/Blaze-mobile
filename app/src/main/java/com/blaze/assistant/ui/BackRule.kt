@@ -39,6 +39,8 @@ object BackRule {
         val viewsSheet: Boolean = false, val plusMenu: Boolean = false, val arc: Boolean = false,
         val avatarMenu: Boolean = false, val search: Boolean = false, val gallery: Boolean = false,
         val room: Boolean = false, val themePicker: Boolean = false,
+        /** RC2 (HomeRoute): the new Home is the root, so the plain chat sheet goes back to Home and Home keeps its own Back. */
+        val homeRoot: Boolean = false,
     )
 
     enum class Action { TO_CHAT, OWN }
@@ -67,7 +69,10 @@ object BackRule {
     /** Fronts that keep their own Back. Everything else goes to the chat. */
     val OWN_BACK = setOf(CHAT, "setup", "setup-gate", "call")
 
-    fun action(s: Shell): Action = if (front(s) in OWN_BACK) Action.OWN else Action.TO_CHAT
+    /** With [Shell.homeRoot]: Home (not the chat) is where Back stops; everything else, the plain chat included, goes there. */
+    val OWN_BACK_HOME_ROOT = setOf("home", "setup", "setup-gate", "call")
+
+    fun action(s: Shell): Action = if (front(s) in (if (s.homeRoot) OWN_BACK_HOME_ROOT else OWN_BACK)) Action.OWN else Action.TO_CHAT
 
     /** Views.special screens that are their own activity (ChatScreen.openView opens exactly these; BackRuleTest checks). */
     val SPECIAL_ACTIVITY = mapOf(

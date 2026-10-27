@@ -18,11 +18,11 @@ object HomeGrid {
 
     /**
      * Weather | Interests, Music | To-do (To-do only when there are tasks), Next up (full width), Quick actions (full
-     * width). Without tasks Music keeps its half-width cell on the left.
+     * width). RC2: without tasks Music is one full-width compact row, so no empty cell is left beside it.
      */
     fun rows(hasTasks: Boolean): List<Row> = listOf(
         Row(listOf(Card.WEATHER, Card.INTERESTS), full = false),
-        Row(if (hasTasks) listOf(Card.MUSIC, Card.TODO) else listOf(Card.MUSIC), full = false),
+        if (hasTasks) Row(listOf(Card.MUSIC, Card.TODO), full = false) else Row(listOf(Card.MUSIC), full = true),
         Row(listOf(Card.NEXT_UP), full = true),
         Row(listOf(Card.QUICK), full = true),
     )
@@ -183,6 +183,13 @@ object WeatherBoard {
             "", "", "", WeatherKind.PARTLY_CLOUDY, night(hour, minute, ""), loaded = false)
         val cond = d.change.substringBefore(" · ").trim()
         return Board(d.headline.ifBlank { "Weather" }, cond, d.value, d.sunset, kind(cond), night(hour, minute, d.sunset), loaded = true)
+    }
+
+    /** RC2: the board's place like the reference, "Ndola, ZM": the town plus the ISO country code (kept as given when it already has one). */
+    fun placeLabel(place: String, countryCode: String?): String {
+        val p = place.trim(); val cc = countryCode?.trim()?.uppercase(Locale.ROOT).orEmpty()
+        if (p.isEmpty() || cc.length != 2 || !cc.all { it in 'A'..'Z' } || p.contains(',')) return p
+        return "$p, $cc"
     }
 }
 

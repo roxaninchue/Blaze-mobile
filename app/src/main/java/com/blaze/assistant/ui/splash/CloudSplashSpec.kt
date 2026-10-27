@@ -199,24 +199,25 @@ object CloudSplashSpec {
  * then each other card emerges at the centre, expands, and settles into its grid cell. Pure (CloudSplashSpecTest).
  */
 object HomeIntroSpec {
-    const val DOTS_OUT_MS = 150L
-    const val GLIDE_MS = 520L
-    const val OUTLINE_AT = 360L
-    const val OUTLINE_MS = 480L
-    const val TILES_AT = 560L
-    const val TILES_MS = 320L
-    const val TYPE_PLACE_AT = 480L
-    const val TYPE_COND_AT = 760L
-    const val TYPE_SUN_AT = 980L
-    const val TYPE_MS = 260L
-    const val BOARD_FILL_AT = 1_120L
-    const val FILL_MS = 220L
-    const val CARDS_AT = 1_160L
-    const val CARD_STAGGER = 230L
-    const val EMERGE_MS = 220L
-    const val SETTLE_AT = 200L
-    const val SETTLE_MS = 320L
-    const val CARD_FILL_AT = 440L
+    const val DOTS_OUT_MS = 240L
+    // RC2: the durations live in HomeMotion (shared with the composer), measured from the approved video.
+    const val GLIDE_MS = com.blaze.assistant.ui.HomeMotion.GLIDE_MS
+    const val OUTLINE_AT = com.blaze.assistant.ui.HomeMotion.OUTLINE_AT
+    const val OUTLINE_MS = com.blaze.assistant.ui.HomeMotion.OUTLINE_MS
+    const val TILES_AT = com.blaze.assistant.ui.HomeMotion.TILES_AT
+    const val TILES_MS = com.blaze.assistant.ui.HomeMotion.TILES_MS
+    const val TYPE_PLACE_AT = com.blaze.assistant.ui.HomeMotion.TYPE_PLACE_AT
+    const val TYPE_COND_AT = com.blaze.assistant.ui.HomeMotion.TYPE_COND_AT
+    const val TYPE_SUN_AT = com.blaze.assistant.ui.HomeMotion.TYPE_SUN_AT
+    const val TYPE_MS = com.blaze.assistant.ui.HomeMotion.TYPE_MS
+    const val BOARD_FILL_AT = com.blaze.assistant.ui.HomeMotion.BOARD_FILL_AT
+    const val FILL_MS = com.blaze.assistant.ui.HomeMotion.FILL_MS
+    const val CARDS_AT = com.blaze.assistant.ui.HomeMotion.CARDS_AT
+    const val CARD_STAGGER = com.blaze.assistant.ui.HomeMotion.CARD_STAGGER
+    const val EMERGE_MS = com.blaze.assistant.ui.HomeMotion.EMERGE_MS
+    const val SETTLE_AT = com.blaze.assistant.ui.HomeMotion.SETTLE_AT
+    const val SETTLE_MS = com.blaze.assistant.ui.HomeMotion.SETTLE_MS
+    const val CARD_FILL_AT = com.blaze.assistant.ui.HomeMotion.CARD_FILL_AT
     const val CENTER_SCALE = 0.55f
 
     /** u when everything has settled for [cards] centre-emerging cards. */

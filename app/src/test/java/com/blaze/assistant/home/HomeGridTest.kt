@@ -23,7 +23,7 @@ class HomeGridTest {
         val rows = HomeGrid.rows(hasTasks = false)
         assertFalse(rows.flatMap { it.cards }.contains(HomeGrid.Card.TODO))
         assertEquals(listOf(HomeGrid.Card.MUSIC), rows[1].cards)
-        assertFalse(rows[1].full)
+        assertTrue(rows[1].full)   // RC2: Music alone is full width (no empty cell)
         assertEquals(listOf(HomeGrid.Card.INTERESTS, HomeGrid.Card.MUSIC, HomeGrid.Card.NEXT_UP, HomeGrid.Card.QUICK), HomeGrid.order(false).drop(1))
     }
 
