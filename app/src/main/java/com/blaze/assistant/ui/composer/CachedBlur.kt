@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
@@ -169,7 +170,8 @@ fun rememberCachedBlur(): CachedBlur {
 /** Marks the content to blur. Recorded into the blur's layer only while the blur is active (no cost otherwise). */
 fun Modifier.cachedBlurSource(blur: CachedBlur): Modifier = drawWithContent {
     val l = blur.layer
-    if (blur.recording && l != null) {
+    // Only on a hardware canvas: a software draw of the view tree (a View-to-bitmap screenshot) can't draw a RenderNode.
+    if (blur.recording && l != null && drawContext.canvas.nativeCanvas.isHardwareAccelerated) {
         l.record { this@drawWithContent.drawContent() }
         blur.redraws++
         drawLayer(l)

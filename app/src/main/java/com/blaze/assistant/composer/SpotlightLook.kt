@@ -75,16 +75,16 @@ object SpotlightLook {
 }
 
 /**
- * 0.48.0 RC2 calm pacing for the composer (the owner: RC1 was far too fast on the A12). About 1.7x the RC1 durations
+ * 0.48.0 RC2 calm pacing for the composer (the owner: RC1 was far too fast on a low-RAM phone). About 1.7x the RC1 durations
  * (RC1: 150 / 220 / 320 ms), in line with the approved home-sequence video. Easing names are [com.blaze.assistant.ui.MotionTokens]'s
  * (Standard / Decelerate / Accelerate). With "Remove animations" every spec built from these snaps (callers check
  * MotionTokens.enabled).
  */
 object ComposerMotion {
-    /** Spotlight / chat coming in (RC1 220). */
+    /** Spotlight / chat coming in (RC1 220). Same value as rc2-home's HomeMotion.SURFACE_MS. */
     const val ENTER = 380
-    /** Spotlight / chat going out (RC1 150). */
-    const val EXIT = 260
+    /** Spotlight / chat going out (RC1 150). Same value as rc2-home's HomeMotion.SURFACE_FAST_MS. */
+    const val EXIT = 240
     /** The blurred backdrop fade (RC1 220). */
     const val BACKDROP = 420
     /** Bar parts: chip slide, send arrow / orb swap, + turn (RC1 150-220). */
