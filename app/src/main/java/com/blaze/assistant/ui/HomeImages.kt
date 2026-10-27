@@ -25,8 +25,17 @@ import java.security.MessageDigest
  */
 object HomeImages {
     private val mem = object : android.util.LruCache<String, ImageBitmap>(6 * 1024 * 1024) {
-        override fun sizeOf(key: String, value: ImageBitmap) = value.width * value.height * 4
+        override fun sizeOf(key: String, value: ImageBitmap) = value.width * value.height * bytesPerPixel
     }
+    /** 0.46.6: low-RAM phones (SM-A125F report, hundreds of memory trims a day) keep 2 MB of decoded pictures, RGB_565. */
+    @Volatile var lowRam = false; private set
+    private val bytesPerPixel: Int get() = 2
+    fun cacheBytes(low: Boolean): Int = if (low) 2 * 1024 * 1024 else 6 * 1024 * 1024
+    fun configure(low: Boolean) { lowRam = low; try { mem.resize(cacheBytes(low)) } catch (_: Throwable) { } }
+    /** Memory is short: drop every decoded picture (the disk copies stay). */
+    fun trim() { try { mem.evictAll() } catch (_: Throwable) { } }
+    /** Thumbnail width: 280 px on low-RAM phones, else 360. */
+    fun target(): Int = if (lowRam) 280 else 360
     private val gate = kotlinx.coroutines.sync.Semaphore(3)
     private val locks = HashMap<String, Mutex>()
 
@@ -79,9 +88,9 @@ object HomeImages {
                     }
                     val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                     BitmapFactory.decodeFile(f.path, o)
-                    val ss = safeSample(o.outWidth, o.outHeight)
+                    val ss = safeSample(o.outWidth, o.outHeight, target())
                     if (ss <= 0) { f.delete(); return@withContext null }
-                    val bmp = try { BitmapFactory.decodeFile(f.path, BitmapFactory.Options().apply { inSampleSize = ss }) }
+                    val bmp = try { BitmapFactory.decodeFile(f.path, BitmapFactory.Options().apply { inSampleSize = ss; inPreferredConfig = android.graphics.Bitmap.Config.RGB_565 }) }
                         catch (_: OutOfMemoryError) { null } ?: return@withContext null
                     trim(dir(ctx))
                     bmp.asImageBitmap().also { mem.put(url, it) }

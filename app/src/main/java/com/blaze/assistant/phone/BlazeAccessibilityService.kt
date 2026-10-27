@@ -42,6 +42,7 @@ class BlazeAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         instance = this
         com.blaze.assistant.device.CrashLog.write("Phone control connected")
+        try { com.blaze.assistant.bank.BankMode.warm(this) } catch (_: Throwable) { }   // 0.46.6: app names off the main thread
         try { com.blaze.assistant.bank.BankMode.a11yBack() } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.error("bank restore reset", e) }
         com.blaze.assistant.voice.WakeWordService.start(this)
         if (com.blaze.assistant.agent.Settings.orbPinned) com.blaze.assistant.ui.Overlay.showOrb(this)
@@ -79,6 +80,7 @@ class BlazeAccessibilityService : AccessibilityService() {
         // banking app is watched, remembered or recorded.
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             val p = event.packageName?.toString().orEmpty()
+            if (p.isNotEmpty()) frontPkg = p
             if (p.isNotEmpty() && p != packageName) {
                 try { com.blaze.assistant.bank.BankMode.onFront(this, p) } catch (_: Throwable) { }
                 if (try { com.blaze.assistant.bank.BankMode.isBank(p) } catch (_: Throwable) { false }) { lastWindowPkg = p; return }
@@ -404,9 +406,9 @@ class BlazeAccessibilityService : AccessibilityService() {
         for (i in 0 until node.childCount) walk(node.getChild(i), out, depth + 1)
     }
 
+    // 0.46.6: cached (BankMode's label cache, warmed off the main thread when the service connects); it ran on every new window.
     private fun appLabel(pkg: String): String = try {
-        val pm = packageManager
-        pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+        com.blaze.assistant.bank.BankMode.labelOf(this, pkg).ifEmpty { pkg }
     } catch (_: Exception) { pkg }
 
     private fun element(id: Int): AccessibilityNodeInfo? = elements.getOrNull(id)
@@ -569,7 +571,14 @@ class BlazeAccessibilityService : AccessibilityService() {
     suspend fun pressEnter(): Boolean { val id = anyField() ?: return false; return submitIme(elements[id] ?: return false) }
 
     /** Package in front right now. */
-    fun currentPkg(): String = rootInActiveWindow?.packageName?.toString().orEmpty()
+    fun currentPkg(): String {
+        // 0.46.6 (0.46.5 report: getRootInActiveWindow() from a main-thread Handler blocked the UI ~1 s, many times a day):
+        // on the main thread answer from the package of the last window-state event; the live tree is asked only off main.
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) return frontPkg
+        return (rootInActiveWindow?.packageName?.toString().orEmpty()).also { if (it.isNotEmpty()) frontPkg = it }.ifEmpty { frontPkg }
+    }
+    /** Package of the last TYPE_WINDOW_STATE_CHANGED event (any app, Blaze included). */
+    @Volatile var frontPkg: String = ""
 
     /** Words visible on screen (for checking a step worked, and short "what changed" notes). */
     fun visibleWords(): Set<String> {

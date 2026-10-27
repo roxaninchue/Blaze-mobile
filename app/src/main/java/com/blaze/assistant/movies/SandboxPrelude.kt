@@ -17,6 +17,9 @@ object SandboxPrelude {
   function memAdd(n){ n = +n || 0; if (n > 0) { memUsed += n; if (memUsed > memBudget) throw new RangeError('The source used too much memory'); } }
   function memLen(x){ return typeof x === 'string' ? x.length : (x && typeof x.length === 'number' ? x.length * 8 : 8); }
   G.__memAdd = memAdd;
+  // 0.46.6: at every await the count restarts from the engine's real live size (host __h_live, after a GC).
+  function memSync(){ return __h_live().then(function(l){ l = +l; if (l >= 0) memUsed = l; }, function(){}); }
+  G.__memSync = memSync;
   var aPush = Array.prototype.push, aJoin = Array.prototype.join, aConcat = Array.prototype.concat, sRep = String.prototype.repeat, sPad = String.prototype.padEnd, sPadS = String.prototype.padStart, sCat = String.prototype.concat, jParse = JSON.parse, jStr = JSON.stringify;
   Array.prototype.push = function(){ var n = 0; for (var i = 0; i < arguments.length; i++) n += 16 + (typeof arguments[i] === 'string' ? arguments[i].length : 0); memAdd(n); return aPush.apply(this, arguments); };
   Array.prototype.join = function(){ var r = aJoin.apply(this, arguments); memAdd(r.length); return r; };
@@ -34,7 +37,7 @@ object SandboxPrelude {
   var con = { log: function(){ if (logs.length < 40) logs.push(Array.prototype.map.call(arguments, function(a){ try { return typeof a === 'string' ? a : JSON.stringify(a); } catch(e) { return String(a); } }).join(' ').slice(0, 300)); } };
   con.info = con.log; con.warn = con.log; con.error = con.log; con.debug = function(){};
   G.console = con;
-  G.setTimeout = function(f, ms){ var a = Array.prototype.slice.call(arguments, 2); __h_sleep(Math.min(Math.max(+ms || 0, 0), 10000)).then(function(){ if (typeof f === 'function') f.apply(null, a); }); return 1; };
+  G.setTimeout = function(f, ms){ var a = Array.prototype.slice.call(arguments, 2); __h_sleep(Math.min(Math.max(+ms || 0, 0), 10000)).then(memSync).then(function(){ if (typeof f === 'function') f.apply(null, a); }); return 1; };
   G.clearTimeout = function(){}; G.setInterval = function(){ return 0; }; G.clearInterval = function(){};
   G.queueMicrotask = function(f){ Promise.resolve().then(f); };
   var B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
@@ -61,7 +64,7 @@ object SandboxPrelude {
   function send(url, method, headers, body){
     var b = body; var h = lowerHeaders(headers);
     if (b !== undefined && b !== null && typeof b !== 'string') { if (b instanceof USP) { b = b.toString(); if (!h['Content-Type'] && !h['content-type']) h['Content-Type'] = 'application/x-www-form-urlencoded'; } else { b = JSON.stringify(b); if (!h['Content-Type'] && !h['content-type']) h['Content-Type'] = 'application/json'; } }
-    return __h_fetch(JSON.stringify({ url: String(url), method: method || 'GET', headers: h, body: b === undefined ? null : b })).then(function(t){ var r = JSON.parse(t); if (r.error) throw new Error(r.error); return r; });
+    return __h_fetch(JSON.stringify({ url: String(url), method: method || 'GET', headers: h, body: b === undefined ? null : b })).then(function(t){ return memSync().then(function(){ return t; }); }).then(function(t){ var r = JSON.parse(t); if (r.error) throw new Error(r.error); return r; });
   }
   function Hdr(h){ this._h = h || {}; }
   Hdr.prototype.get = function(k){ var v = this._h[String(k).toLowerCase()]; return v === undefined ? null : v; };

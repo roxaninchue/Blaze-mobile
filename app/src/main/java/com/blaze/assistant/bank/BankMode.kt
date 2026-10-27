@@ -74,6 +74,18 @@ object BankMode {
     fun removed(): Set<String> = set(PREF_REMOVED)
 
     private val labels = java.util.concurrent.ConcurrentHashMap<String, String>()
+    /**
+     * 0.46.6 (0.46.5 report: getApplicationLabel() inside onAccessibilityEvent stalled the main thread ~1 s while Android
+     * loaded the app's resources): launcher apps' names are read once on a background thread when phone control connects,
+     * so the main-thread lookups below hit the cache. Also used for the window trigger's app name.
+     */
+    fun warm(ctx: Context) {
+        val c = ctx.applicationContext
+        Thread({ try { installed(c).forEach { (p, l) -> labels.putIfAbsent(p, l) } } catch (_: Throwable) { } }, "blaze-app-labels").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }.start()
+    }
+    /** The app's name (cached; "" when unknown). */
+    fun labelOf(ctx: Context, pkg: String): String = label(ctx, pkg)
+
     private fun label(ctx: Context, pkg: String): String = labels.getOrPut(pkg) {
         try { ctx.packageManager.getApplicationLabel(ctx.packageManager.getApplicationInfo(pkg, 0)).toString() } catch (_: Throwable) { "" }
     }

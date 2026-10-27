@@ -1140,7 +1140,7 @@ private fun Entry(m: ChatMessage, pos: GroupPos, canAct: Boolean, onQuote: (Stri
             val (quoted, body) = splitQuote(m.text)
             // v0.24.6: pictures inside your bubble (tap to preview), other files as icon chips.
             SentBubble(body, quoted, rememberPresent(m.media), m.files, pos)
-            if (delivery != null) DeliveryLabel(delivery, onRetry = if (canAct) ({
+            if (delivery != null && DeliveryView.shown(delivery)) DeliveryLabel(delivery, onRetry = if (canAct) ({
                 com.blaze.assistant.agent.Delivery.tracker().apply(listOf(m.gid), com.blaze.assistant.agent.Delivery.Ev.USER_RETRY); Agent.retry(m.id) }) else null)
         } }
         Role.BLAZE -> if (m.meta == com.blaze.assistant.update.Updater.CARD) UpdateCard()

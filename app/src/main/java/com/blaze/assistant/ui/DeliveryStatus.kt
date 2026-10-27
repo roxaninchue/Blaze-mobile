@@ -45,6 +45,9 @@ import com.blaze.assistant.agent.DeliveryState
 object DeliveryView {
     const val TAG = "delivery_label"
 
+    /** 0.46.6 (Rocky, asked several times): no "Read" chip under your message; Sending / Sent / Not sent (retry) stay. */
+    fun shown(state: DeliveryState): Boolean = state != DeliveryState.READ
+
     /**
      * What the label shows for the latest user bubble. [tracked] = the tracker's state (null: never tracked, e.g. older
      * chats or a local-only answer); [answered] = a real Blaze reply (not the ack) came after it; [busy] = a turn is

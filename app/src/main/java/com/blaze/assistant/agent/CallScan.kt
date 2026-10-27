@@ -184,6 +184,9 @@ object CallScan {
         val skip = ArrayList<IntRange>()   // code to leave alone (fences in a language that isn't a call format)
         fun taken(i: Int) = hits.any { i >= it.start && i < it.end } || skip.any { i in it }
 
+        // 0. 0.46.6: DeepSeek's native DSML tool calls written as text (Rocky's screenshot: "<｜DSML｜function_calls>…").
+        hits += dsml(text)
+
         // 1. Fenced blocks.
         for (m in fenceRe.findAll(text)) {
             val lang = m.groupValues[1].lowercase()
@@ -292,6 +295,78 @@ object CallScan {
         return hits.sortedBy { it.start }
     }
 
+    // ---------------- 0.46.6: DSML (DeepSeek) ----------------
+
+    private const val BAR = "[|\uFF5C]"
+    private val dsmlBlockOpen = Regex("<$BAR\\s*DSML\\s*$BAR\\s*function_calls\\s*>", RegexOption.IGNORE_CASE)
+    private val dsmlBlockClose = Regex("</\\s*$BAR\\s*DSML\\s*$BAR\\s*function_calls\\s*>", RegexOption.IGNORE_CASE)
+    private val dsmlInvoke = Regex("<$BAR\\s*DSML\\s*$BAR\\s*invoke\\s+name\\s*=\\s*\"([^\"]*)\"\\s*>([\\s\\S]*?)(</\\s*$BAR\\s*DSML\\s*$BAR\\s*invoke\\s*>|$)", RegexOption.IGNORE_CASE)
+    private val dsmlParam = Regex("<$BAR\\s*DSML\\s*$BAR\\s*parameter\\s+name\\s*=\\s*\"([^\"]*)\"((?:\\s+[A-Za-z_]+\\s*=\\s*\"[^\"]*\")*)\\s*>([\\s\\S]*?)</\\s*$BAR\\s*DSML\\s*$BAR\\s*parameter\\s*>", RegexOption.IGNORE_CASE)
+    private val dsmlAny = Regex("</?\\s*$BAR\\s*DSML\\s*$BAR", RegexOption.IGNORE_CASE)
+
+    /** The arguments of one DSML invoke body: string="true" values as they are, anything else read as JSON when it parses. */
+    fun dsmlArgs(body: String): JSONObject {
+        val o = JSONObject()
+        for (m in dsmlParam.findAll(body)) {
+            val name = m.groupValues[1].trim(); if (name.isEmpty()) continue
+            val attrs = m.groupValues[2]; val raw = m.groupValues[3]
+            val isString = Regex("""string\s*=\s*"true"""", RegexOption.IGNORE_CASE).containsMatchIn(attrs)
+            o.put(name, if (isString) raw else (raw.trim().let { v -> try { org.json.JSONTokener(v).nextValue().takeIf { it != JSONObject.NULL || v == "null" } ?: v } catch (_: Exception) { v } }))
+        }
+        return o
+    }
+
+    /** DSML call blocks (and lone invokes) in [text]: each invoke a hit, the first covering the whole block. Unclosed = cut off. */
+    fun dsml(text: String): List<Hit> {
+        if (!dsmlAny.containsMatchIn(text)) return emptyList()
+        val out = ArrayList<Hit>()
+        val covered = ArrayList<IntRange>()
+        var at = 0
+        while (true) {
+            val o = dsmlBlockOpen.find(text, at) ?: break
+            val c = dsmlBlockClose.find(text, o.range.last + 1)
+            val end = c?.range?.last?.plus(1) ?: text.length
+            val body = text.substring(o.range.last + 1, c?.range?.first ?: text.length)
+            val inv = dsmlInvoke.findAll(body).toList()
+            if (inv.isEmpty()) out += Hit("", null, o.range.first, end, "dsml")
+            inv.forEachIndexed { k, m ->
+                val closed = m.groupValues[3].isNotEmpty()
+                out += Hit(bare(m.groupValues[1]), if (closed) dsmlArgs(m.groupValues[2]) else null, if (k == 0) o.range.first else end, end, "dsml")
+            }
+            covered += o.range.first until end
+            at = end; if (at >= text.length) break
+        }
+        // Invokes written without the function_calls wrapper.
+        for (m in dsmlInvoke.findAll(text)) {
+            if (covered.any { m.range.first in it }) continue
+            val closed = m.groupValues[3].isNotEmpty()
+            out += Hit(bare(m.groupValues[1]), if (closed) dsmlArgs(m.groupValues[2]) else null, m.range.first, m.range.last + 1, "dsml")
+            covered += m.range
+        }
+        // Stray DSML tags (a closing tag left over, a parameter alone): hidden, never a call.
+        for (m in Regex("</?\\s*$BAR\\s*DSML\\s*$BAR[^>]*>", RegexOption.IGNORE_CASE).findAll(text)) {
+            if (covered.any { m.range.first in it }) continue
+            out += Hit("", null, m.range.first, m.range.last + 1, "dsml")
+        }
+        return out
+    }
+
+    /** While streaming: start of a DSML block / tag that is still open at the end of [text], or -1. */
+    fun dsmlUnfinished(text: String): Int {
+        val o = dsmlBlockOpen.findAll(text).lastOrNull()
+        if (o != null && dsmlBlockClose.find(text, o.range.last + 1) == null) return o.range.first
+        // A tag being typed: "<｜", "<｜DS", "<｜DSML｜func", "</｜DSML｜inv"
+        val lt = text.lastIndexOf('<')
+        if (lt >= 0) {
+            val tail = text.substring(lt)
+            if (tail.indexOf('>') < 0) {
+                val w = tail.replace('\uFF5C', '|').removePrefix("<").removePrefix("/").trimStart()
+                if (w.startsWith("|") && ("|DSML|".startsWith(w.take(6), ignoreCase = true) || w.startsWith("|DSML|", ignoreCase = true))) return lt
+            }
+        }
+        return -1
+    }
+
     /** True when every bracket in [s] is closed (a call whose `)` alone is missing still has readable args). */
     private fun complete(s: String): Boolean = s.count { it == '[' } == s.count { it == ']' } && s.count { it == '{' } == s.count { it == '}' } &&
         s.count { it == '(' } == s.count { it == ')' }
@@ -322,6 +397,7 @@ object CallScan {
 
     /** While streaming: where an unfinished call / payload / tool fence starts at the end of [text], or -1. */
     fun unfinished(text: String, known: Collection<String> = this.known): Int {
+        dsmlUnfinished(text).takeIf { it >= 0 }?.let { return it }
         // An open fence in a call language whose body is (or is becoming) a call.
         val opens = Regex("```").findAll(text).count()
         if (opens % 2 == 1) {

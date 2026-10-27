@@ -38,19 +38,31 @@ object Routines {
     private val _all = MutableStateFlow<List<Routine>>(emptyList())
     val all: StateFlow<List<Routine>> = _all
 
+    /** 0.46.6: counts down when the saved routines are read (start reads them off the main thread). */
+    private val loaded = java.util.concurrent.CountDownLatch(1)
+
     fun init(ctx: Context) {
         app = ctx.applicationContext
         prefs = app.getSharedPreferences("blaze", Context.MODE_PRIVATE)
-        _all.value = try {
-            val a = JSONArray(prefs.getString("routines", "[]"))
-            (0 until a.length()).map { val o = a.getJSONObject(it)
-                Routine(o.getInt("id"), o.getString("name"), o.getString("prompt"), o.getInt("hour"), o.getInt("minute"),
-                    o.optInt("days", 127), o.optBoolean("enabled", true), o.optString("command"), o.optBoolean("linux"),
-                    o.optString("notify", "always"), o.optInt("every_minutes", 0), o.optLong("at", 0L)) }
-        } catch (_: Exception) { emptyList() }
-        scheduleAll()
-        try { com.blaze.assistant.agent.TurnContextSource.invalidate() } catch (_: Throwable) { }
+        // 0.46.6 (0.46.5 report: a 1 s main-thread stall at Routines.init, the first read of the prefs file on a low-RAM phone,
+        // then 305 ms setting alarms): reading the routines and setting their alarms run on a background thread.
+        Thread({
+            try { _all.value = load() } finally { loaded.countDown() }
+            try { scheduleAll() } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("Routines.scheduleAll", e) }
+            try { com.blaze.assistant.agent.TurnContextSource.invalidate() } catch (_: Throwable) { }
+        }, "blaze-routines").start()
     }
+
+    private fun load(): List<Routine> = try {
+        val a = JSONArray(prefs.getString("routines", "[]"))
+        (0 until a.length()).map { val o = a.getJSONObject(it)
+            Routine(o.getInt("id"), o.getString("name"), o.getString("prompt"), o.getInt("hour"), o.getInt("minute"),
+                o.optInt("days", 127), o.optBoolean("enabled", true), o.optString("command"), o.optBoolean("linux"),
+                o.optString("notify", "always"), o.optInt("every_minutes", 0), o.optLong("at", 0L)) }
+    } catch (_: Exception) { emptyList() }
+
+    /** The routines, once read (waits at most 3 s right after start, so a change never overwrites routines not read yet). */
+    private fun cur(): List<Routine> { try { loaded.await(3, java.util.concurrent.TimeUnit.SECONDS) } catch (_: InterruptedException) { }; return _all.value }
 
     private fun save(list: List<Routine>) {
         _all.value = list
@@ -59,34 +71,34 @@ object Routines {
         try { com.blaze.assistant.agent.TurnContextSource.invalidate() } catch (_: Throwable) { }   // v0.45.9: the next turn's [context] block is rebuilt
     }
 
-    fun get(id: Int) = _all.value.firstOrNull { it.id == id }
+    fun get(id: Int) = cur().firstOrNull { it.id == id }
 
     fun add(name: String, prompt: String, hour: Int, minute: Int, days: Int): Routine {
-        val r = Routine((_all.value.maxOfOrNull { it.id } ?: 0) + 1, name.trim().ifEmpty { "Routine" }, prompt.trim(),
+        val r = Routine((cur().maxOfOrNull { it.id } ?: 0) + 1, name.trim().ifEmpty { "Routine" }, prompt.trim(),
             hour.coerceIn(0, 23), minute.coerceIn(0, 59), days)
-        save(_all.value + r); return r
+        save(cur() + r); return r
     }
 
     /** A one-off on a date (v0.16.0), e.g. "CIT102 lab 3 is due tomorrow". */
     fun addAt(name: String, prompt: String, at: Long): Routine {
         val c = Calendar.getInstance().apply { timeInMillis = at }
-        val r = Routine((_all.value.maxOfOrNull { it.id } ?: 0) + 1, name.trim().ifEmpty { "Reminder" }, prompt.trim(),
+        val r = Routine((cur().maxOfOrNull { it.id } ?: 0) + 1, name.trim().ifEmpty { "Reminder" }, prompt.trim(),
             c.get(Calendar.HOUR_OF_DAY), c.get(Calendar.MINUTE), 0, at = at)
-        save(_all.value + r); return r
+        save(cur() + r); return r
     }
 
     fun addCommand(name: String, command: String, hour: Int, minute: Int, days: Int, linux: Boolean, notify: String, everyMinutes: Int): Routine {
-        val r = Routine((_all.value.maxOfOrNull { it.id } ?: 0) + 1, name.trim().ifEmpty { "Shell job" }, "", hour.coerceIn(0, 23), minute.coerceIn(0, 59), days,
+        val r = Routine((cur().maxOfOrNull { it.id } ?: 0) + 1, name.trim().ifEmpty { "Shell job" }, "", hour.coerceIn(0, 23), minute.coerceIn(0, 59), days,
             command = command.trim(), linux = linux, notify = notify, everyMinutes = if (everyMinutes > 0) everyMinutes.coerceAtLeast(15) else 0)
-        save(_all.value + r); return r
+        save(cur() + r); return r
     }
 
-    fun rename(id: Int, name: String) = save(_all.value.map { if (it.id == id) it.copy(name = name.trim()) else it })
-    fun retime(id: Int, h: Int, m: Int) = save(_all.value.map { if (it.id == id) it.copy(hour = h, minute = m, at = 0L) else it })
-    fun setEnabled(id: Int, on: Boolean) = save(_all.value.map { if (it.id == id) it.copy(enabled = on) else it })
-    fun delete(id: Int) { cancel(id); save(_all.value.filterNot { it.id == id }) }
+    fun rename(id: Int, name: String) = save(cur().map { if (it.id == id) it.copy(name = name.trim()) else it })
+    fun retime(id: Int, h: Int, m: Int) = save(cur().map { if (it.id == id) it.copy(hour = h, minute = m, at = 0L) else it })
+    fun setEnabled(id: Int, on: Boolean) = save(cur().map { if (it.id == id) it.copy(enabled = on) else it })
+    fun delete(id: Int) { cancel(id); save(cur().filterNot { it.id == id }) }
     /** v0.39.0 Undo: puts a deleted routine back as it was (same id when free). */
-    fun restore(r: Routine) { if (get(r.id) == null) save(_all.value + r) else save(_all.value + r.copy(id = (_all.value.maxOfOrNull { it.id } ?: 0) + 1)) }
+    fun restore(r: Routine) { if (get(r.id) == null) save(cur() + r) else save(cur() + r.copy(id = (cur().maxOfOrNull { it.id } ?: 0) + 1)) }
 
     /** After a one-time routine runs it switches off. */
     fun ran(id: Int) { get(id)?.let { if ((it.days == 0 && it.everyMinutes == 0) || it.at > 0) setEnabled(id, false) else scheduleAll() } }
@@ -130,7 +142,7 @@ object Routines {
 
     fun scheduleAll() {
         val am = app.getSystemService(AlarmManager::class.java)
-        for (r in _all.value) {
+        for (r in cur()) {
             if (!r.enabled) { cancel(r.id); continue }
             val t = next(r)
             if (r.at > 0 && t < System.currentTimeMillis() - 60_000L) { cancel(r.id); continue }   // a dated one-off that already passed
@@ -194,8 +206,8 @@ object Routines {
             "Scheduled \"${r.name}\": ${if (every > 0) r.daysLabel() else "${r.timeLabel()} ${r.daysLabel()}"}, runs `${r.command.take(80)}`. [ID ${com.blaze.assistant.agent.Processes.idFor("routine", r.id.toString())}]"
         }
         // v0.45.9: dated, so a Sunday item can't be read as today's (the phone: "today you have church" on a Wednesday).
-        "list_routines" -> _all.value.takeIf { it.isNotEmpty() }?.let { l -> listLine(l, System.currentTimeMillis()) } ?: "No routines yet."
-        "delete_routine" -> _all.value.firstOrNull { it.name.equals(a.getString("name"), true) || it.name.contains(a.getString("name"), true) }
+        "list_routines" -> cur().takeIf { it.isNotEmpty() }?.let { l -> listLine(l, System.currentTimeMillis()) } ?: "No routines yet."
+        "delete_routine" -> cur().firstOrNull { it.name.equals(a.getString("name"), true) || it.name.contains(a.getString("name"), true) }
             ?.let { delete(it.id); "Deleted \"${it.name}\"." } ?: "No routine called \"${a.getString("name")}\"."
         else -> "Unknown"
     }

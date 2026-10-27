@@ -116,9 +116,13 @@ object MemoryTrim {
      */
     fun shouldDropCaches(level: Int): Boolean = level in 10..15 || level >= 40
 
+    @Volatile private var lastLogged = 0L
     fun dropCaches() {
         com.blaze.assistant.ui.ParseMemo.bubble.clear(); com.blaze.assistant.ui.ParseMemo.segs.clear()
         com.blaze.assistant.ui.ParseMemo.blocks.clear(); com.blaze.assistant.ui.ParseMemo.md.clear()
-        CrashLog.write("MEMORY trimmed: parse caches dropped")
+        try { com.blaze.assistant.ui.HomeImages.trim() } catch (_: Throwable) { }   // 0.46.6: decoded posters too
+        // 0.46.6: once per 10 minutes in the log (hundreds a day on a low-RAM phone said nothing new)
+        val now = System.currentTimeMillis()
+        if (now - lastLogged > 600_000L) { lastLogged = now; CrashLog.write("MEMORY trimmed: parse caches + pictures dropped") }
     }
 }

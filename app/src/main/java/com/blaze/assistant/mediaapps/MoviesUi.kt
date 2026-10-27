@@ -236,7 +236,8 @@ internal fun MovieDetailsLoader(src: MovieSource, post: MoviePost, saved: Boolea
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val lib by Movies.lib.collectAsState()
-    val info by produceState<Result<MovieInfo>?>(null, post.link) { value = withContext(Dispatchers.IO) { runCatching { src.info(post) } }.also { Movies.note(src, it.exceptionOrNull()?.message) } }
+    var attempt by remember(post.link) { mutableStateOf(0) }   // 0.46.6: Retry on the error screen
+    val info by produceState<Result<MovieInfo>?>(null, post.link, attempt) { value = null; value = withContext(Dispatchers.IO) { runCatching { src.info(post) } }.also { Movies.note(src, it.exceptionOrNull()?.message) } }
     var choose by remember { mutableStateOf<Pair<MovieLink, List<MovieStream>>?>(null) }
     var msg by remember { mutableStateOf("") }
     fun find(link: MovieLink, download: Boolean) { scope.launch {
@@ -256,7 +257,9 @@ internal fun MovieDetailsLoader(src: MovieSource, post: MoviePost, saved: Boolea
     val resume = remember(lib, post.link) { lib.progress.firstOrNull { it.play.postLink == post.link && MovieLibrary.unfinished(it.posMs, it.durMs) } }
     when {
         i == null -> Column(Modifier.fillMaxSize()) { DetailsTop(post.title, saved, onBack, onWatchlist); Text("Loading\u2026", color = LocalBlaze.current.sub, modifier = Modifier.padding(16.dp)) }
-        i.isFailure -> Column(Modifier.fillMaxSize()) { DetailsTop(post.title, saved, onBack, onWatchlist); EmptyState("Couldn't open this right now", "Check your connection and try again.", mark = false) }
+        i.isFailure -> Column(Modifier.fillMaxSize()) { DetailsTop(post.title, saved, onBack, onWatchlist)
+            val (t, b) = com.blaze.assistant.mediaapps.BrowseState.openError(i.exceptionOrNull()?.message)
+            EmptyState(t, b, mark = false, action = "Retry", onAction = { attempt++ }) }
         else -> MovieDetails(i.getOrThrow(), src.name, saved, msg, onBack, onWatchlist, pick,
             loadEpisodes = { link -> withContext(Dispatchers.IO) { runCatching { src.episodes(link) }.getOrDefault(emptyList()) } },
             more = more, onMore = onMore, resumeMs = resume?.posMs ?: 0L,

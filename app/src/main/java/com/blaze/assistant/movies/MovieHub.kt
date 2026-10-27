@@ -13,7 +13,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  */
 object MovieHub {
     const val PARALLEL = 3
-    const val SOURCE_TIMEOUT_MS = 20_000L
+    const val SOURCE_TIMEOUT_MS = 40_000L   // 0.46.6: was 20 s; provider calls run one engine at a time (ProviderSandbox.Gate)
 
     data class SourceResult(val source: MovieSource, val posts: List<MoviePost>, val error: String? = null)
     data class Search(val results: List<SourceResult>) {

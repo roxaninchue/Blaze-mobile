@@ -77,6 +77,12 @@ object Voice {
             }
             override fun tell(text: String) = tellGeminiOnce(text)
         }
+        // 0.46.6 (0.46.5 report: Voice.init 307 ms on main at start): the phone's TTS engine binds after the first frames.
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ try { startTts() } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("Voice.startTts", e) } }, 1500)
+    }
+
+    private fun startTts() {
+        if (tts != null) return
         tts = TextToSpeech(app) { status ->
             ttsReady = status == TextToSpeech.SUCCESS
             if (ttsReady) {

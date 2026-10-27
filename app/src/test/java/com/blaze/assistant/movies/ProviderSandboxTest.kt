@@ -95,5 +95,8 @@ class ProviderSandboxTest {
         val r = sb.invoke(mod("hang", "posts"), "getPosts", JSONObject(), env())
         assertFalse(r.ok); assertTrue(r.error, r.error!!.contains("longer than"))
         assertTrue(System.currentTimeMillis() - t0 < 5_000)
+        // 0.46.6: one engine at a time; the spinning one keeps its lane, so later tests get a fresh one (test-only reset)
+        assertEquals(ProviderSandbox.BUSY, ProviderSandbox(limits = ProviderSandbox.Limits(timeoutMs = 300)).invoke("exports.getPosts = async function(){ return 1; };", "getPosts").error)
+        ProviderSandbox.Gate.resetForTests()
     }
 }

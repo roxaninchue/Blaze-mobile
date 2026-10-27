@@ -209,12 +209,13 @@ class JsProviderSource(val entry: ProviderRepo.Entry, private val modules: (Stri
                        private val sandbox: ProviderSandbox = ProviderSandbox(), override val official: Boolean = false) : MovieSource {
     override val id = "p:" + entry.value
     override val name = entry.name
-    private suspend fun call(file: String, export: String?, args: JSONObject): Any? {
+    /** [interactive] = the user opened it (details, episodes, streams): it gets the sandbox's kept lane, not the browse queue. */
+    private suspend fun call(file: String, export: String?, args: JSONObject, interactive: Boolean = false): Any? {
         // 0.46.5: the crash log never names a source the user added (CrashLog.redact)
         com.blaze.assistant.device.CrashLog.secret(entry.name, entry.value, env.settings["baseUrl"]?.let { u -> runCatching { java.net.URI(u.trim()).host }.getOrNull() })
         val code = modules(file) ?: throw IllegalStateException("${entry.name} is missing $file.js; update it in Providers")
         // 0.46.5: whatever the engine throws (an Error included) comes back as a normal failure of this source; never off to the UI
-        val r = try { sandbox.invoke(code, export, args, env) } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        val r = try { sandbox.invoke(code, export, args, env, interactive) } catch (e: kotlinx.coroutines.CancellationException) { throw e }
             catch (e: Throwable) { throw IllegalStateException("${entry.name} failed: ${e.javaClass.simpleName}") }
         if (!r.ok) throw IllegalStateException(r.error)
         return r.value
@@ -224,8 +225,8 @@ class JsProviderSource(val entry: ProviderRepo.Entry, private val modules: (Stri
         c.title to runCatching { MovieJson.posts(call("posts", "getPosts", JSONObject().put("filter", c.filter).put("page", 1).put("providerValue", entry.value)), id) }.getOrDefault(emptyList())
     }
     override suspend fun search(query: String) = MovieJson.posts(call("posts", "getSearchPosts", JSONObject().put("searchQuery", query).put("page", 1).put("providerValue", entry.value)), id)
-    override suspend fun info(post: MoviePost) = MovieJson.info(call("meta", "getMeta", JSONObject().put("link", post.link).put("provider", entry.value)) as? JSONObject)
+    override suspend fun info(post: MoviePost) = MovieJson.info(call("meta", "getMeta", JSONObject().put("link", post.link).put("provider", entry.value), interactive = true) as? JSONObject)
         ?: throw IllegalStateException("${entry.name} returned no details")
-    override suspend fun episodes(link: String) = MovieJson.episodes(call("episodes", "getEpisodes", JSONObject().put("url", link)))
-    override suspend fun streams(link: MovieLink) = MovieJson.streams(call("stream", "getStream", JSONObject().put("link", link.link).put("type", link.type).put("isDownload", false)))
+    override suspend fun episodes(link: String) = MovieJson.episodes(call("episodes", "getEpisodes", JSONObject().put("url", link), interactive = true))
+    override suspend fun streams(link: MovieLink) = MovieJson.streams(call("stream", "getStream", JSONObject().put("link", link.link).put("type", link.type).put("isDownload", false), interactive = true))
 }

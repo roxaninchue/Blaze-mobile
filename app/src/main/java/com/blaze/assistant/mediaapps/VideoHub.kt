@@ -106,7 +106,24 @@ object PlayerGestures {
 typealias BrowseRows = List<Pair<String, List<MoviePost>>>
 
 object BrowseState {
-    const val SOURCE_TIMEOUT_MS = 20_000L
+    /** 0.46.6: 90 s (was 20): one provider engine at a time now, so a source's catalog + rows calls wait in line behind
+     *  other sources ([com.blaze.assistant.movies.ProviderSandbox.Gate]); rows still land one source at a time. */
+    const val SOURCE_TIMEOUT_MS = 90_000L
+
+    /**
+     * 0.46.6: what the details screen says when a title couldn't open, from the source's real error (0.46.5 always said "Check
+     * your connection", even when the memory guard or a slow source was the cause). Title to body; always offered with Retry.
+     */
+    fun openError(msg: String?): Pair<String, String> {
+        val m = msg.orEmpty()
+        return when {
+            m.contains("memory", true) || m.contains("too much data", true) -> "This title is too big for this source" to "The source used too much memory opening it. Try again, or open it from another source."
+            m.contains("stuck", true) -> "A source got stuck" to "Close and reopen Blaze to reset your sources."
+            m.contains("busy", true) || m.contains("longer than", true) || m.contains("timeout", true) -> "This source is slow right now" to "It didn't answer in time. Try again in a moment."
+            m.contains("no details", true) || m.contains("didn't return", true) || m.contains("has no ", true) -> "This source has no details for this title" to "Try another source for it."
+            else -> "Couldn't open this right now" to "Check your connection and try again."
+        }
+    }
 
     /**
      * Untitled items out, duplicates out. 0.46.5 (crash hardening): items without a link out, odd fields trimmed (a provider
