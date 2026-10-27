@@ -1,5 +1,6 @@
 package com.blaze.assistant.ui.composer
 
+import com.blaze.assistant.composer.ComposerLook
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.RepeatMode
@@ -263,7 +264,7 @@ private fun UserBubble(m: ChatMessage, lift: Boolean) {
         horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.Bottom) {
         val text = com.blaze.assistant.ui.AttachView.bubbleText(m.text, m.media)
         Column(Modifier.weight(1f, fill = false).widthIn(max = 280.dp).clip(RoundedCornerShape(20.dp, 20.dp, 6.dp, 20.dp))
-            .background(DuoColors.blazeBlue.copy(alpha = if (c.dark) 0.85f else 0.95f)).padding(horizontal = 14.dp, vertical = 10.dp)) {
+            .background(DuoColors.blazeBlue.copy(alpha = if (LocalComposerSolid.current) 1f else if (c.dark) 0.85f else 0.95f)).padding(horizontal = 14.dp, vertical = 10.dp)) {
             if (m.files.isNotEmpty()) Text(m.files.joinToString(" \u00b7 "), maxLines = 1, overflow = TextOverflow.Ellipsis,
                 style = TextStyle(fontFamily = Type.Sans, fontSize = 12.sp, color = Color.White.copy(alpha = 0.8f)))
             if (text.isNotBlank()) Text(text, style = TextStyle(fontFamily = Type.Sans, fontSize = 15.sp, color = Color.White))
@@ -285,8 +286,9 @@ private fun BlazeBubble(m: ChatMessage, typeIn: Boolean) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
         BlazeAvatar()
         Spacer(Modifier.width(8.dp))
+        val solid = LocalComposerSolid.current
         Box(Modifier.weight(1f, fill = false).widthIn(max = 290.dp).clip(RoundedCornerShape(20.dp, 20.dp, 20.dp, 6.dp))
-            .glass(RoundedCornerShape(20.dp, 20.dp, 20.dp, 6.dp), GlassIntensity.High, shadow = false)
+            .then(if (solid) Modifier.background(ComposerLook.blazeBubble(c)) else Modifier.glass(RoundedCornerShape(20.dp, 20.dp, 20.dp, 6.dp), GlassIntensity.High, shadow = false))
             .then(if (err) Modifier.border(1.dp, Color(0xFFE5484D).copy(alpha = 0.6f), RoundedCornerShape(20.dp, 20.dp, 20.dp, 6.dp)) else Modifier)
             .padding(horizontal = 14.dp, vertical = 10.dp)) {
             Text(if (shown >= m.text.length) m.text else m.text.take(shown), style = TextStyle(fontFamily = Type.Sans, fontSize = 15.sp, color = c.ink))
@@ -298,7 +300,9 @@ private fun BlazeBubble(m: ChatMessage, typeIn: Boolean) {
 @Composable
 fun TypingDots() {
     val c = LocalBlaze.current
-    Row(Modifier.clip(RoundedCornerShape(18.dp)).glass(RoundedCornerShape(18.dp), GlassIntensity.High, shadow = false)
+    val solid = LocalComposerSolid.current
+    Row(Modifier.clip(RoundedCornerShape(18.dp))
+        .then(if (solid) Modifier.background(ComposerLook.blazeBubble(c)) else Modifier.glass(RoundedCornerShape(18.dp), GlassIntensity.High, shadow = false))
         .semantics { contentDescription = "Blaze is typing" }.padding(horizontal = 14.dp, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
         if (!MotionTokens.enabled) repeat(3) { Box(Modifier.size(7.dp).clip(CircleShape).background(c.sub)) }
         else {

@@ -70,6 +70,11 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -158,6 +163,9 @@ object HomeGridLook {
     val side = 16.dp
     val row1 = 182.dp
     val row2 = 172.dp
+    /** Card titles (Interests): start size and the smallest step [FitTitle] may take to fit one line. */
+    const val titleSp = 15f
+    const val titleMinSp = 11f
 }
 
 /** Topic icon key ([com.blaze.assistant.home.TopicIcons]) -> Material rounded icon. */
@@ -332,10 +340,10 @@ fun TypedText(text: String, intro: HomeIntroClock?, at: Long, style: TextStyle, 
 fun InterestsCardV2(topics: List<InterestsFeed.Topic>, intro: HomeIntroClock?, index: Int, modifier: Modifier = Modifier,
                     onTopic: (InterestsFeed.Topic) -> Unit, onEmpty: () -> Unit) {
     HomeCard(HomeGrid.Card.INTERESTS, intro, index, modifier, onClick = if (topics.isEmpty()) onEmpty else null, label = "Pick interests") {
-        Text(buildAnnotatedString {
+        FitTitle(buildAnnotatedString {
             withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, color = HomeGridLook.ink)) { append("Interests") }
             withStyle(SpanStyle(color = HomeGridLook.sub)) { append(" \u00b7 Tracking") }
-        }, modifier = Modifier.semantics { heading() }, style = style(15.sp), maxLines = 1)
+        }, Modifier.semantics { heading() })
         Spacer(Modifier.height(6.dp))
         if (topics.isEmpty()) {
             Text("Tell me what you're into and the latest headlines show up here.", style = style(12.sp, color = HomeGridLook.sub), maxLines = 4)
@@ -351,6 +359,26 @@ fun InterestsCardV2(topics: List<InterestsFeed.Topic>, intro: HomeIntroClock?, i
             }
         }
     }
+}
+
+/**
+ * 0.48.0: a one-line card title that never clips: it starts at [HomeGridLook.titleSp] and steps down (to
+ * [HomeGridLook.titleMinSp]) until the whole line fits the cell, e.g. "Interests \u00b7 Tracking" in a 360 dp-wide grid.
+ * It isn't drawn until it fits, so no clipped frame shows.
+ */
+@Composable
+fun FitTitle(text: androidx.compose.ui.text.AnnotatedString, modifier: Modifier = Modifier) {
+    var fontSp by remember(text) { mutableFloatStateOf(HomeGridLook.titleSp) }
+    var fits by remember(text) { mutableStateOf(false) }
+    Text(text, modifier = modifier.fillMaxWidth().drawWithContent { if (fits) drawContent() }, style = style(fontSp.sp), maxLines = 1, softWrap = false,
+        overflow = TextOverflow.Clip, onTextLayout = { r ->
+            if (r.hasVisualOverflow && fontSp > HomeGridLook.titleMinSp) {
+                // one step straight to the size that fits (rounded down to 0.5 sp), else 0.5 sp smaller
+                val need = r.multiParagraph.intrinsics.maxIntrinsicWidth.coerceAtLeast(1f)
+                val guess = kotlin.math.floor(fontSp * (r.size.width / need) * 2f) / 2f
+                fontSp = (if (guess < fontSp) guess else fontSp - 0.5f).coerceAtLeast(HomeGridLook.titleMinSp)
+            } else fits = true
+        })
 }
 
 @Composable
@@ -462,18 +490,29 @@ fun QuickActionsCardV2(actions: List<QuickActions.Action>, intro: HomeIntroClock
         Text("Quick actions", style = style(14.sp, FontWeight.SemiBold), modifier = Modifier.semantics { heading() })
         Spacer(Modifier.height(6.dp))
         actions.forEach { a ->
+            // 0.48.0: one chip row per action like the approved video: the verb chip, then the rest of the line beside it,
+            // word by word, so a long line wraps back to the card's left edge (not a chip with a text block under it).
             FlowRow(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(role = Role.Button, onClickLabel = a.verb) { onAction(a) }
-                .semantics(mergeDescendants = true) { contentDescription = a.verb + " " + a.rest }.padding(vertical = 4.dp),
-                verticalArrangement = Arrangement.Center) {
-                Box(Modifier.clip(RoundedCornerShape(10.dp)).background(Color.White.copy(alpha = 0.10f))
+                .semantics(mergeDescendants = true) { contentDescription = a.verb + " " + a.rest }.padding(vertical = 3.dp),
+                horizontalArrangement = Arrangement.spacedBy(QuickChipRow.WORD_GAP.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Box(Modifier.padding(end = (QuickChipRow.CHIP_GAP - QuickChipRow.WORD_GAP).dp).clip(RoundedCornerShape(10.dp)).background(Color.White.copy(alpha = 0.10f))
                     .border(1.dp, Color.White.copy(alpha = 0.32f), RoundedCornerShape(10.dp)).padding(horizontal = 12.dp, vertical = 5.dp)) {
                     Text(a.verb, style = style(13.5.sp, FontWeight.SemiBold), maxLines = 1)
                 }
-                Text(a.rest, style = style(13.5.sp, color = HomeGridLook.ink.copy(alpha = 0.92f)),
-                    modifier = Modifier.align(Alignment.CenterVertically).padding(start = 10.dp, top = 4.dp, bottom = 4.dp))
+                QuickChipRow.words(a.rest).forEach { w ->
+                    Text(w, style = style(13.5.sp, color = HomeGridLook.ink.copy(alpha = 0.92f)), maxLines = 1, softWrap = false,
+                        modifier = Modifier.align(Alignment.CenterVertically).heightIn(min = 30.dp).wrapContentHeight(Alignment.CenterVertically))
+                }
             }
         }
     }
+}
+
+/** 0.48.0 Quick actions chip row: the line beside the chip is laid out word by word (pure, tested). */
+object QuickChipRow {
+    const val WORD_GAP = 4
+    const val CHIP_GAP = 10
+    fun words(rest: String): List<String> = rest.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
 }
 
 // ---------------------------------------------------------------- the grid
