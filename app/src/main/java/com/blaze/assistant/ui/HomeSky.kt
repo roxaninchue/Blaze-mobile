@@ -72,12 +72,6 @@ object HomeSkySpec {
     const val RADIUS = 2
     const val PASSES = 3
 
-    fun ridgeY(r: Int, x: Float): Float {
-        val d = RIDGES[r]; var y = d[0]; var i = 2
-        while (i < d.size) { y -= d[i] * sin(2.0 * PI * d[i + 1] * x + d[i + 2]).toFloat(); i += 3 }
-        return y
-    }
-
     fun lerpArgb(a: Int, b: Int, t: Float): Int {
         fun ch(sh: Int): Int { val x = (a shr sh) and 255; val y = (b shr sh) and 255; return (x + (y - x) * t + 0.5f).toInt().coerceIn(0, 255) }
         return (0xFF shl 24) or (ch(16) shl 16) or (ch(8) shl 8) or ch(0)
