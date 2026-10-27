@@ -5,6 +5,15 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.ui.graphics.TransformOrigin
+import com.blaze.assistant.composer.ComposerMotion
+import com.blaze.assistant.composer.SpotlightLook
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -44,23 +53,26 @@ import kotlinx.coroutines.launch
  * 0.47 chat composer + Spotlight v2: the ONE integration entry point.
  *
  * Wrap the Home content (the widget area) in it and it adds, on top:
- *  - the chat bar at the bottom (profile · "Message Blaze" · +), never blurred;
- *  - while chat or Spotlight is up: ONE cached blur over the Home content (API 31+, off on low-RAM / hot phones, where the
- *    dim alone shows) plus a dim, and the chat over Home or the Spotlight panel in the widget area.
+ *  - the chat bar at the bottom (profile · "Message Blaze" pill with the Blaze orb · +), never blurred;
+ *  - while chat or Spotlight is up (RC2): ONE cached software blur of the Home content ([CachedBlur]: captured once at
+ *    1/8 size, blurred off the main thread, drawn full screen with a light dim), on EVERY phone, low-RAM included;
+ *    the chat over Home, or the Spotlight panel floating at the TOP of the screen below the status bar.
  * Home should reserve [ChatBarTokens.HEIGHT_DP] (+ the navigation bar) under its cards so the bar never hides a card.
  *
  * [barModifier] lets the host keep its own gesture on the bar (e.g. swipe up for the full chat). [onLeaveHome] shows the
  * full app for things that live there (settings pages, private chat, "Open the full chat").
  *
  * For a layout with its own bottom slot, use the parts instead: [rememberComposerState], [BlazeChatBar],
- * [ComposerOverlay] and [Modifier.composerBlur].
+ * [ComposerOverlay], [rememberCachedBlur] + [cachedBlurSource] + [CachedBlurEffect].
  */
 @Composable
 fun BlazeComposerHome(modifier: Modifier = Modifier, state: ComposerState = rememberComposerState(), barModifier: Modifier = Modifier,
                       onLeaveHome: () -> Unit = {}, onProfile: () -> Unit = {}, content: @Composable () -> Unit) {
+    val blur = rememberCachedBlur()
+    CachedBlurEffect(blur, state.covering)
     Box(modifier.fillMaxSize()) {
-        Box(Modifier.fillMaxSize().composerBlur(state.covering)) { content() }
-        ComposerOverlay(state, onLeaveHome = onLeaveHome, modifier = Modifier.fillMaxSize())
+        Box(Modifier.fillMaxSize().cachedBlurSource(blur)) { content() }
+        ComposerOverlay(state, onLeaveHome = onLeaveHome, modifier = Modifier.fillMaxSize(), blur = blur)
         Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().imePadding().then(barModifier)) {
             BlazeChatBar(state, onProfile = onProfile)
         }
@@ -68,11 +80,15 @@ fun BlazeComposerHome(modifier: Modifier = Modifier, state: ComposerState = reme
 }
 
 /**
- * The dim + chat over Home / Spotlight panel, filling the area above the bar. Draw it above the (blurred) Home content
- * and below [BlazeChatBar]. Handles Back (closes Spotlight, then the chat).
+ * The blurred Home + chat over Home / Spotlight panel. Draw it above the Home content and below [BlazeChatBar].
+ * With [blur] the backdrop is the cached software blur (falls back to the strong solid scrim if a capture fails);
+ * without it, the 0.48.0 RC1 look (dim, or the solid scrim where RenderEffect blur is off).
+ * Spotlight floats at the top, below the status bar, sized to its content up to the space above the bar; the chat
+ * fills the area above the bar ([chatContent] replaces the live chat, for shots). Handles Back (preview, Spotlight, then the chat).
  */
 @Composable
-fun ComposerOverlay(state: ComposerState, onLeaveHome: () -> Unit = {}, modifier: Modifier = Modifier) {
+fun ComposerOverlay(state: ComposerState, onLeaveHome: () -> Unit = {}, modifier: Modifier = Modifier, blur: CachedBlur? = null,
+                    chatContent: (@Composable () -> Unit)? = null) {
     val c = LocalBlaze.current
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -87,20 +103,30 @@ fun ComposerOverlay(state: ComposerState, onLeaveHome: () -> Unit = {}, modifier
         }
     }
     val actions = rememberSpotlightActions(state, onLeaveHome = { state.closeChat(); onLeaveHome() }, onAttach = { runCatching { pick.launch("*/*") } })
-    val dim by animateFloatAsState(if (state.covering) 1f else 0f, MotionTokens.medium(), label = "dim")
-    val solid = rememberComposerSolid()
+    val dim by animateFloatAsState(if (state.covering) 1f else 0f,
+        if (MotionTokens.enabled) tween(if (state.covering) ComposerMotion.ENTER else ComposerMotion.EXIT, easing = MotionTokens.Standard) else snap(), label = "dim")
+    val solidNoBlur = rememberComposerSolid()
+    val solid = if (blur != null) blur.failed else solidNoBlur
     androidx.compose.runtime.CompositionLocalProvider(LocalComposerSolid provides solid) {
     Box(modifier) {
-        if (dim > 0f) Box(Modifier.fillMaxSize().graphicsLayer { alpha = dim }.background(ComposerLook.scrim(c, blur = !solid))
-            .clickable(remember { MutableInteractionSource() }, indication = null) { if (state.spotlightOpen) state.closeSpotlight() })
+        if (dim > 0f) {
+            if (blur != null) CachedBlurBackdrop(blur, dim = ComposerLook.backdropDim(c), fallback = ComposerLook.scrim(c, blur = false), alpha = { dim })
+            else Box(Modifier.fillMaxSize().graphicsLayer { alpha = dim }.background(ComposerLook.scrim(c, blur = !solid)))
+            // a tap outside the panel closes Spotlight
+            Box(Modifier.fillMaxSize().clickable(remember { MutableInteractionSource() }, indication = null) { if (state.spotlightOpen) state.closeSpotlight() })
+        }
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding().padding(bottom = (ChatBarTokens.HEIGHT_DP + 8).dp)) {
             AnimatedVisibility(state.chatOpen && !state.spotlightOpen, modifier = Modifier.weight(1f),
-                enter = fadeIn(MotionTokens.medium()), exit = fadeOut(MotionTokens.fast())) {
-                ChatOverHome(state, onOpenFull = { state.closeChat(); onLeaveHome() })
+                enter = if (MotionTokens.enabled) fadeIn(tween(ComposerMotion.ENTER, easing = MotionTokens.Decelerate)) +
+                    slideInVertically(tween(ComposerMotion.ENTER, easing = MotionTokens.Decelerate)) { it / 14 } else EnterTransition.None,
+                exit = if (MotionTokens.enabled) fadeOut(tween(ComposerMotion.EXIT, easing = MotionTokens.Accelerate)) else ExitTransition.None) {
+                if (chatContent != null) chatContent() else ChatOverHome(state, onOpenFull = { state.closeChat(); onLeaveHome() })
             }
-            if (state.spotlightOpen || !state.chatOpen) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.BottomCenter) {
-                SpotlightSlot(state, actions)
-            }
+        }
+        // Spotlight: floating near the TOP, below the status bar; never a bottom sheet. The bar stays visible below.
+        Box(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()
+            .padding(top = SpotlightLook.TOP_GAP_DP.dp, bottom = (ChatBarTokens.HEIGHT_DP + 8).dp), contentAlignment = Alignment.TopCenter) {
+            SpotlightSlot(state, actions)
         }
     }
     }
@@ -114,12 +140,17 @@ fun ComposerOverlay(state: ComposerState, onLeaveHome: () -> Unit = {}, modifier
     }
 }
 
-/** The Spotlight panel with its enter / exit (its own composable: no Column scope leaks into AnimatedVisibility). */
+/** The Spotlight panel with its calm enter / exit: drops in from just above, from its top edge (reduce motion: none). */
 @Composable
 private fun SpotlightSlot(state: ComposerState, actions: SpotlightActions) {
+    val calm = MotionTokens.enabled
     AnimatedVisibility(state.spotlightOpen,
-        enter = fadeIn(MotionTokens.medium()) + (if (MotionTokens.enabled) scaleIn(MotionTokens.medium(), initialScale = 0.96f) else fadeIn(MotionTokens.fast())),
-        exit = fadeOut(MotionTokens.fast()) + (if (MotionTokens.enabled) scaleOut(MotionTokens.fast(), targetScale = 0.98f) else fadeOut(MotionTokens.fast()))) {
+        enter = if (calm) fadeIn(tween(ComposerMotion.ENTER, easing = MotionTokens.Decelerate)) +
+            slideInVertically(tween(ComposerMotion.ENTER, easing = MotionTokens.Decelerate)) { -it / 12 } +
+            scaleIn(tween(ComposerMotion.ENTER, easing = MotionTokens.Decelerate), initialScale = 0.97f, transformOrigin = TransformOrigin(0.5f, 0f)) else EnterTransition.None,
+        exit = if (calm) fadeOut(tween(ComposerMotion.EXIT, easing = MotionTokens.Accelerate)) +
+            slideOutVertically(tween(ComposerMotion.EXIT, easing = MotionTokens.Accelerate)) { -it / 20 } +
+            scaleOut(tween(ComposerMotion.EXIT, easing = MotionTokens.Accelerate), targetScale = 0.98f, transformOrigin = TransformOrigin(0.5f, 0f)) else ExitTransition.None) {
         SpotlightPanel(state, onAct = actions::run)
     }
 }

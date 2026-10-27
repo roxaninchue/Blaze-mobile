@@ -58,7 +58,7 @@ class ChatOverlayLogicTest {
 
     @Test fun composerSourcesFollowTheRules() {
         val files = listOf("ui/composer/ChatComposer.kt", "ui/composer/SpotlightPanel.kt", "ui/composer/ComposerHost.kt", "ui/composer/ComposerState.kt",
-            "composer/SelfMap.kt", "composer/SpotlightSearch.kt", "composer/ModelChoice.kt")
+            "ui/composer/CachedBlur.kt", "composer/SelfMap.kt", "composer/SpotlightSearch.kt", "composer/ModelChoice.kt", "composer/SpotlightLook.kt", "composer/SoftBlur.kt")
         val all = files.joinToString("\n") { src(it) }
         // no other branding, never the forbidden model names, never "No results"
         assertFalse(Regex("(?i)\\b(hark|jarvis|nvidia|nemotron|system one|jev)\\b").containsMatchIn(all.lines().filterNot { it.trim().startsWith("*") || it.trim().startsWith("//") }.joinToString("\n")))
@@ -66,10 +66,17 @@ class ChatOverlayLogicTest {
         // the chat bar: Message Blaze pill, send arrow inside it, + opens Spotlight
         val bar = src("ui/composer/ChatComposer.kt")
         assertTrue(bar.contains("\"Message Blaze\"") && bar.contains("Icons.Rounded.ArrowUpward") && bar.contains("state.openSpotlight()"))
-        // one cached blur, reduce motion respected
+        // RC2: the Blaze orb sits in the pill and keeps the old button's job (tap: chat; hold: talk)
+        assertTrue(bar.contains("BlazeOrbButton(state)") && bar.contains("onLongClick = onHold") && bar.contains("listenRequests"))
+        // RC2: ONE cached software blur on every phone (low-RAM too): captured once, blurred off main, freed on close
         val host = src("ui/composer/ComposerHost.kt")
-        assertTrue(host.contains("remember(px) { BlurEffect(") && host.contains("GlassTokens.blurSupported"))
-        assertTrue(bar.contains("MotionTokens.enabled") && host.contains("MotionTokens.enabled"))
+        val blur = src("ui/composer/CachedBlur.kt")
+        assertTrue(host.contains("rememberCachedBlur()") && host.contains("CachedBlurEffect(blur, state.covering)") && host.contains("cachedBlurSource(blur)"))
+        assertTrue(blur.contains("withContext(Dispatchers.Default)") && blur.contains("SoftBlur.blur(") && blur.contains("fun release()"))
+        // RC2: Spotlight floats at the TOP (never a bottom sheet)
+        assertTrue(host.contains("contentAlignment = Alignment.TopCenter") && !host.contains("contentAlignment = Alignment.BottomCenter"))
+        // reduce motion respected
+        assertTrue(bar.contains("MotionTokens.enabled") && host.contains("MotionTokens.enabled") && blur.contains("MotionTokens.enabled"))
         // search never runs on main
         assertTrue(src("ui/composer/SpotlightPanel.kt").contains("withContext(Dispatchers.Default)"))
         // routing only reads the choice

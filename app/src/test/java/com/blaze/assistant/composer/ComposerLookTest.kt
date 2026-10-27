@@ -21,6 +21,10 @@ class ComposerLookTest {
         assertEquals(Color.Black.copy(alpha = 0.45f), ComposerLook.scrim(DarkColors, blur = true))
         assertEquals(Color.White.copy(alpha = 0.35f), ComposerLook.scrim(LightColors, blur = true))
     }
+    @Test fun rc2BackdropDimIsLight() {
+        assertEquals(Color.Black.copy(alpha = 0.30f), ComposerLook.backdropDim(DarkColors))
+        assertEquals(Color.White.copy(alpha = 0.22f), ComposerLook.backdropDim(LightColors))
+    }
     @Test fun blazeBubbleIsOpaque() {
         assertEquals(1f, ComposerLook.blazeBubble(DarkColors).alpha, 0f)
         assertEquals(1f, ComposerLook.blazeBubble(LightColors).alpha, 0f)

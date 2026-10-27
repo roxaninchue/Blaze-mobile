@@ -14,6 +14,12 @@ object ComposerLook {
     const val SOLID_SCRIM = 0.88f
     const val BLUR_DIM_DARK = 0.45f
     const val BLUR_DIM_LIGHT = 0.35f
+    /** RC2: the light dim over the cached software blur (the blurred Home stays visible, like the approved video). */
+    const val BACKDROP_DIM_DARK = 0.30f
+    const val BACKDROP_DIM_LIGHT = 0.22f
+
+    /** RC2: dim drawn over the cached blurred Home (every phone, low-RAM included). */
+    fun backdropDim(c: BlazeColors): Color = if (c.dark) Color.Black.copy(alpha = BACKDROP_DIM_DARK) else Color.White.copy(alpha = BACKDROP_DIM_LIGHT)
 
     fun scrim(c: BlazeColors, blur: Boolean): Color =
         if (blur) (if (c.dark) Color.Black.copy(alpha = BLUR_DIM_DARK) else Color.White.copy(alpha = BLUR_DIM_LIGHT))

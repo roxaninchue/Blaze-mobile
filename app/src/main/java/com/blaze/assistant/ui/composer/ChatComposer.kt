@@ -2,6 +2,12 @@ package com.blaze.assistant.ui.composer
 
 import com.blaze.assistant.composer.ComposerLook
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.combinedClickable
+import com.blaze.assistant.composer.ComposerMotion
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -82,12 +88,15 @@ import com.blaze.assistant.ui.LocalBlaze
 import com.blaze.assistant.ui.MotionTokens
 import com.blaze.assistant.ui.Type
 import com.blaze.assistant.ui.glass
+import com.blaze.assistant.ui.drawWaterOrb
 import kotlinx.coroutines.delay
 
 /** 0.47 chat composer: sizes the Home layout reserves under its cards for the bar. */
 object ChatBarTokens {
     const val HEIGHT_DP = 64
     const val AVATAR_DP = 40
+    /** RC2: the Blaze orb inside the pill. */
+    const val ORB_DP = 42
 }
 
 // ---------------------------------------------------------------- avatars
@@ -116,18 +125,21 @@ fun BlazeAvatar(size: Int = 30) {
 // ---------------------------------------------------------------- the chat bar
 
 /**
- * The chat bar that replaces the bottom Blaze button: profile avatar LEFT, the "Message Blaze" pill, "+" RIGHT.
- * A send arrow shows inside the pill while there's text; "+" always opens Spotlight. The model chip (and attachment
- * chips) slide up above the pill on the first typed character or attachment.
+ * The chat bar (RC2, the owner's sketch): profile avatar LEFT, the "Message Blaze" pill with the glowing Blaze orb
+ * sitting inside it, "+" RIGHT. Tapping the pill types. The orb keeps the old Blaze button's job (tap: chat over Home;
+ * hold: talk). While there's text the orb gives way to the send arrow inside the pill; "+" always opens Spotlight.
+ * The model chip (and attachment chips) slide up above the pill on the first typed character or attachment.
+ * Calm pacing ([ComposerMotion.BAR]); with Remove animations nothing moves.
  */
 @Composable
 fun BlazeChatBar(state: ComposerState, modifier: Modifier = Modifier, onProfile: () -> Unit = {}) {
     val c = LocalBlaze.current
     val family by ModelChoice.current.collectAsState()
+    val calm = MotionTokens.enabled
     Column(modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
         AnimatedVisibility(state.chipShown,
-            enter = if (MotionTokens.enabled) slideInVertically(tween(MotionTokens.MEDIUM)) { it } + fadeIn(tween(MotionTokens.MEDIUM)) else fadeIn(tween(0)),
-            exit = if (MotionTokens.enabled) slideOutVertically(tween(MotionTokens.SHORT)) { it } + fadeOut(tween(MotionTokens.SHORT)) else fadeOut(tween(0))) {
+            enter = if (calm) slideInVertically(tween(ComposerMotion.BAR, easing = MotionTokens.Decelerate)) { it } + fadeIn(tween(ComposerMotion.BAR)) else EnterTransition.None,
+            exit = if (calm) slideOutVertically(tween(ComposerMotion.EXIT, easing = MotionTokens.Accelerate)) { it } + fadeOut(tween(ComposerMotion.EXIT)) else ExitTransition.None) {
             Column(Modifier.padding(start = (ChatBarTokens.AVATAR_DP + 8).dp, bottom = 6.dp)) {
                 if (state.pickerOpen) ModelPicker(family) { ModelChoice.set(it); state.pickerOpen = false }
                 Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -142,21 +154,32 @@ fun BlazeChatBar(state: ComposerState, modifier: Modifier = Modifier, onProfile:
         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
             MeAvatar(onClick = onProfile)
             Spacer(Modifier.width(8.dp))
-            Row(Modifier.weight(1f).heightIn(min = 46.dp).clip(RoundedCornerShape(50)).glass(RoundedCornerShape(50), GlassIntensity.High, shadow = false)
-                .padding(start = 18.dp, end = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.weight(1f).heightIn(min = 48.dp).clip(RoundedCornerShape(50)).glass(RoundedCornerShape(50), GlassIntensity.High, shadow = false)
+                .padding(start = 18.dp, end = 3.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.weight(1f).padding(vertical = 10.dp)) {
-                    if (state.text.isEmpty()) Text("Message Blaze", style = TextStyle(fontFamily = Type.Sans, fontSize = 16.sp, color = c.sub))
+                    if (state.text.isEmpty()) Text("Message Blaze", maxLines = 1, style = TextStyle(fontFamily = Type.Sans, fontSize = 16.sp, color = c.sub))
                     BasicTextField(state.text, { state.text = it },
                         textStyle = TextStyle(fontFamily = Type.Sans, fontSize = 16.sp, color = c.ink), cursorBrush = SolidColor(DuoColors.blazeBlue),
                         maxLines = 5, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                         keyboardActions = KeyboardActions(onSend = { if (state.canSend) state.send() }),
                         modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Message Blaze" })
                 }
-                // The send arrow lives INSIDE the pill and only while there's text.
-                AnimatedVisibility(state.canSend, enter = fadeIn(tween(MotionTokens.ms(MotionTokens.SHORT).toInt())), exit = fadeOut(tween(MotionTokens.ms(MotionTokens.SHORT).toInt()))) {
-                    Box(Modifier.size(36.dp).clip(CircleShape).background(DuoColors.blazeBlue).clickable { state.send() }
-                        .semantics { contentDescription = "Send" }, contentAlignment = Alignment.Center) {
-                        Icon(Icons.Rounded.ArrowUpward, null, tint = Color.White, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(6.dp))
+                // The Blaze orb sits inside the pill; while there's text the send arrow takes its place.
+                Box(Modifier.size(ChatBarTokens.ORB_DP.dp), contentAlignment = Alignment.Center) {
+                    AnimatedVisibility(!state.canSend,
+                        enter = if (calm) fadeIn(tween(ComposerMotion.BAR)) + scaleIn(tween(ComposerMotion.BAR, easing = MotionTokens.Decelerate), initialScale = 0.7f) else EnterTransition.None,
+                        exit = if (calm) fadeOut(tween(ComposerMotion.EXIT)) + scaleOut(tween(ComposerMotion.EXIT, easing = MotionTokens.Accelerate), targetScale = 0.7f) else ExitTransition.None) {
+                        BlazeOrbButton(state)
+                    }
+                    // The send arrow lives INSIDE the pill and only while there's text.
+                    AnimatedVisibility(state.canSend,
+                        enter = if (calm) fadeIn(tween(ComposerMotion.BAR)) + scaleIn(tween(ComposerMotion.BAR, easing = MotionTokens.Decelerate), initialScale = 0.7f) else EnterTransition.None,
+                        exit = if (calm) fadeOut(tween(ComposerMotion.EXIT)) else ExitTransition.None) {
+                        Box(Modifier.size(38.dp).clip(CircleShape).background(DuoColors.blazeBlue).clickable { state.send() }
+                            .semantics { contentDescription = "Send" }, contentAlignment = Alignment.Center) {
+                            Icon(Icons.Rounded.ArrowUpward, null, tint = Color.White, modifier = Modifier.size(20.dp))
+                        }
                     }
                 }
             }
@@ -166,11 +189,56 @@ fun BlazeChatBar(state: ComposerState, modifier: Modifier = Modifier, onProfile:
                 .clickable { if (state.spotlightOpen) state.closeSpotlight() else state.openSpotlight() }
                 .semantics { contentDescription = if (state.spotlightOpen) "Close Spotlight" else "Open Spotlight" }, contentAlignment = Alignment.Center) {
                 val turn = remember { Animatable(0f) }
-                LaunchedEffect(state.spotlightOpen) { if (MotionTokens.enabled) turn.animateTo(if (state.spotlightOpen) 45f else 0f, tween(MotionTokens.MEDIUM)) else turn.snapTo(if (state.spotlightOpen) 45f else 0f) }
+                LaunchedEffect(state.spotlightOpen) { if (MotionTokens.enabled) turn.animateTo(if (state.spotlightOpen) 45f else 0f, tween(ComposerMotion.BAR, easing = MotionTokens.Standard)) else turn.snapTo(if (state.spotlightOpen) 45f else 0f) }
                 Icon(Icons.Rounded.Add, null, tint = c.ink, modifier = Modifier.size(24.dp).graphicsLayer { rotationZ = turn.value })
             }
         }
     }
+}
+
+/**
+ * The glowing Blaze orb (the old Home's Blaze button): a dark disc, an amber ring with a soft glow, and the glossy
+ * Blaze drop in the middle. Tap: the chat over Home. Hold: talk to Blaze (voice), like the old orb.
+ * A still picture while Blaze is idle (no frames); while Blaze thinks or listens the glow breathes slowly
+ * ([ComposerMotion.ORB_BREATHE]); with Remove animations it stays still.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+fun BlazeOrbButton(state: ComposerState, size: Int = ChatBarTokens.ORB_DP,
+                   onTap: () -> Unit = { state.openChat() },
+                   onHold: () -> Unit = { com.blaze.assistant.voice.Voice.listenRequests.value = com.blaze.assistant.voice.Voice.listenRequests.value + 1 }) {
+    val mood by Agent.mood.collectAsState()
+    val voice by com.blaze.assistant.voice.Voice.state.collectAsState()
+    val active = mood != com.blaze.assistant.agent.Mood.IDLE || voice != com.blaze.assistant.voice.Voice.State.IDLE
+    val glow = if (active && MotionTokens.enabled) {
+        val t = rememberInfiniteTransition(label = "orb")
+        val g by t.animateFloat(0.55f, 1f, infiniteRepeatable(tween(ComposerMotion.ORB_BREATHE, easing = MotionTokens.Standard), RepeatMode.Reverse), label = "glow")
+        g
+    } else if (active) 1f else 0.8f
+    Box(Modifier.size(size.dp).clip(CircleShape)
+        .combinedClickable(onClick = onTap, onLongClick = onHold, onClickLabel = "Chat with Blaze", onLongClickLabel = "Talk to Blaze")
+        .semantics { contentDescription = "Blaze. Tap to chat, hold to talk" }, contentAlignment = Alignment.Center) {
+        androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) { drawBlazeOrb(glow) }
+    }
+}
+
+/** Draws the orb in this DrawScope's bounds ([glow] 0..1). Pure drawing, shared with the shots. */
+fun androidx.compose.ui.graphics.drawscope.DrawScope.drawBlazeOrb(glow: Float) {
+    val r = size.minDimension / 2f
+    val cen = center
+    val amber = Color(0xFFFFB23F)
+    // soft amber glow inside the disc's edge
+    drawCircle(Brush.radialGradient(listOf(amber.copy(alpha = 0f), amber.copy(alpha = 0.45f * glow), amber.copy(alpha = 0f)), center = cen, radius = r),
+        radius = r, center = cen)
+    // the dark disc
+    drawCircle(Color(0xFF0C0D10), radius = r * 0.86f, center = cen)
+    // the amber ring with a halo
+    drawCircle(amber.copy(alpha = 0.30f * glow), radius = r * 0.70f, center = cen, style = androidx.compose.ui.graphics.drawscope.Stroke(width = r * 0.24f))
+    drawCircle(Color(0xFFFFC961).copy(alpha = 0.55f + 0.45f * glow), radius = r * 0.70f, center = cen, style = androidx.compose.ui.graphics.drawscope.Stroke(width = r * 0.085f))
+    // the glossy dark marble with the Blaze drop's light on it
+    drawCircle(Brush.radialGradient(listOf(Color(0xFF6A6E78), Color(0xFF26282E), Color(0xFF111215)),
+        center = androidx.compose.ui.geometry.Offset(cen.x - r * 0.14f, cen.y - r * 0.18f), radius = r * 0.62f), radius = r * 0.46f, center = cen)
+    drawWaterOrb(cen, r * 0.40f, t = 0f, alpha = 0.45f)
 }
 
 @Composable
@@ -259,7 +327,7 @@ private fun RoundButton(icon: androidx.compose.ui.graphics.vector.ImageVector, d
 private fun UserBubble(m: ChatMessage, lift: Boolean) {
     val c = LocalBlaze.current
     val rise = remember(m.id) { Animatable(if (lift && MotionTokens.enabled) 1f else 0f) }
-    LaunchedEffect(m.id) { if (rise.value > 0f) rise.animateTo(0f, tween(MotionTokens.LONG, easing = MotionTokens.Decelerate)) }
+    LaunchedEffect(m.id) { if (rise.value > 0f) rise.animateTo(0f, tween(ComposerMotion.LIFT, easing = MotionTokens.Decelerate)) }
     Row(Modifier.fillMaxWidth().graphicsLayer { translationY = rise.value * 260f; alpha = 1f - rise.value * 0.4f; scaleX = 1f - rise.value * 0.06f; scaleY = scaleX },
         horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.Bottom) {
         val text = com.blaze.assistant.ui.AttachView.bubbleText(m.text, m.media)
@@ -286,9 +354,8 @@ private fun BlazeBubble(m: ChatMessage, typeIn: Boolean) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
         BlazeAvatar()
         Spacer(Modifier.width(8.dp))
-        val solid = LocalComposerSolid.current
         Box(Modifier.weight(1f, fill = false).widthIn(max = 290.dp).clip(RoundedCornerShape(20.dp, 20.dp, 20.dp, 6.dp))
-            .then(if (solid) Modifier.background(ComposerLook.blazeBubble(c)) else Modifier.glass(RoundedCornerShape(20.dp, 20.dp, 20.dp, 6.dp), GlassIntensity.High, shadow = false))
+            .background(ComposerLook.blazeBubble(c))   // RC1 readability: always opaque (over the blur too)
             .then(if (err) Modifier.border(1.dp, Color(0xFFE5484D).copy(alpha = 0.6f), RoundedCornerShape(20.dp, 20.dp, 20.dp, 6.dp)) else Modifier)
             .padding(horizontal = 14.dp, vertical = 10.dp)) {
             Text(if (shown >= m.text.length) m.text else m.text.take(shown), style = TextStyle(fontFamily = Type.Sans, fontSize = 15.sp, color = c.ink))
@@ -300,9 +367,8 @@ private fun BlazeBubble(m: ChatMessage, typeIn: Boolean) {
 @Composable
 fun TypingDots() {
     val c = LocalBlaze.current
-    val solid = LocalComposerSolid.current
     Row(Modifier.clip(RoundedCornerShape(18.dp))
-        .then(if (solid) Modifier.background(ComposerLook.blazeBubble(c)) else Modifier.glass(RoundedCornerShape(18.dp), GlassIntensity.High, shadow = false))
+        .background(ComposerLook.blazeBubble(c))
         .semantics { contentDescription = "Blaze is typing" }.padding(horizontal = 14.dp, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
         if (!MotionTokens.enabled) repeat(3) { Box(Modifier.size(7.dp).clip(CircleShape).background(c.sub)) }
         else {
