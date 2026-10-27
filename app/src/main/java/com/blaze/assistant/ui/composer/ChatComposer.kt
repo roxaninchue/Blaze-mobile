@@ -167,13 +167,13 @@ fun BlazeChatBar(state: ComposerState, modifier: Modifier = Modifier, onProfile:
                 Spacer(Modifier.width(6.dp))
                 // The Blaze orb sits inside the pill; while there's text the send arrow takes its place.
                 Box(Modifier.size(ChatBarTokens.ORB_DP.dp), contentAlignment = Alignment.Center) {
-                    AnimatedVisibility(!state.canSend,
+                    androidx.compose.animation.AnimatedVisibility(visible = !state.canSend,
                         enter = if (calm) fadeIn(tween(ComposerMotion.BAR)) + scaleIn(tween(ComposerMotion.BAR, easing = MotionTokens.Decelerate), initialScale = 0.7f) else EnterTransition.None,
                         exit = if (calm) fadeOut(tween(ComposerMotion.EXIT)) + scaleOut(tween(ComposerMotion.EXIT, easing = MotionTokens.Accelerate), targetScale = 0.7f) else ExitTransition.None) {
                         BlazeOrbButton(state)
                     }
                     // The send arrow lives INSIDE the pill and only while there's text.
-                    AnimatedVisibility(state.canSend,
+                    androidx.compose.animation.AnimatedVisibility(visible = state.canSend,
                         enter = if (calm) fadeIn(tween(ComposerMotion.BAR)) + scaleIn(tween(ComposerMotion.BAR, easing = MotionTokens.Decelerate), initialScale = 0.7f) else EnterTransition.None,
                         exit = if (calm) fadeOut(tween(ComposerMotion.EXIT)) else ExitTransition.None) {
                         Box(Modifier.size(38.dp).clip(CircleShape).background(DuoColors.blazeBlue).clickable { state.send() }
