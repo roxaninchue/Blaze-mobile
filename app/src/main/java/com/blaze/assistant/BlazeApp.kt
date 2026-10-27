@@ -11,6 +11,8 @@ class BlazeApp : Application() {
         val t0 = android.os.SystemClock.elapsedRealtime()
         com.blaze.assistant.device.CrashLog.init(this)
         com.blaze.assistant.device.CrashLog.shieldMainThread()
+        // 0.46.6 cold start: Agent.Session's verification and opening blaze.db run on a background thread meanwhile (StartWarm).
+        com.blaze.assistant.device.StartWarm.begin(this)
         // 0.45.19 fix 7: one Back rule for every Blaze window (Back returns to the chat).
         try { com.blaze.assistant.ui.BackRule.install(this) } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("BlazeApp: BackRule", e) }
         com.blaze.assistant.device.StartGuard.begin(this)   // 0.45.16: crash-loop detection (safe start)

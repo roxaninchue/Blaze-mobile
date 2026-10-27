@@ -101,9 +101,15 @@ object StartGuard {
             noteFailed()
             CrashLog.write("START STEP FAILED $name: ${(android.util.Log.getStackTraceString(e) ?: e.toString()).take(2500)}")
         }
-        val ms = SystemClock.elapsedRealtime() - t0
+        noteStep(name, SystemClock.elapsedRealtime() - t0)
+    }
+
+    /** 0.46.6: every start step of 20 ms or more also goes to logcat (BlazeStart), so the low-RAM gate shows where start time goes. */
+    fun noteStep(name: String, ms: Long) {
+        if (ms >= STEP_LOG_MS) try { android.util.Log.i("BlazeStart", "step $name $ms ms") } catch (_: Throwable) { Unit }
         if (ms >= 150) CrashLog.write("SLOW START STEP $name ${ms} ms")
     }
+    const val STEP_LOG_MS = 20L
 
     fun noteFailed() { failed++ }
     val failedSteps: Int get() = failed

@@ -34,6 +34,10 @@ note "- release cold start: TotalTime ${TT} ms, worst main stall ~${MS} ms (${N}
 [ -z "$STILL" ] && FAIL+=("release process died after cold start")
 [ "$N" -ge 42 ] && FAIL+=("release cold start main stall ~${MS} ms > 700 ms")
 grep -E "$PID .*Choreographer.*Skipped" "$OUT/logcat-release.txt" | head -5 >> "$OUT/SUMMARY.md" || true
+# diagnosis only: start steps of 20 ms+ (BlazeStart) and the first frames' timeline (Davey) of the measured cold start
+grep -E "^\S+ \S+ +$PID .*(BlazeStart|Verification of)" "$OUT/logcat-release.txt" | sed -E 's/^\S+ (\S+) .*(BlazeStart|blaze[^:]*): /  \1 /' | head -40 >> "$OUT/SUMMARY.md" || true
+grep -E "^\S+ \S+ +$PID .*Davey!" "$OUT/logcat-release.txt" | head -3 | sed -E 's/^.*(duration=[0-9]+ms).*IntendedVsync=([0-9]+).*HandleInputStart=([0-9]+).*PerformTraversalsStart=([0-9]+).*DrawStart=([0-9]+).*SyncQueued=([0-9]+).*IssueDrawCommandsStart=([0-9]+).*SwapBuffers=([0-9]+).*FrameCompleted=([0-9]+).*/\1 \2 \3 \4 \5 \6 \7 \8 \9/' \
+  | awk '{ printf "  frame %s: vsync to main start %d ms, layout %d ms, record %d ms, RenderThread GL %d ms, swap %d ms\n", $1, ($3-$2)/1e6, ($5-$4)/1e6, ($6-$5)/1e6, ($8-$7)/1e6, ($9-$8)/1e6 }' >> "$OUT/SUMMARY.md" || true
 # diagnosis only (not part of the verdict): a third cold start with the main thread's stack sampled every ~0.7 s
 # (debuggerd needs root; google_apis emulators allow it). Sampling pauses the app briefly, so it is never measured.
 if adb root > /dev/null 2>&1; then sleep 3; adb wait-for-device; fi
