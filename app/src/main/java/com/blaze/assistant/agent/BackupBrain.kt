@@ -64,7 +64,7 @@ object BackupBrain {
     @Volatile private var models: List<BackupModels.Model> = emptyList()
     @Volatile private var modelsAt = 0L
     private val cooling = ConcurrentHashMap<String, Long>()
-    /** Until when the phone's OpenCode free allowance is used up (0 = not known to be). */
+    /** 0.46.6: until when EVERY on-phone model is out of free usage (0 = at least one can answer). */
     @Volatile private var freeUntil = 0L
     @Volatile private var fetching = false
     private val log = StringBuilder()
@@ -400,38 +400,33 @@ object BackupBrain {
         // 0.46.3 (BrainOrder): coders first for a coding job; zero-retention models only with Google data
         val list = BrainOrder.models(ordered.map { it.id }, coding, googleData).map { id -> ordered.firstOrNull { it.id == id } ?: BackupModels.Model(id, free = true) }
         if (list.isEmpty()) throw LlmClient.LlmException("backup: no free models", 503)
-        val t0 = System.currentTimeMillis()
-        var last: LlmClient.LlmException? = null
-        for (m in list.take(MAX_MODELS)) {
-            if (System.currentTimeMillis() - t0 > TOTAL_MS) break
-            try {
-                val msg = withContext(Dispatchers.IO) { one(m.id, messages, tools, onText, onThink) }
-                lastUse = System.currentTimeMillis()
-                if (!EmptyReply.isEmpty(msg)) return msg
-                cooling[m.id] = System.currentTimeMillis() + BackupModels.coolMs(0, "empty")
-                last = LlmClient.LlmException("backup: empty reply", 0)
-            } catch (e: kotlinx.coroutines.CancellationException) { throw e
-            } catch (e: FreeLimit) {
-                // Every free model shares the phone's free allowance: rest them all until OpenCode says it resets.
-                // 0.46.3 (A4): rest at most 30 min (a stale or long reset no longer parks it all evening), and say so
-                val until = BackupModels.capRest(e.until, System.currentTimeMillis())
-                list.forEach { cooling[it.id] = until }
-                freeUntil = until
-                try { com.blaze.assistant.device.CrashLog.write("Backup brain resting until " + java.util.Date(until)) } catch (_: Throwable) { }
-                lastError = e.message.orEmpty()
-                throw e
-            } catch (e: LlmClient.LlmException) {
-                lastError = "${m.id}: ${e.message.orEmpty().take(120)}"
-                cooling[m.id] = System.currentTimeMillis() + BackupModels.coolMs(e.code, e.message.orEmpty())
-                CallState.current().errors.add("backup ${m.id}: ${e.code} ${e.message.orEmpty().take(120)}")
-                last = e
-            } catch (e: Exception) {
-                cooling[m.id] = System.currentTimeMillis() + BackupModels.coolMs(0, e.message.orEmpty())
-                last = LlmClient.LlmException("backup: ${e.message}", 0)
-            }
+        // 0.46.6 (BrainRest): a "Free usage exceeded" rests only the model that said it (until its reset, or a backoff) and
+        // the next on-phone model is asked; only when every model rests does the brain rest, and the race moves on to Nous.
+        try {
+            return BrainRest.run(list.map { it.id }, rests,
+                call = { id -> withContext(Dispatchers.IO) { one(id, messages, tools, onText, onThink) }.also { lastUse = System.currentTimeMillis() } },
+                freeReset = { e -> (e as? FreeLimit)?.until },
+                empty = { EmptyReply.isEmpty(it) },
+                onError = { id, e ->
+                    val code = (e as? LlmClient.LlmException)?.code ?: 0
+                    lastError = "$id: ${e.message.orEmpty().take(120)}"
+                    cooling[id] = System.currentTimeMillis() + BackupModels.coolMs(code, e.message.orEmpty())
+                    CallState.current().errors.add("backup $id: $code ${e.message.orEmpty().take(120)}")
+                },
+                onRest = { id, until ->
+                    lastError = "$id: out of free usage"
+                    CallState.current().errors.add("backup $id: resting until " + java.util.Date(until))
+                    try { com.blaze.assistant.device.CrashLog.write("On-phone model $id resting until " + java.util.Date(until)) } catch (_: Throwable) { }
+                },
+                max = MAX_MODELS, budgetMs = TOTAL_MS)
+        } finally {
+            // the brain as a whole rests only while every usable model rests (Settings › Brains shows "resting" then)
+            freeUntil = rests.allRestingUntil(models.map { it.id }.ifEmpty { list.map { it.id } }, System.currentTimeMillis())
         }
-        throw last ?: LlmClient.LlmException("backup: no answer", 503)
     }
+
+    /** 0.46.6: per-model free-usage rests (BrainRest). */
+    private val rests = BrainRest.Book()
 
     private suspend fun one(model: String, messages: JSONArray, tools: JSONArray?, onText: ((String) -> Unit)?, onThink: ((String) -> Unit)?): JSONObject {
         val (sc, st) = request("/session", "POST", JSONObject().put("title", "blaze"))
@@ -448,7 +443,7 @@ object BackupBrain {
         }
     }
 
-    /** Thrown when OpenCode says the phone's free tier is used up: no other free model will answer either. */
+    /** Thrown when OpenCode says a model's free usage is used up: that model rests ([BrainRest]), the next one is asked. */
     class FreeLimit(msg: String, val until: Long) : LlmClient.LlmException(msg, 429)
 
     /** Streams one reply: subscribe to GET /event, send with prompt_async, follow this session's parts until idle. */
@@ -483,7 +478,8 @@ object BackupBrain {
                     is BackupBridge.Ev.Think -> { CallState.current().progress?.invoke(false); lastAt = System.currentTimeMillis(); if (!gotAny) { gotAny = true; ev.readTimeout = GAP_MS.toInt() }; LlmClient.lastChunkAt = System.currentTimeMillis(); onThink?.invoke(e.text) }
                     is BackupBridge.Ev.Error -> throw LlmClient.LlmException(e.failure.message, e.failure.status)
                     is BackupBridge.Ev.Retry -> {
-                        if (BackupBridge.freeLimit(e.reason, e.message)) throw FreeLimit(e.message, if (e.next > System.currentTimeMillis()) e.next else System.currentTimeMillis() + 3600_000L)
+                        // 0.46.6: no reset given = 0, so BrainRest rests this one model for a backoff (not an hour for all)
+                        if (BackupBridge.freeLimit(e.reason, e.message)) throw FreeLimit(e.message, if (e.next > System.currentTimeMillis()) e.next else 0L)
                         throw LlmClient.LlmException(e.message.ifBlank { "backup: retrying" }, 429)
                     }
                     BackupBridge.Ev.Idle -> return@cancellable text
