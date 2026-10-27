@@ -82,7 +82,7 @@ class HomeIntroClock(val kind: WeatherKind, val night: Boolean, private val card
     var order by mutableStateOf(order0)
         private set
     private var starts = HomeSequence.starts(order0, HomeIntroSpec.CARDS_AT)
-    fun setOrder(o: List<HomeGrid.Card>) { if (o != order) { order = o; starts = HomeSequence.starts(o, HomeIntroSpec.CARDS_AT) } }
+    fun adoptOrder(o: List<HomeGrid.Card>) { if (o != order) { order = o; starts = HomeSequence.starts(o, HomeIntroSpec.CARDS_AT) } }
     /** ms since the intro's first frame. */
     val t = mutableLongStateOf(0L)
     /** When the splash handed over (-1 = still on the splash). */
@@ -299,7 +299,7 @@ fun HomeRedesignContent(
             if (intro.splashEnd.longValue < 0) {
                 // ready: the weather board has content (or we stop waiting at the splash's max)
                 val e = CloudSplashSpec.splashEnd(t, boardNow.loaded || t >= CloudSplashSpec.SPLASH_MIN_MS)
-                if (e >= 0) { intro.setOrder(HomeSequence.order(stateNow.hasTasks)); intro.splashEnd.longValue = e }
+                if (e >= 0) { intro.adoptOrder(HomeSequence.order(stateNow.hasTasks)); intro.splashEnd.longValue = e }
             } else if (t - intro.splashEnd.longValue >= intro.endU) intro.done = true
         }
         HomeIntroBus.barAlpha.floatValue = 1f
