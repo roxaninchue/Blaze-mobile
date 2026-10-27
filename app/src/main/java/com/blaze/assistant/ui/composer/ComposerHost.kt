@@ -96,11 +96,7 @@ fun ComposerOverlay(state: ComposerState, onLeaveHome: () -> Unit = {}, modifier
                 ChatOverHome(state, onOpenFull = { state.closeChat(); onLeaveHome() })
             }
             if (state.spotlightOpen || !state.chatOpen) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.BottomCenter) {
-                AnimatedVisibility(state.spotlightOpen,
-                    enter = fadeIn(MotionTokens.medium()) + (if (MotionTokens.enabled) scaleIn(MotionTokens.medium(), initialScale = 0.96f) else fadeIn(MotionTokens.fast())),
-                    exit = fadeOut(MotionTokens.fast()) + (if (MotionTokens.enabled) scaleOut(MotionTokens.fast(), targetScale = 0.98f) else fadeOut(MotionTokens.fast()))) {
-                    SpotlightPanel(state, onAct = actions::run)
-                }
+                SpotlightSlot(state, actions)
             }
         }
     }
@@ -111,6 +107,16 @@ fun ComposerOverlay(state: ComposerState, onLeaveHome: () -> Unit = {}, modifier
             state.spotlightOpen -> state.closeSpotlight()
             else -> state.closeChat()
         }
+    }
+}
+
+/** The Spotlight panel with its enter / exit (its own composable: no Column scope leaks into AnimatedVisibility). */
+@Composable
+private fun SpotlightSlot(state: ComposerState, actions: SpotlightActions) {
+    AnimatedVisibility(state.spotlightOpen,
+        enter = fadeIn(MotionTokens.medium()) + (if (MotionTokens.enabled) scaleIn(MotionTokens.medium(), initialScale = 0.96f) else fadeIn(MotionTokens.fast())),
+        exit = fadeOut(MotionTokens.fast()) + (if (MotionTokens.enabled) scaleOut(MotionTokens.fast(), targetScale = 0.98f) else fadeOut(MotionTokens.fast()))) {
+        SpotlightPanel(state, onAct = actions::run)
     }
 }
 
