@@ -331,7 +331,8 @@ fun HomePane(onAsk: (String) -> Unit, onQuote: (String) -> Unit = {},
                 val stacks = remember(widgets) { Stacks.build(widgets) }
                 LaunchedEffect(stacks) { stackState = stackState.prune(stacks) }
                 PullToRefreshBox(isRefreshing = refreshing, onRefresh = { HomeBoard.pullToRefresh() }, modifier = Modifier.fillMaxSize()) {
-                    HomeBoardView(stacks, data, loading, offline, now, stackState,
+                    // Lazy start: the cards are composed from the frame after Blaze's first frame (ui/FirstFrame.kt).
+                    if (firstFrameShown()) HomeBoardView(stacks, data, loading, offline, now, stackState,
                         stamp = Ago.of(maxOf(HomeBoard.lastRefresh, data.values.maxOfOrNull { it.fetched } ?: 0L), now),
                         onToggle = { stackState = stackState.toggle(it) },
                         onMenu = { menuFor = it.id },

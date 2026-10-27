@@ -11,8 +11,11 @@ class BlazeApp : Application() {
         val t0 = android.os.SystemClock.elapsedRealtime()
         com.blaze.assistant.device.CrashLog.init(this)
         com.blaze.assistant.device.CrashLog.shieldMainThread()
-        // 0.46.6 cold start: Agent.Session's verification and opening blaze.db run on a background thread meanwhile (StartWarm).
+        // Lazy start: Agent.Session's verification and opening blaze.db run on background threads meanwhile (StartWarm,
+        // Mind.openLater); work the first frame doesn't need waits for it (StartLater, run on the main thread after the
+        // first frame, or after StartLater.FALLBACK_MS when Blaze starts without a screen). Goal: onCreate < 200 ms.
         com.blaze.assistant.device.StartWarm.begin(this)
+        com.blaze.assistant.device.StartLater.armFallback()
         // 0.45.19 fix 7: one Back rule for every Blaze window (Back returns to the chat).
         try { com.blaze.assistant.ui.BackRule.install(this) } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("BlazeApp: BackRule", e) }
         com.blaze.assistant.device.StartGuard.begin(this)   // 0.45.16: crash-loop detection (safe start)
@@ -40,9 +43,9 @@ class BlazeApp : Application() {
             try { com.blaze.assistant.agent.TimeCapsule.schedule(bgApp) } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("BlazeApp: TimeCapsule.sc", e) }
             try { com.blaze.assistant.agent.MindReview.schedule(bgApp) } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("BlazeApp: MindReview.sch", e) }
         }, "blaze-start-bg").start()
-        // v0.33.0 Safe Walk survives a reboot / process restart; sealed time capsules keep their wake-up.
-        try { com.blaze.assistant.phone.SafeWalk.handle(this, android.content.Intent.ACTION_BOOT_COMPLETED) } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("BlazeApp: SafeWalk.handl", e) }
-        try { com.blaze.assistant.phone.CallCopilot.init(this) } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("BlazeApp: CallCopilot.in", e) }
+        // v0.33.0 Safe Walk survives a reboot / process restart; sealed time capsules keep their wake-up. (After the first frame.)
+        com.blaze.assistant.device.StartLater.add("phone.SafeWalk.handle") { com.blaze.assistant.phone.SafeWalk.handle(this, android.content.Intent.ACTION_BOOT_COMPLETED) }
+        com.blaze.assistant.device.StartLater.add("phone.CallCopilot.init") { com.blaze.assistant.phone.CallCopilot.init(this) }
         try { com.blaze.assistant.agent.OfflineBrain.init(this) } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("BlazeApp: OfflineBrain.i", e) }
         // v1.9.10 fix: a leftover "Auto" steps model silently sent phone steps through the free chain
         // even after the user picked a specific model. Clear it once; they can set it again.
@@ -55,8 +58,10 @@ class BlazeApp : Application() {
         com.blaze.assistant.device.StartGuard.step("agent.Autonomy.init") { com.blaze.assistant.agent.Autonomy.init(this) }
         com.blaze.assistant.device.StartGuard.step("agent.Processes.init") { com.blaze.assistant.agent.Processes.init(this) }
         // One mind (v0.18.0): blaze.db first (mind.db until it is copied); Memory is now a view of its memories table.
-        com.blaze.assistant.device.StartGuard.step("agent.Mind.init") { com.blaze.assistant.agent.Mind.init(this) }
-        com.blaze.assistant.device.StartGuard.step("agent.Memory.init") { com.blaze.assistant.agent.Memory.init(this) }
+        // Lazy start: blaze.db opens off the main thread (started by StartWarm; this only makes sure it was started) and
+        // Memory attaches to the table there once it is open. Nothing here waits for it.
+        com.blaze.assistant.device.StartGuard.step("agent.Mind.openLater") { com.blaze.assistant.agent.Mind.openLater(this) }
+        com.blaze.assistant.device.StartGuard.step("agent.Memory.init") { com.blaze.assistant.agent.Memory.init(this, attachLater = true) }
         com.blaze.assistant.device.StartGuard.step("agent.Usage.init") { com.blaze.assistant.agent.Usage.init(this) }
         try { com.blaze.assistant.agent.ToolStats.init(this) } catch (e: Exception) { com.blaze.assistant.device.CrashLog.quiet("BlazeApp: ToolStats.init", e) }
         try { com.blaze.assistant.agent.ToolCache.init(filesDir) } catch (e: Exception) { com.blaze.assistant.device.CrashLog.quiet("BlazeApp: ToolCache.init", e) }
@@ -87,7 +92,7 @@ class BlazeApp : Application() {
             }
         }
         com.blaze.assistant.device.StartGuard.step("notify.Notifier.init") { com.blaze.assistant.notify.Notifier.init(this) }
-        try { com.blaze.assistant.update.Updater.checkInBackground(this) } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("BlazeApp: Updater.check", e) }
+        com.blaze.assistant.device.StartLater.add("update.Updater.checkInBackground") { com.blaze.assistant.update.Updater.checkInBackground(this) }
         com.blaze.assistant.device.StartGuard.step("Settings.tellIfSecretsDropped") { Settings.tellIfSecretsDropped() }
         com.blaze.assistant.device.StartGuard.step("voice.Voice.init") { com.blaze.assistant.voice.Voice.init(this) }
         // Wake word starts from the screen (MainActivity/assistant) and at boot: starting a
@@ -97,8 +102,8 @@ class BlazeApp : Application() {
         // "ready out of the box" Linux tools for Linuxes installed before this version. Both wait a minute after start.
         // 0.46.6: low-RAM phones keep a smaller picture cache (provider engines run one at a time everywhere)
         try { com.blaze.assistant.movies.ProviderSandbox.Gate.configure(this) } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("BlazeApp: Gate.configure", e) }
-        try { com.blaze.assistant.device.Thermal.init(this) } catch (_: Throwable) { com.blaze.assistant.device.CrashLog.write("thermal init failed") }
-        if (!com.blaze.assistant.device.StartGuard.safeStart) com.blaze.assistant.device.StartGuard.step("agent.BackupBrain.init") { com.blaze.assistant.agent.BackupBrain.init(this) }
+        com.blaze.assistant.device.StartLater.add("device.Thermal.init") { com.blaze.assistant.device.Thermal.init(this) }
+        if (!com.blaze.assistant.device.StartGuard.safeStart) com.blaze.assistant.device.StartLater.add("agent.BackupBrain.init") { com.blaze.assistant.agent.BackupBrain.init(this) }
         // Wave B-4: the on-phone Linux desktop was removed; once after the update, free what it left (packages, caches, prefs).
         if (!com.blaze.assistant.device.StartGuard.safeStart && !Settings.bool(com.blaze.assistant.terminal.LinuxDesktopCleanup.PREF_DONE, false)) {
             val app = this
@@ -116,20 +121,22 @@ class BlazeApp : Application() {
             }
         }
         Thread { com.blaze.assistant.agent.SkillPacks.ensureStarters(); com.blaze.assistant.agent.SkillLibrary.seed(this) }.start()
-        com.blaze.assistant.device.StartGuard.step("proactive.Triggers.init") { com.blaze.assistant.proactive.Triggers.init(this) }
-        if (!com.blaze.assistant.device.StartGuard.safeStart) com.blaze.assistant.device.StartGuard.step("proactive.Proactive.start") { com.blaze.assistant.proactive.Proactive.start(this) }
+        // Lazy start: triggers, proactive helpers, the task overlay, desktop link, dashboard and orb start after the first frame.
+        com.blaze.assistant.device.StartLater.add("proactive.Triggers.init") { com.blaze.assistant.proactive.Triggers.init(this) }
+        if (!com.blaze.assistant.device.StartGuard.safeStart) com.blaze.assistant.device.StartLater.add("proactive.Proactive.start") { com.blaze.assistant.proactive.Proactive.start(this) }
         // v0.38.0 Jarvis mode: questions, screen glances, camera looks, its own routines (per level).
-        if (!com.blaze.assistant.device.StartGuard.safeStart) try { com.blaze.assistant.proactive.FollowUps.init(this); com.blaze.assistant.proactive.Jarvis.start(this) } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("BlazeApp: FollowUps.", e) }
-        com.blaze.assistant.device.StartGuard.step("ui.Overlay.watchTasks") { com.blaze.assistant.ui.Overlay.watchTasks(this) }
-        if (!com.blaze.assistant.device.StartGuard.safeStart) com.blaze.assistant.device.StartGuard.step("link.DesktopLink.start") { com.blaze.assistant.link.DesktopLink.start() }
-        if (!com.blaze.assistant.device.StartGuard.safeStart && Settings.bool("dash_auto", false)) com.blaze.assistant.device.StartGuard.step("Dashboard.start") { com.blaze.assistant.dashboard.Dashboard.start(this) }
-        if (!com.blaze.assistant.device.StartGuard.safeStart) com.blaze.assistant.device.StartGuard.step("Overlay.showOrb") { if (Settings.orbPinned && android.provider.Settings.canDrawOverlays(this)) com.blaze.assistant.ui.Overlay.showOrb(this) }
+        if (!com.blaze.assistant.device.StartGuard.safeStart) com.blaze.assistant.device.StartLater.add("proactive.Jarvis.start") { com.blaze.assistant.proactive.FollowUps.init(this); com.blaze.assistant.proactive.Jarvis.start(this) }
+        com.blaze.assistant.device.StartLater.add("ui.Overlay.watchTasks") { com.blaze.assistant.ui.Overlay.watchTasks(this) }
+        if (!com.blaze.assistant.device.StartGuard.safeStart) com.blaze.assistant.device.StartLater.add("link.DesktopLink.start") { com.blaze.assistant.link.DesktopLink.start() }
+        if (!com.blaze.assistant.device.StartGuard.safeStart && Settings.bool("dash_auto", false)) com.blaze.assistant.device.StartLater.add("Dashboard.start") { com.blaze.assistant.dashboard.Dashboard.start(this) }
+        if (!com.blaze.assistant.device.StartGuard.safeStart) com.blaze.assistant.device.StartLater.add("Overlay.showOrb") { if (Settings.orbPinned && android.provider.Settings.canDrawOverlays(this)) com.blaze.assistant.ui.Overlay.showOrb(this) }
         // v0.28.4 blaze-docs: index Blaze's own docs (+ the real tool list) into blaze.db when the build changed. Off the main
         // thread and a few seconds after start so it never slows opening the app; a no-op when nothing changed.
         // v0.45.0 (#14): how long start took on the main thread (and Agent.init's share), in the speed log; very slow starts in the crash log.
         val startMs = android.os.SystemClock.elapsedRealtime() - t0
         try { android.util.Log.i("BlazeStart", "onCreate ${startMs} ms (Agent.init ${agentMs} ms)") } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("BlazeApp: android.util.Log.iBlazeStart onCreate st", e) }
         com.blaze.assistant.device.CrashLog.slow("app start (Agent.init ${agentMs} ms)", startMs)
+        if (startMs > com.blaze.assistant.agent.LazyStart.ON_CREATE_BUDGET_MS) com.blaze.assistant.device.CrashLog.write("START over budget: onCreate ${startMs} ms > ${com.blaze.assistant.agent.LazyStart.ON_CREATE_BUDGET_MS} ms")
         val app = this
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).launch {
             kotlinx.coroutines.delay(2_500)
