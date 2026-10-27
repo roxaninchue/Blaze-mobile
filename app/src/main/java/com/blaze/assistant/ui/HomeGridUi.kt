@@ -252,7 +252,7 @@ fun HomeCard(card: HomeGrid.Card, intro: HomeIntroClock?, index: Int, modifier: 
         .onGloballyPositioned { if (intro != null && !intro.done) intro.bounds[key] = it.boundsInRoot(); focus?.cells?.set(card, it.boundsInRoot()) }
         .graphicsLayer {
             val t = HomeCardFrame.of(live, index)
-            alpha = t.alpha * (focus?.gridAlpha(card) ?: 1f); scaleX = t.scale * t.contentScale; scaleY = t.scale * t.contentScale
+            alpha = t.alpha * (focus?.gridAlpha(card) ?: 1f); scaleX = t.scale; scaleY = t.scale
             val b = live?.bounds?.get(key); val root = live?.bounds?.get(HomeIntroKeys.ROOT)
             if (b != null && root != null && t.move < 1f) {
                 val drop = if (card == HomeGrid.Card.TODO) HomeSequence.TODO_CENTER_DROP * root.height else 0f
@@ -279,7 +279,7 @@ fun HomeCard(card: HomeGrid.Card, intro: HomeIntroClock?, index: Int, modifier: 
                 } else if (t.outline > 0f) {
                     // the outline draws itself (path trim) from the top-left corner, clockwise
                     if (trimPath.isEmpty || measuredW != w) {
-                        trimPath.reset(); trimPath.addRoundRect(RoundRect(w / 2, w / 2, size.width - w / 2, size.height - w / 2, CornerRadius(r - w / 2)))
+                        trimPath.reset(); clockwiseRoundRect(trimPath, w / 2, w / 2, size.width - w / 2, size.height - w / 2, r - w / 2)
                         pm.setPath(trimPath, false); measuredW = w
                     }
                     seg.reset(); pm.getSegment(0f, pm.length * t.outline, seg, true)
@@ -304,6 +304,17 @@ object HomeCardFrame {
     }
     /** The outline's width: a bright 1.5 dp edge while the card is light glass, the reference's band when settled. */
     fun edgePx(fill: Float, settledPx: Float, density: Float): Float = 1.5f * density + (settledPx - 1.5f * density) * fill.coerceIn(0f, 1f)
+}
+
+/** A rounded rectangle traced clockwise from the top-left corner's end (so a path trim draws the top edge first). */
+fun clockwiseRoundRect(p: Path, l: Float, t: Float, r: Float, b: Float, rad: Float) {
+    val k = rad.coerceAtMost(minOf(r - l, b - t) / 2f).coerceAtLeast(0f); val d = 2 * k
+    p.moveTo(l + k, t)
+    p.lineTo(r - k, t); p.arcTo(androidx.compose.ui.geometry.Rect(r - d, t, r, t + d), -90f, 90f, false)
+    p.lineTo(r, b - k); p.arcTo(androidx.compose.ui.geometry.Rect(r - d, b - d, r, b), 0f, 90f, false)
+    p.lineTo(l + k, b); p.arcTo(androidx.compose.ui.geometry.Rect(l, b - d, l + d, b), 90f, 90f, false)
+    p.lineTo(l, t + k); p.arcTo(androidx.compose.ui.geometry.Rect(l, t, l + d, t + d), 180f, 90f, false)
+    p.close()
 }
 
 // ---------------------------------------------------------------- card content in the intro
@@ -347,7 +358,9 @@ fun WeatherCardV2(b: WeatherBoard.Board, h24: Boolean, intro: HomeIntroClock?, m
             val rr = RoundRect(stroke / 2, stroke / 2, size.width - stroke / 2, size.height - stroke / 2, CornerRadius(HomeGridLook.radius.toPx() - stroke / 2))
             // start the trim at the top-left corner, next to the icon, and go clockwise
             val full = Path().apply { addRoundRect(rr) }
-            val pm = PathMeasure().apply { setPath(full, false) }
+            // the trim follows the top edge first, like the video (addRoundRect alone runs counter-clockwise)
+            val trimmed = Path().also { clockwiseRoundRect(it, stroke / 2, stroke / 2, size.width - stroke / 2, size.height - stroke / 2, HomeGridLook.radius.toPx() - stroke / 2) }
+            val pm = PathMeasure().apply { setPath(trimmed, false) }
             val seg = Path()
             onDrawBehind {
                 val live = intro?.takeIf { !it.done }
@@ -432,7 +445,10 @@ fun InterestsCardV2(topics: List<InterestsFeed.Topic>, intro: HomeIntroClock?, i
                     // intro: the chips pop in one by one at the centre before the card's frame exists
                     TopicChip(t.label, t.icon, Modifier.graphicsLayer {
                         val a = if (intro == null || intro.done || index < 0) 1f else HomeSequence.chipPop(i, intro.cardLocal(index))
-                        alpha = a; scaleX = 0.6f + 0.4f * a; scaleY = 0.6f + 0.4f * a
+                        // large at the centre (the video's chips), shrinking into place as the card glides to its cell
+                        val cs = HomeCardFrame.of(intro, index).contentScale
+                        transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f)
+                        alpha = a; scaleX = (0.6f + 0.4f * a) * cs; scaleY = (0.6f + 0.4f * a) * cs
                     })
                     val headline = t.headline.ifBlank { "Fetching the latest\u2026" }
                     Text(headline, style = style(9.5.sp), maxLines = 1, overflow = TextOverflow.Ellipsis,

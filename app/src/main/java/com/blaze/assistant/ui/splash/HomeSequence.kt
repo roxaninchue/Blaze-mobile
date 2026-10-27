@@ -11,7 +11,7 @@ import com.blaze.assistant.home.HomeGrid
  *    around them; the card glides up into its cell (top right) while the chips shrink into place; the title and each
  *    headline type in; the card darkens to navy.
  *  - Music [8.2-10.3] and To-do [10.4-12.8]: a light glass card emerges at the centre, its content appears / types in
- *    (To-do ticks its first done task), it holds, then glides into its cell and darkens.
+ *    (To-do ticks its first done task), it darkens to navy while it holds, then glides into its cell.
  *  - Next up [13.0-14.5] and Quick actions [15.0-17.0]: drawn IN PLACE a little below their row: the outline draws
  *    itself, the text types in (Quick actions flashes its second chip, like "Catch up" in the video), the card darkens
  *    and lifts into its row.
@@ -27,7 +27,7 @@ object HomeSequence {
         val alpha: Float, val scale: Float, val move: Float, val fill: Float, val content: Float,
         /** The frame's outline drawn so far (path trim, 0..1); 1 = the whole outline. */
         val outline: Float = 1f,
-        /** The content's own scale (Interests' chips are large at the centre). */
+        /** Interests' chips' own scale (large at the centre; the card's frame itself stays cell size). */
         val contentScale: Float = 1f,
         val lift: Float = 0f,
         /** The frame's own alpha (the chips show before their frame does). */
@@ -43,7 +43,7 @@ object HomeSequence {
     // ---- Interests (local ms)
     const val CHIP_STAGGER = 170L
     const val CHIP_POP_MS = 240L
-    const val CHIPS_SCALE = 1.45f
+    const val CHIPS_SCALE = 1.7f
     const val INT_FRAME_AT = 1_250L
     const val INT_FRAME_MS = 300L
     const val INT_GLIDE_AT = 1_500L
@@ -51,7 +51,7 @@ object HomeSequence {
     const val INT_TITLE_AT = 1_850L
     const val INT_HEADLINE_AT = 1_950L
     const val INT_HEADLINE_STAGGER = 160L
-    const val INT_FILL_AT = 2_250L
+    const val INT_FILL_AT = 2_050L
     const val INT_SPAN = 2_670L
 
     // ---- Music / To-do (local ms)
@@ -69,6 +69,9 @@ object HomeSequence {
     const val TODO_TICK_AT = 1_320L
     const val TODO_TICK_MS = 160L
     const val TODO_GLIDE_AT = 1_820L
+    /** Music and To-do darken while still at the centre, before they glide (video: Music dark by 9.0 s, To-do by 12.0 s). */
+    const val MUSIC_FILL_AT = 600L
+    const val TODO_FILL_AT = 1_350L
     const val TODO_SPAN = 2_600L
     const val GLIDE_MS = 520L
     const val FILL_MS = 300L
@@ -78,15 +81,15 @@ object HomeSequence {
     // ---- Next up / Quick actions (local ms)
     const val OUTLINE_MS = 400L
     const val NEXT_TEXT_AT = 380L
-    const val NEXT_FILL_AT = 900L
-    const val NEXT_LIFT_AT = 1_200L
-    const val NEXT_SPAN = 1_900L
+    const val NEXT_FILL_AT = 750L
+    const val NEXT_LIFT_AT = 1_050L
+    const val NEXT_SPAN = 1_600L
     const val QUICK_ROW_AT = 300L
     const val QUICK_ROW_STAGGER = 320L
     const val QUICK_ROW_MS = 520L
     const val QUICK_FLASH_AT = 1_300L
     const val QUICK_FLASH_MS = 520L
-    const val QUICK_FILL_AT = 1_500L
+    const val QUICK_FILL_AT = 1_400L
     const val QUICK_LIFT_AT = 1_800L
     const val QUICK_SPAN = 2_100L
     const val LIFT_MS = 300L
@@ -152,7 +155,8 @@ object HomeSequence {
                 val glideAt = if (c == HomeGrid.Card.TODO) TODO_GLIDE_AT else MUSIC_GLIDE_AT
                 val e = out(p(local, 0, EMERGE_MS))
                 val g = io(p(local, glideAt, GLIDE_MS))
-                Frame(alpha = e, scale = lerp(EMERGE_SCALE, 1f, e), move = g, fill = p(local, glideAt + GLIDE_MS / 2, FILL_MS),
+                val fillAt = if (c == HomeGrid.Card.TODO) TODO_FILL_AT else MUSIC_FILL_AT
+                Frame(alpha = e, scale = lerp(EMERGE_SCALE, 1f, e), move = g, fill = p(local, fillAt, FILL_MS),
                     content = 1f, outline = 1f, frameAlpha = 1f)
             }
             Mode.IN_PLACE -> {

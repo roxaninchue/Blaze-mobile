@@ -28,8 +28,8 @@ object HomeMotion {
     const val TYPE_PLACE_AT = 800L
     const val TYPE_COND_AT = 1_250L
     const val TYPE_SUN_AT = 1_850L
-    /** Light glass -> settled navy [5.0 -> 5.3]. */
-    const val BOARD_FILL_AT = 2_550L
+    /** Light glass -> settled navy [4.8 -> 5.1]. */
+    const val BOARD_FILL_AT = 2_400L
     const val FILL_MS = 320L
     /** First card after the board (Interests' chips) [5.5]. */
     const val CARDS_AT = 3_100L

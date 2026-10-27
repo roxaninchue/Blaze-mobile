@@ -20,13 +20,13 @@ class HomeSequenceTest {
     }
 
     @Test fun cardStartsMatchTheVideo() {
-        // video (s): splash hands over ~2.4; Interests chips 5.5, Music 8.2, To-do 10.4, Next up 13.0-13.4, Quick actions 15.0
+        // video (s): splash hands over ~2.4; Interests chips 5.5, Music 8.2, To-do 10.4, Next up 13.0, Quick actions ~14.7
         val s = HomeSequence.starts(all, HomeIntroSpec.CARDS_AT).map { (it + 2_400) / 1000.0 }
-        val video = listOf(5.5, 8.2, 10.4, 13.2, 15.0)
+        val video = listOf(5.5, 8.2, 10.4, 13.0, 14.7)
         s.zip(video).forEach { (a, v) -> assertEquals("start $a vs video $v", v, a, 0.35) }
         // the chat bar appears last, ~17 s into the video
         val bar = (HomeSequence.cardsEnd(all, HomeIntroSpec.CARDS_AT) + 2_400) / 1000.0
-        assertEquals(17.2, bar, 0.6)
+        assertEquals(16.9, bar, 0.6)
         // without tasks the To-do step is simply left out
         assertEquals(HomeSequence.TODO_SPAN, HomeSequence.cardsEnd(all, 0) - HomeSequence.cardsEnd(noTasks, 0))
     }
@@ -51,8 +51,10 @@ class HomeSequenceTest {
     }
 
     @Test fun musicAndTodoHoldAtTheCentreThenGlide() {
+        val emerged = HomeSequence.frame(HomeGrid.Card.MUSIC, HomeSequence.MUSIC_FILL_AT - 1)
+        assertEquals(0f, emerged.fill)                                  // light glass while it emerges
         val hold = HomeSequence.frame(HomeGrid.Card.MUSIC, HomeSequence.MUSIC_GLIDE_AT - 1)
-        assertEquals(1f, hold.alpha); assertEquals(0f, hold.move); assertEquals(0f, hold.fill)
+        assertEquals(1f, hold.alpha); assertEquals(0f, hold.move); assertEquals(1f, hold.fill)   // dark at the centre, then glides
         val mid = HomeSequence.frame(HomeGrid.Card.TODO, HomeSequence.TODO_GLIDE_AT + HomeSequence.GLIDE_MS / 2)
         assertTrue(mid.move in 0.3f..0.7f)
         // the first done task ticks in the video; a later done task is ticked from the start
