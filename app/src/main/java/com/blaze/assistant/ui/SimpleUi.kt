@@ -58,6 +58,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -253,21 +254,18 @@ fun HomeSurface(progress: Float, onAsk: (String) -> Unit, onQuote: (String) -> U
                 drag: androidx.compose.foundation.gestures.DraggableState,
                 onDragStart: suspend kotlinx.coroutines.CoroutineScope.(Offset) -> Unit,
                 onDragStop: suspend kotlinx.coroutines.CoroutineScope.(Float) -> Unit) {
-    val c = LocalBlaze.current
     // v0.45.8: the strip sits on Home's own ground (HomePane bottom slot), so the scene behind Home never shows through
     // under "Swipe up to chat" (on a dark Home, a light ink scene used to); with a theme, Home and the strip both show it.
-    HomePane(onAsk = onAsk, onQuote = onQuote, edgeToEdge = true, bottom = {
-        val hc = LocalBlaze.current   // Home's own ink (Home may draw dark glass on a light app theme)
-        Column(Modifier.fillMaxWidth()
-            .draggable(drag, androidx.compose.foundation.gestures.Orientation.Vertical, onDragStarted = onDragStart, onDragStopped = onDragStop)
-            .clickable(onClick = onOpen).semantics { contentDescription = "Swipe up to chat" }
-            .navigationBarsPaddingCompat().padding(top = 10.dp, bottom = com.blaze.assistant.agent.SwipeNav.HANDLE_MARGIN_DP.dp),
-            horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("Swipe up to chat", style = TextStyle(fontFamily = Type.Sans, fontSize = 11.sp, color = hc.sub.copy(alpha = (1f - progress * 2f).coerceIn(0f, 1f))))
-            Spacer(Modifier.height(8.dp))
-            Box(Modifier.width(134.dp).height(5.dp).clip(RoundedCornerShape(3.dp)).background(hc.ink.copy(alpha = 0.85f)))
-        }
-    })
+    // 0.47 chat composer: the bottom Blaze button ("Swipe up to chat" strip) is replaced by the chat bar (profile · Message Blaze · +);
+    // chat and Spotlight open over the blurred Home. Swiping up on the bar still slides the full chat over Home.
+    com.blaze.assistant.ui.composer.BlazeComposerHome(
+        barModifier = Modifier.graphicsLayer { alpha = (1f - progress * 2f).coerceIn(0f, 1f) }
+            .draggable(drag, androidx.compose.foundation.gestures.Orientation.Vertical, onDragStarted = onDragStart, onDragStopped = onDragStop),
+        onLeaveHome = onOpen) {
+        HomePane(onAsk = onAsk, onQuote = onQuote, edgeToEdge = true, bottom = {
+            Spacer(Modifier.fillMaxWidth().navigationBarsPaddingCompat().height((com.blaze.assistant.ui.composer.ChatBarTokens.HEIGHT_DP + 8).dp))
+        })
+    }
 }
 
 private fun Modifier.statusBarsPaddingCompat(): Modifier = this.statusBarsPadding()
