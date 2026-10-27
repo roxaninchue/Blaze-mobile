@@ -34,6 +34,18 @@ note "- release cold start: TotalTime ${TT} ms, worst main stall ~${MS} ms (${N}
 [ -z "$STILL" ] && FAIL+=("release process died after cold start")
 [ "$N" -ge 42 ] && FAIL+=("release cold start main stall ~${MS} ms > 700 ms")
 grep -E "$PID .*Choreographer.*Skipped" "$OUT/logcat-release.txt" | head -5 >> "$OUT/SUMMARY.md" || true
+# diagnosis only (not part of the verdict): a third cold start with the main thread's stack sampled every ~0.7 s
+# (debuggerd needs root; google_apis emulators allow it). Sampling pauses the app briefly, so it is never measured.
+if adb root > /dev/null 2>&1; then sleep 3; adb wait-for-device; fi
+adb shell am force-stop $PKG; sleep 3
+( adb shell am start -W -n $PKG/.MainActivity > "$OUT/start-sampled.txt" 2>&1 ) &
+for i in $(seq 1 10); do
+  sleep 0.7; P=$(adb shell pidof $PKG | tr -d '\r')
+  [ -n "$P" ] && adb shell debuggerd -j "$P" 2>/dev/null | awk '/^"main"/{f=1} f{print} f&&/^$/{exit}' | head -30 > "$OUT/main-stack-$i.txt"
+done
+wait
+{ echo "### main thread during cold start (sampled, diagnosis only)"; for i in $(seq 1 10); do f="$OUT/main-stack-$i.txt"; [ -s "$f" ] || continue
+  echo "- sample $i: $(grep -m1 -oE 'state=[A-Z]' "$f") $(grep -E '^  (at|native)' "$f" | grep -vE 'android\.os\.(Looper|Handler|MessageQueue)|java\.lang\.reflect|com\.android\.internal\.os|ActivityThread\.main' | head -6 | sed 's/^ *//' | tr '\n' ' ')"; done; } >> "$OUT/SUMMARY.md"
 adb uninstall $PKG > /dev/null 2>&1 || true
 
 # ---- 2. instrumented scenarios (debug build of the same commit)

@@ -89,3 +89,4 @@ jobs:
             smoke-out/
             build-smoke.log
             rel/DEX-SHA256
+            app/build/outputs/mapping/release/mapping.txt
