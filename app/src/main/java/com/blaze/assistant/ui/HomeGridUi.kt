@@ -442,7 +442,9 @@ fun InterestsCardV2(topics: List<InterestsFeed.Topic>, intro: HomeIntroClock?, i
             Text("Tell me what you're into and the latest headlines show up here.", style = style(11.sp, color = HomeGridLook.sub), maxLines = 4)
         } else Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             topics.forEachIndexed { i, t ->
-                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable(enabled = t.url.isNotBlank(), role = Role.Button) { onTopic(t) }
+                // the row's rounded clip is a stable layer, off while the chips are larger than the card (intro, at the centre)
+                Column(Modifier.fillMaxWidth().graphicsLayer { shape = RoundedCornerShape(10.dp); clip = HomeCardFrame.of(intro?.takeIf { index >= 0 }, index).contentScale <= 1.01f }
+                    .clickable(enabled = t.url.isNotBlank(), role = Role.Button) { onTopic(t) }
                     .semantics(mergeDescendants = true) { }) {
                     // intro: the chips pop in one by one at the centre before the card's frame exists
                     TopicChip(t.label, t.icon, Modifier.graphicsLayer {
