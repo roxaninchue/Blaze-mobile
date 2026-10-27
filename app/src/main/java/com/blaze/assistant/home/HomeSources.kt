@@ -92,7 +92,7 @@ object HomeSources {
             val (code, body) = com.blaze.assistant.agent.GatewayWeather.fetch(lat, lon, units, token)
             if (code in 200..299) com.blaze.assistant.agent.GatewayWeather.parse(body) else null
         } catch (e: Exception) { null }
-        if (now != null) return Result(HomeWeather.toData(now, place, units, forecast?.lines.orEmpty()), learned)
+        if (now != null) return Result(HomeWeather.toData(now, place, units, forecast?.lines.orEmpty()).copy(sunset = forecast?.sunset.orEmpty()), learned)
         val d = forecast ?: OpenMeteo.parse(get(OpenMeteo.forecastUrl(lat, lon, f), "the weather"), place)
         return Result(d.copy(link = "https://open-meteo.com/"), learned)
     }
