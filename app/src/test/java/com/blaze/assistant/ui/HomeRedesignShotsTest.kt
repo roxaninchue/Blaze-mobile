@@ -5,6 +5,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -89,13 +92,19 @@ class HomeRedesignShotsTest {
         Unit
     }
 
-    /** 0.48.0: the new Home with the composer as the app wires it (one chat bar at the bottom, the grid above it). */
+    /**
+     * 0.48.0: the new Home with the composer as the app wires it (HomeSurface): Home sits above a bottom slot as tall as the
+     * chat bar (ChatBarTokens.HEIGHT_DP + 8), and the bar floats over that slot, so "All widgets" scrolls above the bar.
+     */
     @Test fun homeWithChatBar() {
-        capture("home-with-chat-bar") {
+        val b = capture("home-with-chat-bar") {
             androidx.compose.runtime.CompositionLocalProvider(LocalBlaze provides DarkColors) {
                 Box(Modifier.fillMaxSize()) {
+                    HomeSkyBackground(night = false, modifier = Modifier.fillMaxSize())
                     androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
-                        Box(Modifier.weight(1f)) { HomeRedesignContent(HomeRedesignSample.state(), playIntro = false, drawSky = true) }
+                        Box(Modifier.weight(1f)) { HomeRedesignContent(HomeRedesignSample.state(), playIntro = false, drawSky = false) }
+                        androidx.compose.foundation.layout.Spacer(Modifier.fillMaxWidth()
+                            .height((com.blaze.assistant.ui.composer.ChatBarTokens.HEIGHT_DP + 8).dp))
                     }
                     Box(Modifier.align(androidx.compose.ui.Alignment.BottomCenter)) {
                         com.blaze.assistant.ui.composer.BlazeChatBar(com.blaze.assistant.ui.composer.ComposerState())
@@ -103,26 +112,66 @@ class HomeRedesignShotsTest {
                 }
             }
         }
+        // "All widgets" must end above the bar's top edge (the bar is the bottom HEIGHT_DP of the frame).
+        val all = rule.onNode(androidx.compose.ui.test.hasText("All widgets"), useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val barTop = b.height - com.blaze.assistant.ui.composer.ChatBarTokens.HEIGHT_DP * rule.density.density
+        assertTrue("All widgets (bottom ${all.bottom}) overlaps the chat bar (top $barTop)", all.bottom <= barTop)
     }
 
-    /** 0.48.0: chat over the new Home (Robolectric draws no RenderEffect blur, so the frame shows the dim only). */
+    /** The Interests title must show whole ("Interests · Tracking") in the 360 dp grid: no overflow, no clipped word. */
+    @Test fun interestsTitleFits() {
+        home("home-settled-title-check")
+        val node = rule.onNode(androidx.compose.ui.test.hasText("Interests \u00b7 Tracking"), useUnmergedTree = true).fetchSemanticsNode()
+        val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        node.config[androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult].action?.invoke(layouts)
+        val r = layouts.single()
+        assertTrue("Interests title overflows: width ${r.size.width}, text ${r.multiParagraph.intrinsics.maxIntrinsicWidth}", !r.hasVisualOverflow)
+        assertTrue(r.lineCount == 1 && r.getLineEnd(0) == "Interests \u00b7 Tracking".length)
+    }
+
+    /** Chat and Spotlight over Home with NO blur (low-RAM phones, the owner's A12): the solid scrim + opaque bubbles. */
+    private fun overNewHome(name: String, body: @androidx.compose.runtime.Composable () -> Unit) = capture(name) {
+        androidx.compose.runtime.CompositionLocalProvider(LocalBlaze provides DarkColors,
+            com.blaze.assistant.ui.composer.LocalComposerSolid provides true) {
+            Box(Modifier.fillMaxSize()) {
+                HomeRedesignContent(HomeRedesignSample.state(), playIntro = false, drawSky = true)
+                Box(Modifier.fillMaxSize().background(com.blaze.assistant.composer.ComposerLook.scrim(DarkColors, blur = false)))
+                body()
+            }
+        }
+    }
+
     @Test fun chatOverNewHome() {
         val now = System.currentTimeMillis()
         val msgs = listOf(
             com.blaze.assistant.agent.ChatMessage(1, com.blaze.assistant.agent.Role.USER, "What's on today?", at = now - 120_000),
             com.blaze.assistant.agent.ChatMessage(2, com.blaze.assistant.agent.Role.BLAZE, "Standup at 10:00, then the dentist at 15:30.", at = now - 110_000))
         val st = com.blaze.assistant.ui.composer.ComposerState().apply { chatOpen = true }
-        capture("chat-over-new-home") {
-            androidx.compose.runtime.CompositionLocalProvider(LocalBlaze provides DarkColors) {
-                Box(Modifier.fillMaxSize()) {
-                    HomeRedesignContent(HomeRedesignSample.state(), playIntro = false, drawSky = true)
-                    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)))
-                    androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
-                        Box(Modifier.weight(1f)) { com.blaze.assistant.ui.composer.ChatOverHomeContent(st, msgs, busy = true, now = now) }
-                        com.blaze.assistant.ui.composer.BlazeChatBar(st)
-                    }
-                }
+        com.blaze.assistant.ui.MotionTokens.setEnabledForTests(false)
+        val b = overNewHome("chat-over-new-home") {
+            androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
+                Box(Modifier.weight(1f)) { com.blaze.assistant.ui.composer.ChatOverHomeContent(st, msgs, busy = true, now = now) }
+                com.blaze.assistant.ui.composer.BlazeChatBar(st)
             }
         }
+        com.blaze.assistant.ui.MotionTokens.setEnabledForTests(true)
+        // the scrim is strong: the frame's top-middle (Home's cards behind) is close to the theme background
+        val p = b.getPixel(b.width / 2, b.height / 2)
+        assertTrue("scrim too weak: ${Integer.toHexString(p)}", ((p shr 16) and 0xFF) < 0x40 && (p and 0xFF) < 0x48)
+    }
+
+    @Test fun spotlightOverNewHome() {
+        com.blaze.assistant.mediaapps.MediaLib.seedForTests(listOf(com.blaze.assistant.mediaapps.Track("s1", "content://s1", "Bohemian Rhapsody", "Queen")), emptyList())
+        val st = com.blaze.assistant.ui.composer.ComposerState().apply { spotlightOpen = true }
+        com.blaze.assistant.ui.MotionTokens.setEnabledForTests(false)
+        overNewHome("spotlight-over-new-home") {
+            androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = androidx.compose.ui.Alignment.BottomCenter) {
+                    com.blaze.assistant.ui.composer.SpotlightPanel(st, onAct = {})
+                }
+                com.blaze.assistant.ui.composer.BlazeChatBar(st)
+            }
+        }
+        com.blaze.assistant.ui.MotionTokens.setEnabledForTests(true)
     }
 }

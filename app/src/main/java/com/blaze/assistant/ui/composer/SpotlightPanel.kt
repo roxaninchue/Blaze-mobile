@@ -1,6 +1,7 @@
 package com.blaze.assistant.ui.composer
 
 import android.annotation.SuppressLint
+import com.blaze.assistant.composer.ComposerLook
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -111,6 +112,7 @@ fun SpotlightPanel(state: ComposerState, onAct: (Act) -> Unit, modifier: Modifie
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
 
     Column(modifier.fillMaxWidth().padding(horizontal = 12.dp).clip(RoundedCornerShape(24.dp))
+        .then(if (LocalComposerSolid.current) Modifier.background(ComposerLook.panel(c)) else Modifier)
         .glass(RoundedCornerShape(24.dp), GlassIntensity.High, shadow = false).padding(8.dp)) {
         // ---- the field
         Row(Modifier.fillMaxWidth().heightIn(min = 46.dp).clip(RoundedCornerShape(16.dp)).background(c.ink.copy(alpha = 0.06f))

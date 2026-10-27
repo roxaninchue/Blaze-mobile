@@ -1,5 +1,6 @@
 package com.blaze.assistant.ui.composer
 
+import com.blaze.assistant.composer.ComposerLook
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -87,8 +88,10 @@ fun ComposerOverlay(state: ComposerState, onLeaveHome: () -> Unit = {}, modifier
     }
     val actions = rememberSpotlightActions(state, onLeaveHome = { state.closeChat(); onLeaveHome() }, onAttach = { runCatching { pick.launch("*/*") } })
     val dim by animateFloatAsState(if (state.covering) 1f else 0f, MotionTokens.medium(), label = "dim")
+    val solid = rememberComposerSolid()
+    androidx.compose.runtime.CompositionLocalProvider(LocalComposerSolid provides solid) {
     Box(modifier) {
-        if (dim > 0f) Box(Modifier.fillMaxSize().graphicsLayer { alpha = dim }.background(if (c.dark) Color.Black.copy(alpha = 0.45f) else Color.White.copy(alpha = 0.35f))
+        if (dim > 0f) Box(Modifier.fillMaxSize().graphicsLayer { alpha = dim }.background(ComposerLook.scrim(c, blur = !solid))
             .clickable(remember { MutableInteractionSource() }, indication = null) { if (state.spotlightOpen) state.closeSpotlight() })
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding().padding(bottom = (ChatBarTokens.HEIGHT_DP + 8).dp)) {
             AnimatedVisibility(state.chatOpen && !state.spotlightOpen, modifier = Modifier.weight(1f),
@@ -99,6 +102,7 @@ fun ComposerOverlay(state: ComposerState, onLeaveHome: () -> Unit = {}, modifier
                 SpotlightSlot(state, actions)
             }
         }
+    }
     }
     BackHandler(enabled = state.spotlightOpen || state.chatOpen || state.pickerOpen) {
         when {
@@ -132,6 +136,18 @@ fun Modifier.composerBlur(on: Boolean, radius: androidx.compose.ui.unit.Dp = 22.
         val effect = remember(px) { BlurEffect(px, px, TileMode.Clamp) }
         graphicsLayer { renderEffect = effect }
     }
+}
+
+/**
+ * 0.48.0: true where the Home blur is unavailable ([GlassTokens.blurSupported] false: low-RAM phones such as the owner's
+ * Samsung A12, API < 31, hot phones). Chat and Spotlight then sit on a strong solid scrim and Blaze's bubble is opaque.
+ */
+val LocalComposerSolid = androidx.compose.runtime.compositionLocalOf { false }
+
+@Composable
+fun rememberComposerSolid(): Boolean {
+    val ctx = LocalContext.current
+    return remember { !runCatching { GlassTokens.blurSupported(ctx) }.getOrDefault(false) }
 }
 
 /** Overload for the parts API. */
