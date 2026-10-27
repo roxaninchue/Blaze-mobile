@@ -46,7 +46,7 @@ class HomeFocusCheck {
                 while (running && answered.get() == 0L) {
                     SystemClock.sleep(50)
                     val lag = SystemClock.uptimeMillis() - sent
-                    if (lag > worst.get()) { worst.set(lag); worstAt = phase }
+                    if (lag > worst.get()) worst.set(lag)
                 }
                 SystemClock.sleep(50)
             }
@@ -66,17 +66,28 @@ class HomeFocusCheck {
             QuickActions.build(listOf("Plan my day" to "Plan my day"), listOf("Programming", "Startups"), emptyList()), false, now, all)
     }
 
+    private val perPhase = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private var lastWorst = 0L
+
+    /** The worst stall since the previous call, logged for [label]. */
+    private fun mark(label: String) {
+        val w = worst.getAndSet(0); perPhase[label] = w; Log.i(tag, "FOCUS $label: worst main stall $w ms")
+        if (!label.startsWith("warm-up") && w > lastWorst) { lastWorst = w; worstAt = label }
+    }
+
     private fun cycle(software: Boolean) {
+        val path = if (software) "software" else "renderEffect"
         val focus = HomeFocusState()
         val sc = ActivityScenario.launch(ComponentActivity::class.java)
         sc.onActivity { a -> a.setContent { HomeRedesignContent(sample(), playIntro = false, drawSky = true, focus = focus, forceSoftwareBlur = software) } }
-        SystemClock.sleep(2_000)
+        SystemClock.sleep(2_000); mark("warm-up $path launch")
+        // warm-up (like the gate's warm-up launch): the first open loads the classes and compiles the emulator's shaders
+        main.post { focus.open(HomeGrid.Card.INTERESTS) }; SystemClock.sleep(1_500); main.post { focus.close() }; SystemClock.sleep(1_500)
+        mark("warm-up $path first open/close")
         repeat(3) { round ->
             for (c in HomeGrid.Card.values()) {
-                phase = "${if (software) "software" else "renderEffect"} open ${c.name} #$round"
-                main.post { focus.open(c) }; SystemClock.sleep(1_100)
-                phase = "${if (software) "software" else "renderEffect"} close ${c.name} #$round"
-                main.post { focus.close() }; SystemClock.sleep(1_100)
+                main.post { focus.open(c) }; SystemClock.sleep(1_100); mark("$path open ${c.name} #$round")
+                main.post { focus.close() }; SystemClock.sleep(1_100); mark("$path close ${c.name} #$round")
             }
         }
         sc.close()
@@ -85,7 +96,7 @@ class HomeFocusCheck {
     @Test fun focusOpenCloseStaysUnder700ms() {
         monitor()
         try { cycle(software = false); cycle(software = true) } finally { running = false }
-        Log.i(tag, "FOCUS worst main stall ${worst.get()} ms during $worstAt (limit 700)")
-        assertTrue("focus stalled ${worst.get()} ms during $worstAt", worst.get() <= 700)
+        Log.i(tag, "FOCUS worst main stall $lastWorst ms during $worstAt (limit 700; warm-up excluded, logged above)")
+        assertTrue("focus stalled $lastWorst ms during $worstAt", lastWorst <= 700)
     }
 }

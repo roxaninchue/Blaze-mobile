@@ -91,8 +91,9 @@ class HomeRedesignShotsTest {
         fun lum(p: Int) = ((p shr 16) and 0xFF) + ((p shr 8) and 0xFF) + (p and 0xFF)
         val sky = px(180f, 101f)
         assertTrue("$label: the gutter between the top cards is sky (${Integer.toHexString(sky)})", blue(sky) > 150)
-        val inside = mutableListOf(23f to 101f, 337f to 101f, 23f to 293f)
-        if (withTasks) inside += 337f to 293f else inside += 337f to 254f
+        val inside = mutableListOf(23f to 101f, 337f to 101f)
+        // row 2: Music | To-do (171 dp, centre 293) or, without tasks, Music full width (92 dp, centre 254)
+        if (withTasks) { inside += 23f to 293f; inside += 337f to 293f } else { inside += 23f to 254f; inside += 337f to 254f }
         for ((x, y) in inside) {
             val p = px(x, y)
             assertTrue("$label: card fill at ($x, $y) dp is navy, got ${Integer.toHexString(p)}", blue(p) < 140)

@@ -206,7 +206,9 @@ fun HomeFocusOverlay(f: HomeFocusState, s: HomeGridState, backdrop: HomeBackdrop
         }
         // the compact card riding along at the start (shared-element feel)
         val cell = f.cells[card]?.translate(-origin)
-        if (motion && cell != null) CompositionLocalProvider(LocalHomeFocus provides null) {
+        // composed only for the first half of the lift (recomposes on the threshold, not per frame)
+        val early by remember(f) { androidx.compose.runtime.derivedStateOf { f.progress.value < 0.5f } }
+        if (motion && cell != null && early) CompositionLocalProvider(LocalHomeFocus provides null) {
             Box(Modifier.offset { androidx.compose.ui.unit.IntOffset(cell.left.toInt(), cell.top.toInt()) }
                 .size(with(density) { cell.width.toDp() }, with(density) { cell.height.toDp() })
                 .graphicsLayer {
@@ -224,10 +226,9 @@ fun HomeFocusOverlay(f: HomeFocusState, s: HomeGridState, backdrop: HomeBackdrop
             }
         }
         // the full content at the focus rect, scaled with the frame while it grows
-        BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 56.dp), contentAlignment = Alignment.Center) {
-            val maxH = maxHeight
+        Box(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 56.dp), contentAlignment = Alignment.Center) {
             CompositionLocalProvider(LocalHomeFocus provides null) {
-                Column(Modifier.fillMaxWidth().heightIn(max = maxH)
+                Column(Modifier.fillMaxWidth()
                     .onGloballyPositioned { focusRect = it.boundsInRoot().translate(-origin) }
                     .graphicsLayer {
                         val fr = focusRect

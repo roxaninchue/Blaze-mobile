@@ -177,7 +177,7 @@ object HomeGridLook {
     /** Without tasks Music is one full-width row (no empty cell beside it). */
     val musicWide = 92.dp
     /** Card titles (Interests): start size and the smallest step [FitTitle] may take to fit one line. */
-    const val titleSp = 13f
+    const val titleSp = 12.5f
     const val titleMinSp = 10f
 }
 
@@ -386,14 +386,14 @@ fun InterestsCardV2(topics: List<InterestsFeed.Topic>, intro: HomeIntroClock?, i
         Spacer(Modifier.height(5.dp))
         if (topics.isEmpty()) {
             Text("Tell me what you're into and the latest headlines show up here.", style = style(11.sp, color = HomeGridLook.sub), maxLines = 4)
-        } else Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        } else Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             topics.forEach { t ->
                 Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable(enabled = t.url.isNotBlank(), role = Role.Button) { onTopic(t) }
                     .semantics(mergeDescendants = true) { }) {
                     TopicChip(t.label, t.icon)
-                    Text(t.headline.ifBlank { "Fetching the latest\u2026" }, style = style(10.sp), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(top = 3.dp))
-                    if (t.meta.isNotBlank()) Text(t.meta, style = style(8.5.sp, color = HomeGridLook.faint), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(t.headline.ifBlank { "Fetching the latest\u2026" }, style = style(9.5.sp), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 2.dp))
+                    if (t.meta.isNotBlank()) Text(t.meta, style = style(8.sp, color = HomeGridLook.faint), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
@@ -424,9 +424,9 @@ fun FitTitle(text: androidx.compose.ui.text.AnnotatedString, modifier: Modifier 
 fun TopicChip(label: String, icon: String) {
     Row(Modifier.clip(CircleShape).background(HomeGridLook.chipFill).border(1.dp, HomeGridLook.chipEdge, CircleShape)
         .padding(horizontal = 7.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(topicIcon(icon), contentDescription = null, tint = HomeGridLook.ink, modifier = Modifier.size(11.dp))
+        Icon(topicIcon(icon), contentDescription = null, tint = HomeGridLook.ink, modifier = Modifier.size(10.dp))
         Spacer(Modifier.width(4.dp))
-        Text(label, style = style(9.5.sp, FontWeight.SemiBold), maxLines = 1)
+        Text(label, style = style(8.5.sp, FontWeight.SemiBold), maxLines = 1)
     }
 }
 
@@ -597,7 +597,7 @@ fun QuickActionsCardV2(actions: List<QuickActions.Action>, intro: HomeIntroClock
                     Text(a.verb, style = style(12.sp, FontWeight.SemiBold), maxLines = 1)
                 }
                 QuickChipRow.words(a.rest).forEach { w ->
-                    Text(w, style = style(11.sp, color = HomeGridLook.ink.copy(alpha = 0.92f)), maxLines = 1, softWrap = false,
+                    Text(w, style = style(11.5.sp, color = HomeGridLook.ink.copy(alpha = 0.92f)), maxLines = 1, softWrap = false,
                         modifier = Modifier.align(Alignment.CenterVertically))
                 }
             }

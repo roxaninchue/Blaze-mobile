@@ -74,6 +74,7 @@ class CloudSplashSpecTest {
         val end = HomeIntroSpec.end(5)
         for (i in 0 until 5) assertEquals(HomeIntroSpec.SETTLED, HomeIntroSpec.card(i, end))
         assertTrue(HomeIntroSpec.card(1, HomeIntroSpec.CARDS_AT + 100).alpha < HomeIntroSpec.card(0, HomeIntroSpec.CARDS_AT + 100).alpha)
-        assertTrue(end < 3_000L)
+        // RC2: slower, measured from the approved video (HomeMotion); RC1 was under 3 s and too fast on the phone
+        assertTrue(end in 4_000L..7_500L)
     }
 }
