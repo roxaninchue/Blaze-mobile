@@ -328,7 +328,29 @@ data class Attachment(val name: String, val parts: List<JSONObject>, val thumb: 
 
     /** Every chat that's open or still working, by id. */
     private val sessions = java.util.concurrent.ConcurrentHashMap<String, Session>()
-    @Volatile private var cur: Session = Session("boot")
+    /**
+     * Lazy start: the open chat. There is no "boot" Session built in Agent.<clinit> any more (building one made the main
+     * thread verify Session's biggest methods, ~300 ms on a low-RAM phone, inside BlazeApp.onCreate). [curRef] stays null
+     * until the main chat is shown (loaded off the main thread by [init]) or something asks for [cur] first, which then
+     * builds the placeholder [bootSession] (StartWarm builds it on its background thread right after start).
+     */
+    @Volatile private var curRef: Session? = null
+    private val bootLock = Any()
+    private var cur: Session
+        get() = curRef ?: bootSession()
+        set(v) { curRef = v }
+
+    /** The placeholder chat used until the main chat is shown; built at most once, never in a static initialiser. */
+    internal fun bootSession(): Session {
+        curRef?.let { return it }
+        synchronized(bootLock) { return curRef ?: Session(BOOT).also { curRef = it } }
+    }
+
+    const val BOOT = "boot"
+
+    /** True once a chat (the placeholder or a real one) is the open chat. For tests and the start log. */
+    val hasOpenChat: Boolean get() = curRef != null
+
 
     /** v0.28.4: when the open chat's current turn started (the live work card's clock before its first step). */
     val turnStartAt: Long get() = cur.turnAt
@@ -400,7 +422,14 @@ data class Attachment(val name: String, val parts: List<JSONObject>, val thumb: 
         // Builds before saved the last project chat as the chat to reopen, which put a project chat in main Chat;
         // that pref is repaired here (project chats now open only inside Projects, see ChatNav). Nothing is deleted.
         if (Settings.lastChatId.let { it.isNotEmpty() && it != Mind.MAIN }) Settings.lastChatId = Mind.MAIN
-        show(mainSession())
+        // Lazy start: the main chat is read, parsed and built on a background thread (Session's verification and the chat
+        // file never run inside BlazeApp.onCreate); it is shown on the main thread unless another chat was opened meanwhile.
+        mainReady = io.launch {
+            val s = try { mainSession() } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("Agent: mainSession off main", e); null }
+            kotlinx.coroutines.withContext(Dispatchers.Main) {
+                if (s != null && LazyStart.showMain(curRef?.id)) show(s)
+            }
+        }
         // One-time, idempotent import of every old chat into the journal (chat files are never changed).
         io.launch {
             val d = Mind.db() ?: return@launch
@@ -488,10 +517,16 @@ data class Attachment(val name: String, val parts: List<JSONObject>, val thumb: 
     }
 
     /** The one main conversation (id "main"), live or from disk, created the first time. */
-    private fun mainSession(): Session {
-        val s = load(Mind.MAIN) ?: Session(Mind.MAIN)
+    private val mainLock = Any()
+
+    /**
+     * The main chat, read and parsed at most once (lazy start: [init] calls this on a background thread; a caller on the
+     * main thread that needs it sooner waits for the same lock instead of parsing a second copy).
+     */
+    private fun mainSession(): Session = synchronized(mainLock) {
+        val s = sessions[Mind.MAIN] ?: loadRaw(Mind.MAIN) ?: Session(Mind.MAIN)
         s.title = "Blaze"; s.titleSource = Titles.MANUAL; s.keep = true
-        return s
+        sessions.putIfAbsent(Mind.MAIN, s) ?: s
     }
 
     /** True for the main conversation or a project thread; everything else is archived (read-only). */
@@ -731,6 +766,12 @@ data class Attachment(val name: String, val parts: List<JSONObject>, val thumb: 
     /** v0.45.0 (#2): the main chat, read and parsed on a background thread from the first line of app start. */
     @Volatile private var mainPreload: java.util.concurrent.FutureTask<Pair<String, ParsedChat?>>? = null
 
+    /** Lazy start: the background job that loads and shows the main chat (null before [init]). */
+    @Volatile private var mainReady: kotlinx.coroutines.Job? = null
+
+    /** Suspends (never blocks) until the main chat is loaded and shown; returns at once when it already is. */
+    suspend fun awaitMainChat() { mainReady?.join() }
+
     /**
      * v0.45.0 (#2): starts reading the main conversation on a background thread while the other ~40 subsystems start,
      * so Agent.init only waits for whatever is left of it (usually nothing). The file's stamp is checked when it is used:
@@ -761,6 +802,12 @@ data class Attachment(val name: String, val parts: List<JSONObject>, val thumb: 
     /** A chat's session: the live one if it's open or working, else read from disk. */
     private fun load(id: String): Session? {
         sessions[id]?.let { return it }
+        if (id == Mind.MAIN) return mainSession()
+        return loadRaw(id)
+    }
+
+    /** Reads chat [id] from disk (the preloaded main chat when it is still fresh); null when there is no such chat. */
+    private fun loadRaw(id: String): Session? {
         val p = takePreload(id) ?: (ChatStore.load(id) ?: return null).let { o -> parseChat(o) }
         val o = p.o
         val s = Session(id)
@@ -1459,7 +1506,7 @@ When you finish, say what you did in one short sentence.
         /** v0.30.6: the user messages this chat is working on right now (see [Agent.focus]). */
         var focus: Set<Long>
             get() = _focusV
-            set(v) { _focusV = v; if (this === cur) _focus.value = v }
+            set(v) { _focusV = v; if (this === curRef) _focus.value = v }
         /** Speed plan step 11: text of the current step already handed to TTS while it streamed. */
         var spokenPrefix = ""
         var streamedVoice = false
@@ -1489,7 +1536,7 @@ When you finish, say what you did in one short sentence.
         private var _meterV: Meter? = null
         var meter: Meter?
             get() = _meterV
-            set(v) { _meterV = v; if (this === cur) _meter.value = v }
+            set(v) { _meterV = v; if (this === curRef) _meter.value = v }
         /** Heads-ups posted into this chat as notifications that the model hasn't been told about yet. */
         val unseenTips = java.util.Collections.synchronizedList(mutableListOf<String>())
         /** Saved even before the user writes in it (the Heads-ups chat). */
@@ -1568,12 +1615,12 @@ When you finish, say what you did in one short sentence.
         private var _msgs: List<ChatMessage> = emptyList()
         var msgs: List<ChatMessage>
             get() = _msgs
-            set(v) { _msgs = v; screenAt = System.currentTimeMillis(); if (this === cur) _messages.value = v }
+            set(v) { _msgs = v; screenAt = System.currentTimeMillis(); if (this === curRef) _messages.value = v }
         private var _mood = Mood.IDLE
         var mood: Mood
             get() = _mood
             set(v) {
-                _mood = v; if (this === cur) Agent._mood.value = v; refreshBusy()
+                _mood = v; if (this === curRef) Agent._mood.value = v; refreshBusy()
                 if (v == Mood.IDLE && streamId >= 0) streamId = -1L   // v0.31.0: a stopped / failed turn never leaves a live droplet
                 if (v == Mood.IDLE) { status = ""; focus = emptySet() } else if (status.isBlank()) status = Friendly.between(null)
             }
@@ -1582,23 +1629,23 @@ When you finish, say what you did in one short sentence.
         private var _taskChip = ""
         var taskChip: String
             get() = _taskChip
-            set(v) { _taskChip = v; if (this === cur) Agent._taskChip.value = v }
+            set(v) { _taskChip = v; if (this === curRef) Agent._taskChip.value = v }
         private var _status = ""
         /** The plain-words status line for this chat (see [Agent.status]). */
         var status: String
             get() = _status
-            set(v) { if (v != _status) screenAt = System.currentTimeMillis(); _status = v; if (this === cur) Agent._status.value = v }
+            set(v) { if (v != _status) screenAt = System.currentTimeMillis(); _status = v; if (this === curRef) Agent._status.value = v }
         /** v0.31.0: the reply streaming in on this chat (-1 = none), mirrored to [Agent.streamingId] while on screen. */
         private var _streamId = -1L
         var streamId: Long
             get() = _streamId
-            set(v) { _streamId = v; if (this === cur) Agent._streamingId.value = v }
+            set(v) { _streamId = v; if (this === curRef) Agent._streamingId.value = v }
         /** v0.26.1: times the reasoning for the "Thought it through · 4 s" line. */
         val thinkClock = ThinkingLabel.Clock()
         private var _thinking = ""
         var thinking: String
             get() = _thinking
-            set(v) { if (v != _thinking) thinkClock.update(v); _thinking = v; if (this === cur) Agent._thinking.value = v }
+            set(v) { if (v != _thinking) thinkClock.update(v); _thinking = v; if (this === curRef) Agent._thinking.value = v }
 
         val busy get() = job?.isActive == true
 
@@ -1608,23 +1655,23 @@ When you finish, say what you did in one short sentence.
         /** v0.31.2: duo replies streaming right now (mirrored to [Agent.duoLive] while on screen). */
         var duoLive: Set<Long>
             get() = _duoLiveV
-            set(v) { _duoLiveV = v; if (this === cur) _duoLive.value = v }
+            set(v) { _duoLiveV = v; if (this === curRef) _duoLive.value = v }
         private fun speakerOf(who: Duo.Who) = if (who == Duo.Who.HALO) Duo.Who.HALO.id else ""
         private var _roomsV: Map<Long, List<ChatMessage>> = emptyMap()
         /** v0.32.0: meeting rooms in this chat (card id → messages); saved with the chat. */
         var rooms: Map<Long, List<ChatMessage>>
             get() = _roomsV
-            set(v) { _roomsV = v; if (this === cur) _rooms.value = v }
+            set(v) { _roomsV = v; if (this === curRef) _rooms.value = v }
         /** v0.32.0: while ≥ 0, step lines (tool use) go into this meeting room instead of the main chat. */
         @Volatile var roomSink = -1L
         private var _splitV = false
         var split: Boolean
             get() = _splitV
-            set(v) { _splitV = v; if (this === cur) _split.value = v }
+            set(v) { _splitV = v; if (this === curRef) _split.value = v }
         private var _sideLiveV: Set<Long> = emptySet()
         var sideLive: Set<Long>
             get() = _sideLiveV
-            set(v) { _sideLiveV = v; if (this === cur) _sideLive.value = v }
+            set(v) { _sideLiveV = v; if (this === curRef) _sideLive.value = v }
         /** v0.32.0 split: Halo's side lane while Blaze works. */
         private var sideJob: Job? = null
         val sideBusy: Boolean get() = sideJob?.isActive == true
@@ -1668,7 +1715,7 @@ When you finish, say what you did in one short sentence.
         }
 
         fun stop() {
-            if (this === cur) _confirm.value?.answer?.complete(false)
+            if (this === curRef) _confirm.value?.answer?.complete(false)
             // v0.30.6: Stop also closes an open burst. What was sent meanwhile stays in the conversation, but starts nothing.
             burstJob?.cancel(); burstJob = null
             settleInbox()
@@ -1901,7 +1948,7 @@ When you finish, say what you did in one short sentence.
                 .apply { if (rooms.isNotEmpty()) put("rooms", roomsJson()) }
                 .apply { if (clearedAt > 0) put(com.blaze.assistant.connect.SyncMerge.CLEARED, clearedAt) }
                 .apply { resume?.let { put("resume", it.toJson()) } }   // v0.45.0 (#38)
-            if (this === cur && id == Mind.MAIN) Settings.lastChatId = id
+            if (this === curRef && id == Mind.MAIN) Settings.lastChatId = id
             val cid = id
             touchedAt = System.currentTimeMillis()
             val seq = persistSeq.incrementAndGet()
@@ -3034,6 +3081,8 @@ When you finish, say what you did in one short sentence.
         }
 
         suspend fun runLoop() {
+            // Lazy start: blaze.db opens off the main thread; a turn that starts right after launch waits for it (suspends).
+            try { Mind.await() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("Agent: Mind.await", e) }
             var turnEnd = TurnEnd.Reason.DONE   // v0.45.6: why the turn ended, for the silent-ending watchdog
             turnDesignRender = null; turnDesignRenderSet = false
             val bytes0 = DataMeter.used()
@@ -4352,7 +4401,7 @@ When you finish, say what you did in one short sentence.
                 catch (e: CancellationException) { throw e }
                 catch (e: Throwable) { com.blaze.assistant.device.CrashLog.error("tool $name", e); ToolGuide.crash(name, e) })
             // v0.39.0: a finished undoable action under Autopilot gets the 10-second Undo bar; a missing access gets a fix card.
-            if (agentId == null && this === cur) try { UndoCenter.afterTool(name, args, r0, Modes.autopilot || ackGate?.tracked == true, undoBefore) } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("Agent: UndoCenter.afterToolname args r0 Modes.a", e) }
+            if (agentId == null && this === curRef) try { UndoCenter.afterTool(name, args, r0, Modes.autopilot || ackGate?.tracked == true, undoBefore) } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("Agent: UndoCenter.afterToolname args r0 Modes.a", e) }
             val fix = if (agentId == null) FixCards.kindOf(r0) else null
             if (fix != null) FixCards.afterTool(name, r0)
             val r = if (fix != null) r0 + FixCards.NOTE else r0
@@ -4871,7 +4920,7 @@ When you finish, say what you did in one short sentence.
                     com.blaze.assistant.phone.Skills.run(app, name, args)
                 }
                 com.blaze.assistant.update.Updater.TOOL -> {
-                    if (this === cur) com.blaze.assistant.update.Updater.showCard()
+                    if (this === curRef) com.blaze.assistant.update.Updater.showCard()
                     com.blaze.assistant.update.Updater.fromTool(app, args.optBoolean("install", true))
                 }
                 in Learning.toolNames -> {
@@ -5276,11 +5325,11 @@ When you finish, say what you did in one short sentence.
                 } else Voice.speak(VoiceFiller.spoken(last.text, synchronized(turnTools) { turnTools.isNotEmpty() }))
             }
             if (!isPrivate) try { com.blaze.assistant.widget.BlazeWidget.update(app, last.text.take(240)) } catch (e: Exception) { com.blaze.assistant.device.CrashLog.quiet("Agent: BlazeWidget.u", e) }
-            if (this === cur && (inForeground || overlayOpen)) return
+            if (this === curRef && (inForeground || overlayOpen)) return
             // v0.24.4: a private chat's words never land in the notification shade.
             if (isPrivate) { Notifier.reply("Blaze answered in your private chat.", last.role == Role.ERROR, id); return }
             // A chat you left kept working: say which one finished.
-            Notifier.reply(if (this === cur) last.text else "${title.ifBlank { "A chat" }}: ${last.text}", last.role == Role.ERROR, id)
+            Notifier.reply(if (this === curRef) last.text else "${title.ifBlank { "A chat" }}: ${last.text}", last.role == Role.ERROR, id)
         }
     }
 }

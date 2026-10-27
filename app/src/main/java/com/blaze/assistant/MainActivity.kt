@@ -66,6 +66,7 @@ class MainActivity : FragmentActivity(), com.blaze.assistant.ui.BackRule.Shelled
                     dismiss = "Not now", onDismiss = { com.blaze.assistant.device.CrashLog.dismissReport(); crash.value = false })
             }
         } }
+        watchFirstFrame()
         // Picture-in-picture follows the user out only while Blaze works on Blaze Phone (auto-enter on API 31+).
         lifecycleScope.launch {
             kotlinx.coroutines.flow.combine(com.blaze.assistant.browser.phone.PhoneBrowser.live, Agent.busyChats) { l, b ->
@@ -85,6 +86,30 @@ class MainActivity : FragmentActivity(), com.blaze.assistant.ui.BackRule.Shelled
                 .setIcon(android.graphics.drawable.Icon.createWithResource(this, applicationInfo.icon))
                 .setIntent(IntentKey.sign(this, android.content.Intent(this, MainActivity::class.java).setAction(ACTION_CALL))).build())
         } catch (_: Exception) { }
+    }
+
+    /**
+     * Lazy start: after Blaze's first frame is drawn, the work BlazeApp left for later runs (StartLater) and heavy UI that
+     * waits for it composes (AfterFirstFrame). Logs how long the first frame took from process start ("BlazeStart").
+     */
+    private fun watchFirstFrame() {
+        val decor = window.decorView
+        var seen = false
+        val listener = android.view.ViewTreeObserver.OnDrawListener {
+            if (!seen) {
+                seen = true
+                // posted: runs once this frame's traversal is over (a draw listener can't remove itself while drawing)
+                decor.post {
+                    try { android.util.Log.i("BlazeStart", "first frame ${android.os.SystemClock.elapsedRealtime() - android.os.Process.getStartElapsedRealtime()} ms after process start") }
+                    catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("first frame log", e) }
+                    com.blaze.assistant.device.StartLater.firstFrameDrawn()
+                }
+            }
+        }
+        try {
+            decor.viewTreeObserver.addOnDrawListener(listener)
+            com.blaze.assistant.device.StartLater.onFirstFrame { try { decor.viewTreeObserver.removeOnDrawListener(listener) } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("first frame listener", e) } }
+        } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("watchFirstFrame", e); com.blaze.assistant.device.StartLater.firstFrameDrawn() }
     }
 
     /** True when an older Blaze task was brought to the front and this duplicate task is being closed. */

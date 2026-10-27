@@ -260,6 +260,6 @@ $skillRule"""
         // Exact-duplicate memories.
         val f = Memory.facts.value
         val uniq = f.distinctBy { it.lowercase().trim() }
-        if (!Mind.ready && uniq.size != f.size) { Memory.clear(); uniq.forEach { Memory.add(it) } }
+        if (!Mind.ready && !Mind.opening && uniq.size != f.size) { Memory.clear(); uniq.forEach { Memory.add(it) } }
     }
 }
