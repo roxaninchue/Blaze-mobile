@@ -74,7 +74,6 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -98,6 +97,10 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.text
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -347,12 +350,12 @@ fun InterestsCardV2(topics: List<InterestsFeed.Topic>, intro: HomeIntroClock?, i
         Spacer(Modifier.height(6.dp))
         if (topics.isEmpty()) {
             Text("Tell me what you're into and the latest headlines show up here.", style = style(12.sp, color = HomeGridLook.sub), maxLines = 4)
-        } else Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        } else Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             topics.forEach { t ->
                 Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable(enabled = t.url.isNotBlank(), role = Role.Button) { onTopic(t) }
                     .semantics(mergeDescendants = true) { }) {
                     TopicChip(t.label, t.icon)
-                    Text(t.headline.ifBlank { "Fetching the latest\u2026" }, style = style(11.5.sp), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    Text(t.headline.ifBlank { "Fetching the latest\u2026" }, style = style(11.sp), maxLines = 1, overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(top = 2.dp))
                     if (t.meta.isNotBlank()) Text(t.meta, style = style(9.5.sp, color = HomeGridLook.faint), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
@@ -384,7 +387,7 @@ fun FitTitle(text: androidx.compose.ui.text.AnnotatedString, modifier: Modifier 
 @Composable
 fun TopicChip(label: String, icon: String) {
     Row(Modifier.clip(CircleShape).background(HomeGridLook.chipFill).border(1.dp, HomeGridLook.chipEdge, CircleShape)
-        .padding(horizontal = 8.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+        .padding(horizontal = 8.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(topicIcon(icon), contentDescription = null, tint = HomeGridLook.ink, modifier = Modifier.size(12.dp))
         Spacer(Modifier.width(4.dp))
         Text(label, style = style(10.5.sp, FontWeight.SemiBold), maxLines = 1)
@@ -493,15 +496,17 @@ fun QuickActionsCardV2(actions: List<QuickActions.Action>, intro: HomeIntroClock
             // 0.48.0: one chip row per action like the approved video: the verb chip, then the rest of the line beside it,
             // word by word, so a long line wraps back to the card's left edge (not a chip with a text block under it).
             FlowRow(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(role = Role.Button, onClickLabel = a.verb) { onAction(a) }
-                .semantics(mergeDescendants = true) { contentDescription = a.verb + " " + a.rest }.padding(vertical = 3.dp),
-                horizontalArrangement = Arrangement.spacedBy(QuickChipRow.WORD_GAP.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                // one node for TalkBack and tests: the words are separate Texts only for the wrap
+                .clearAndSetSemantics { contentDescription = a.verb + " " + a.rest; text = androidx.compose.ui.text.AnnotatedString(a.rest)
+                    role = Role.Button; onClick(label = a.verb) { onAction(a); true } }.padding(vertical = 3.dp),
+                horizontalArrangement = Arrangement.spacedBy(QuickChipRow.WORD_GAP.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Box(Modifier.padding(end = (QuickChipRow.CHIP_GAP - QuickChipRow.WORD_GAP).dp).clip(RoundedCornerShape(10.dp)).background(Color.White.copy(alpha = 0.10f))
-                    .border(1.dp, Color.White.copy(alpha = 0.32f), RoundedCornerShape(10.dp)).padding(horizontal = 12.dp, vertical = 5.dp)) {
-                    Text(a.verb, style = style(13.5.sp, FontWeight.SemiBold), maxLines = 1)
+                    .border(1.dp, Color.White.copy(alpha = 0.32f), RoundedCornerShape(10.dp)).padding(horizontal = 10.dp, vertical = 5.dp)) {
+                    Text(a.verb, style = style(12.5.sp, FontWeight.SemiBold), maxLines = 1)
                 }
                 QuickChipRow.words(a.rest).forEach { w ->
-                    Text(w, style = style(13.5.sp, color = HomeGridLook.ink.copy(alpha = 0.92f)), maxLines = 1, softWrap = false,
-                        modifier = Modifier.align(Alignment.CenterVertically).heightIn(min = 30.dp).wrapContentHeight(Alignment.CenterVertically))
+                    Text(w, style = style(12.sp, color = HomeGridLook.ink.copy(alpha = 0.92f)), maxLines = 1, softWrap = false,
+                        modifier = Modifier.align(Alignment.CenterVertically))
                 }
             }
         }
@@ -510,7 +515,7 @@ fun QuickActionsCardV2(actions: List<QuickActions.Action>, intro: HomeIntroClock
 
 /** 0.48.0 Quick actions chip row: the line beside the chip is laid out word by word (pure, tested). */
 object QuickChipRow {
-    const val WORD_GAP = 4
+    const val WORD_GAP = 3
     const val CHIP_GAP = 10
     fun words(rest: String): List<String> = rest.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
 }

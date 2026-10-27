@@ -139,8 +139,8 @@ fun Modifier.composerBlur(on: Boolean, radius: androidx.compose.ui.unit.Dp = 22.
 }
 
 /**
- * 0.48.0: true where the Home blur is unavailable ([GlassTokens.blurSupported] false: low-RAM phones such as the owner's
- * Samsung A12, API < 31, hot phones). Chat and Spotlight then sit on a strong solid scrim and Blaze's bubble is opaque.
+ * 0.48.0: true where the Home blur is unavailable ([GlassTokens.blurSupported] false: low-RAM phones, API < 31, hot
+ * phones). Chat and Spotlight then sit on a strong solid scrim and Blaze's bubble is opaque.
  */
 val LocalComposerSolid = androidx.compose.runtime.compositionLocalOf { false }
 
