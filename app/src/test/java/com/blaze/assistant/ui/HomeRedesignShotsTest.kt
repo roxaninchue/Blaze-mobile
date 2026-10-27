@@ -129,12 +129,17 @@ class HomeRedesignShotsTest {
         assertTrue(r.lineCount == 1 && r.getLineEnd(0) == "Interests \u00b7 Tracking".length)
     }
 
-    /** Chat and Spotlight over Home with NO blur (low-RAM phones, the owner's A12): the solid scrim + opaque bubbles. */
+    /** Chat and Spotlight over Home with NO blur (low-RAM phones): the solid scrim + opaque bubbles. */
     private fun overNewHome(name: String, body: @androidx.compose.runtime.Composable () -> Unit) = capture(name) {
         androidx.compose.runtime.CompositionLocalProvider(LocalBlaze provides DarkColors,
             com.blaze.assistant.ui.composer.LocalComposerSolid provides true) {
             Box(Modifier.fillMaxSize()) {
-                HomeRedesignContent(HomeRedesignSample.state(), playIntro = false, drawSky = true)
+                // the app's layout: Home above a bottom slot as tall as the bar (HomeSurface), the scrim over all of it
+                HomeSkyBackground(night = false, modifier = Modifier.fillMaxSize())
+                androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
+                    Box(Modifier.weight(1f)) { HomeRedesignContent(HomeRedesignSample.state(), playIntro = false, drawSky = false) }
+                    androidx.compose.foundation.layout.Spacer(Modifier.fillMaxWidth().height((com.blaze.assistant.ui.composer.ChatBarTokens.HEIGHT_DP + 8).dp))
+                }
                 Box(Modifier.fillMaxSize().background(com.blaze.assistant.composer.ComposerLook.scrim(DarkColors, blur = false)))
                 body()
             }

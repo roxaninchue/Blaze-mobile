@@ -6,7 +6,7 @@ import com.blaze.assistant.ui.BlazeColors
 /**
  * 0.48.0: what chat / Spotlight over Home sit on.
  * - Blur available (API 31+, not low-RAM, not hot): the blurred Home shows through a light dim (unchanged since 0.47).
- * - No blur (low-RAM phones like a Samsung A12): a strong solid scrim of the theme background, so Home's cards don't
+ * - No blur (low-RAM phones): a strong solid scrim of the theme background, so Home's cards don't
  *   fight the chat text, and Blaze's reply bubble / Spotlight panel get an opaque fill.
  */
 object ComposerLook {
