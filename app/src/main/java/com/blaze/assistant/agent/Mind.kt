@@ -683,11 +683,69 @@ object Mind {
         return out.path
     }
 
+    // ---------------- lazy open (0.46.6 lazy start) ----------------
+
+    /** Completed once blaze.db (or mind.db) is open, or failed to open; null until [openLater] or [await] started it. */
+    @Volatile private var opened: kotlinx.coroutines.CompletableDeferred<Store?>? = null
+    private val openLock = Any()
+
+    /** True while the store is being opened in the background (not yet [ready]). */
+    val opening: Boolean get() = db == null && opened?.isCompleted == false
+
+    /**
+     * Starts opening the mind on a background thread and returns at once (never blocks the caller). [then] runs on that
+     * thread after the store is open (or failed to open), e.g. Memory attaching to the table. Calling it again only adds
+     * [then]; the store is opened once.
+     */
+    fun openLater(ctx: Context, then: (() -> Unit)? = null): kotlinx.coroutines.Deferred<Store?> {
+        val app = ctx.applicationContext ?: ctx
+        val (d, start) = synchronized(openLock) {
+            opened?.let { it to false } ?: kotlinx.coroutines.CompletableDeferred<Store?>().also { opened = it }.let { it to true }
+        }
+        if (start) Thread({
+            try { init(app) } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("Mind: openLater", e) }
+            d.complete(db)
+        }, "blaze-mind-open").apply { isDaemon = true }.start()
+        if (then != null) {
+            if (d.isCompleted) Thread({ runThen(then) }, "blaze-mind-then").apply { isDaemon = true }.start()
+            else d.invokeOnCompletion { runThen(then) }
+        }
+        return d
+    }
+
+    private fun runThen(then: () -> Unit) {
+        try { then() } catch (e: Throwable) { com.blaze.assistant.device.CrashLog.quiet("Mind: after open", e) }
+    }
+
+    /**
+     * Suspends until the store is open and returns it (null when it could not open). Never blocks a thread: the open
+     * itself runs on Dispatchers.IO. With no [ctx] and nothing started, returns what is there now.
+     */
+    suspend fun await(ctx: Context? = null): Store? {
+        db?.let { return it }
+        val d = opened ?: if (ctx != null) openLater(ctx) else return db
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { d.await() }
+    }
+
+    /**
+     * The store for a background caller: when it is still opening, waits for it (at most [LazyStart.MIND_WAIT_MS]) so a
+     * save made right after start still lands in the table. The main thread never waits: it gets what is there now.
+     */
+    fun dbOrWait(): Store? {
+        db?.let { return it }
+        val d = opened ?: return null
+        val main = try { android.os.Looper.getMainLooper()?.isCurrentThread == true } catch (_: Throwable) { false }
+        if (!LazyStart.mayWaitForMind(main, !d.isCompleted)) return db
+        return try { kotlinx.coroutines.runBlocking { kotlinx.coroutines.withTimeoutOrNull(LazyStart.MIND_WAIT_MS) { d.await() } } } catch (e: Throwable) {
+            com.blaze.assistant.device.CrashLog.quiet("Mind: dbOrWait", e); db
+        }
+    }
+
     /** For tests: use this store. */
     fun use(d: Store?) { db = d }
 
     /** For tests: forget the open store and the notice (the next [init] opens again). */
-    fun resetForTests() { db = null; notice = null }
+    fun resetForTests() { db = null; notice = null; opened = null }
 
     fun all(): List<Mem> = try { db?.all() ?: emptyList() } catch (_: Exception) { emptyList() }
 

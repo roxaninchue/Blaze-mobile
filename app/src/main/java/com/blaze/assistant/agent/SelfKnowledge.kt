@@ -39,7 +39,7 @@ object SelfKnowledge {
             "brains/providers and which have keys (never the keys), Blaze account, paired PC, connected apps, MCP servers, skills, memory, routines, " +
             "views and commands, files and folders, Linux/Termux, voice, permissions and what's missing. Use it before answering any question about Blaze or its setup.")
         .put("parameters", JSONObject().put("type", "object").put("properties", JSONObject()
-            .put("section", JSONObject().put("type", "string").put("description", "optional: family, app, phone, brains, accounts, link, skills, memory, files, linux, voice, setup, views. Empty = everything."))))
+            .put("section", JSONObject().put("type", "string").put("description", "optional: family, app, phone, brains, accounts, link, skills, memory, files, linux, voice, setup, views, map (the self-map: every view, action, setting and model). Empty = everything."))))
     )
 
     /** The full report, or one [section]. */
@@ -106,11 +106,13 @@ object SelfKnowledge {
                 append("Blaze uses its views on its own, every turn, without being asked: output that fits a view (flashcards → Learn, anything visual or interactive (3D scenes, 2D art, sites, UI mockups, diagrams, charts, posters, slides, floor plans) → Design via the design tool, with follow-on edits changing the same design, reminders → Schedule, pictures and beats → Gallery, methods → Skills, facts → Memory) is made there, opened or linked, and answered briefly in chat. Matching skills are looked up before every turn.\n")
                 append("Commands: ").append(safe { Commands.all().take(60).joinToString(" ") { "/" + it.name } }).append("\n\n")
             }
+            // 0.47 Spotlight v2: the self-map (the same registry Spotlight searches); only when asked for, it is long.
+            if (want == "map") { append("## Self-map\n").append(safe { com.blaze.assistant.composer.SelfMap.describe() }).append("\n\n") }
             if (on("setup")) {
                 append("## Setup check\n")
                 append(safe { SelfSetup.audit(ctx).joinToString("\n") { (if (it.ok) "✓ " else "✕ ") + it.name + if (it.ok) "" else " — " + it.fix } })
                 append("\n")
             }
-        }.trim().ifBlank { "Unknown section. Try: family, app, phone, brains, accounts, link, skills, memory, files, linux, voice, setup, views." }
+        }.trim().ifBlank { "Unknown section. Try: family, app, phone, brains, accounts, link, skills, memory, files, linux, voice, setup, views, map." }
     }
 }

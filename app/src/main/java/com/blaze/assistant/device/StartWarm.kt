@@ -4,14 +4,14 @@ import android.content.Context
 
 /**
  * 0.46.6 cold start (low-RAM release gate, run 2, main thread sampled with the R8 mapping): during BlazeApp.onCreate the main
- * thread spent 207 ms verifying Agent.Session's largest method (x4.z2.t0) and opened blaze.db itself; with the rest of
- * onCreate that made an ~820 ms stall before the first frame. Both are now done on one background thread started first
- * in onCreate, in parallel with the rest of start:
+ * thread spent 207-309 ms verifying Agent.Session's largest method and opened blaze.db itself; with the rest of onCreate
+ * that made an ~820 ms stall before the first frame. Lazy start moves both off the main thread for good:
+ *  - blaze.db is opened by [com.blaze.assistant.agent.Mind.openLater] (its own background thread, started here first);
+ *    nothing on the main thread waits for it (Memory attaches when it is open, an agent turn suspends on Mind.await).
  *  - [classes] are loaded and initialised here (ART verifies a class when it is initialised). They have no static
- *    initialiser with side effects, so only the verification moves; if the main thread needs one first, it simply waits
- *    for the same class lock it would have taken anyway.
- *  - Mind.init is idempotent under its own lock (HomeBoard already calls it from a background thread), so the main
- *    thread's own Mind.init step later finds blaze.db open, or waits no longer than it would have opening it itself.
+ *    initialiser with side effects, so only the verification moves. Agent no longer builds a Session in its static
+ *    initialiser and Agent.init loads the main chat on a background thread, so the main thread does not touch Session
+ *    during onCreate at all.
  * Nothing the app does depends on this thread finishing; a failure is logged and ignored.
  */
 object StartWarm {
@@ -29,8 +29,8 @@ object StartWarm {
 
     fun run(app: Context?) {
         val t0 = android.os.SystemClock.elapsedRealtime()
+        if (app != null) try { com.blaze.assistant.agent.Mind.openLater(app) } catch (e: Throwable) { CrashLog.quiet("StartWarm: Mind.openLater", e) }
         warmClasses(classes)
-        if (app != null) try { com.blaze.assistant.agent.Mind.init(app) } catch (e: Throwable) { CrashLog.quiet("StartWarm: Mind.init", e) }
         try { android.util.Log.i("BlazeStart", "warm (off main) ${android.os.SystemClock.elapsedRealtime() - t0} ms") } catch (_: Throwable) { Unit }   // no logcat (JVM tests)
     }
 

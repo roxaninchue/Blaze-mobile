@@ -57,18 +57,21 @@ data class WidgetData(
     val error: String = "",
     val action: String = "",
     val link: String = "",
+    /** 0.47 weather board: today's sunset at the place, "HH:mm" in its local time ("" when unknown or not weather). */
+    val sunset: String = "",
 ) {
     val empty: Boolean get() = headline.isBlank() && value.isBlank() && lines.isEmpty()
 
     fun toJson(): String = JSONObject().put("h", headline).put("v", value).put("c", change).put("a", action).put("l", link)
-        .put("lines", JSONArray(lines.map { it.toJson() })).toString()
+        .put("lines", JSONArray(lines.map { it.toJson() })).also { if (sunset.isNotBlank()) it.put("ss", sunset) }.toString()
 
     companion object {
         fun parse(json: String, fetched: Long, error: String): WidgetData = try {
             val o = JSONObject(json.ifBlank { "{}" })
             val a = o.optJSONArray("lines") ?: JSONArray()
             WidgetData(o.optString("h"), o.optString("v"), o.optString("c"),
-                (0 until a.length()).mapNotNull { a.optJSONObject(it)?.let(WidgetLine::from) }, fetched, error, o.optString("a"), o.optString("l"))
+                (0 until a.length()).mapNotNull { a.optJSONObject(it)?.let(WidgetLine::from) }, fetched, error, o.optString("a"), o.optString("l"),
+                sunset = o.optString("ss"))
         } catch (_: Exception) { WidgetData(fetched = fetched, error = error) }
 
         fun failed(msg: String, action: String = ""): WidgetData = WidgetData(error = msg, action = action)

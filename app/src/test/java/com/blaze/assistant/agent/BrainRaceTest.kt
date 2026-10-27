@@ -19,10 +19,11 @@ class BrainRaceTest {
     private fun src(p: String) = listOf(File("src/main/java/com/blaze/assistant/agent/$p"), File("app/src/main/java/com/blaze/assistant/agent/$p")).first { it.exists() }.readText()
 
     @Test fun kinds() {
-        assertEquals(BrainRace.Kind.CHAT, BrainRace.kind(lite = true, heavy = false, toolCount = 40, coding = false, userChars = 10))
+        // 0.46.6: no chat fast lane for tool turns: a lite or short message that offers tools is a TASK (one brain at a time)
+        assertEquals(BrainRace.Kind.TASK, BrainRace.kind(lite = true, heavy = false, toolCount = 40, coding = false, userChars = 10))
         assertEquals(BrainRace.Kind.CHAT, BrainRace.kind(false, false, 0, false, 900))
-        // Rocky's 19:07 message: short, tools offered -> chat-fast
-        assertEquals(BrainRace.Kind.CHAT, BrainRace.kind(false, false, 60, false, "I have a cloudflare token I want to give you and a gitlab token as well".length))
+        assertEquals(BrainRace.Kind.CHAT, BrainRace.kind(true, false, 0, false, 10))
+        assertEquals(BrainRace.Kind.TASK, BrainRace.kind(false, false, 60, false, "I have a cloudflare token I want to give you and a gitlab token as well".length))
         assertEquals(BrainRace.Kind.TASK, BrainRace.kind(false, true, 60, false, 50))
         assertEquals(BrainRace.Kind.TASK, BrainRace.kind(false, false, 60, false, 600))
         assertEquals(BrainRace.Kind.CODING, BrainRace.kind(false, false, 60, true, 30))
@@ -35,11 +36,10 @@ class BrainRaceTest {
         assertEquals(listOf(R, C), BrainRace.order(BrainRace.Kind.TASK, warm = false, signedIn = true))
         assertEquals(listOf(P, R, C), BrainRace.order(BrainRace.Kind.TASK, warm = true, signedIn = true))   // 0.46.3 order when warm
         assertEquals(listOf(P, R, C), BrainRace.order(BrainRace.Kind.CODING, true, true))
-        // chat: fastest first; defaults Nous 3.0, Cloud 3.2, phone 6.0 s (the benchmark uses these lists)
-        assertEquals(listOf(R, C, P), BrainRace.order(BrainRace.Kind.CHAT, true, true))
+        // 0.46.6: chat keeps the standing order too (on-phone → Nous → gateway); speed never puts the gateway before Nous
+        assertEquals(listOf(P, R, C), BrainRace.order(BrainRace.Kind.CHAT, true, true))
         assertEquals(listOf(R, C), BrainRace.order(BrainRace.Kind.CHAT, false, true))
-        // measured: Cloud faster than Nous -> Cloud first
-        assertEquals(listOf(C, R), BrainRace.order(BrainRace.Kind.CHAT, false, true, ttft = { if (it == C) 900L else if (it == R) 4_000L else null }))
+        assertEquals(listOf(R, C), BrainRace.order(BrainRace.Kind.CHAT, false, true, ttft = { if (it == C) 900L else if (it == R) 4_000L else null }))
         assertEquals(listOf(P), BrainRace.order(BrainRace.Kind.CHAT, true, signedIn = false))
     }
 
@@ -79,6 +79,7 @@ class BrainRaceTest {
     @Test fun wiring() {
         val llm = src("LlmClient.kt"); val agent = src("Agent.kt"); val bb = src("BackupBrain.kt")
         assertTrue(llm.contains("HedgeRace.run(steps, lim, onText != null,"))
+        assertTrue(llm.contains("parallel = BrainRace.parallel(tools?.length() ?: 0))"))
         assertTrue(llm.contains("BrainRace.order(kind, warm, token.isNotBlank(), { BrainLedger.app.ttft(it) }, { BrainLedger.app.reliability(it) })"))
         // 0.46.5: our own deadline is not a brain failure; the calm final line; one retry with the long cap; Cloud fails fast in the race
         assertTrue(llm.contains("if (e !is HedgeRace.TooSlow) BrainLedger.app.fail(step, e.message.orEmpty())"))
@@ -96,23 +97,22 @@ class BrainRaceTest {
         assertTrue(src("CloudRuns.kt").contains("!(try { BackupBrain.warm() } catch (_: Throwable) { false }) &&"))
     }
 
-    // ---- 0.46.5: reliability-weighted ranking, final error ----
-    @Test fun slowButReliableIsNeverRankedBelowAFastOneThatFails() {
+    // ---- 0.46.5: reliability ledger, final error. 0.46.6: the ledger no longer reorders the brains ----
+    @Test fun orderStaysOnPhoneNousGatewayWhateverTheLedgerSays() {
         val ttft = { s: BackupRoute.Step -> if (s == C) 900L else if (s == R) 15_000L else 25_000L }
-        // Cloud is fast but keeps failing (busy), Nous is slow but answers: Nous first on chat
-        assertEquals(listOf(R, C), BrainRace.order(BrainRace.Kind.CHAT, false, true, ttft) { if (it == C) 0.2 else 0.95 })
-        assertEquals(listOf(R, P, C), BrainRace.order(BrainRace.Kind.CHAT, true, true, ttft) { if (it == C) 0.2 else 0.95 })
-        // both reliable: fastest first as before
-        assertEquals(listOf(C, R), BrainRace.order(BrainRace.Kind.CHAT, false, true, ttft) { 0.9 })
-        // tasks keep the policy order unless a brain is mostly failing
+        // Nous mostly failing, gateway fast: Nous is still asked before the gateway (0.46.5 put it last, so it was skipped)
+        assertEquals(listOf(R, C), BrainRace.order(BrainRace.Kind.CHAT, false, true, ttft) { if (it == R) 0.1 else 0.95 })
+        assertEquals(listOf(P, R, C), BrainRace.order(BrainRace.Kind.TASK, true, true, ttft) { if (it == R) 0.1 else 0.95 })
+        assertEquals(listOf(R, C), BrainRace.order(BrainRace.Kind.CHAT, false, true, ttft) { 0.9 })
         assertEquals(listOf(P, R, C), BrainRace.order(BrainRace.Kind.TASK, true, true, ttft) { 0.9 })
-        assertEquals(listOf(R, C, P), BrainRace.order(BrainRace.Kind.TASK, true, true, ttft) { if (it == P) 0.1 else null })
+        assertEquals(listOf(P, R, C), BrainRace.order(BrainRace.Kind.TASK, true, true, ttft) { if (it == P) 0.1 else null })
         // the ledger: successes and real failures move the rate; nothing else does
         val l = BrainLedger { 0L }
         assertEquals(null, l.reliability(C))
         repeat(3) { l.fail(C, "busy") }; repeat(3) { l.ok(R, 20_000) }
         assertTrue(l.reliability(C)!! < 0.5); assertTrue(l.reliability(R)!! >= 0.8)
         assertEquals(listOf(R, C), BrainRace.order(BrainRace.Kind.CHAT, false, true, { if (it == C) 900L else 15_000L }, { l.reliability(it) }))
+        assertEquals(listOf(R, C), BrainRace.order(BrainRace.Kind.TASK, false, true, { null }, { if (it == R) 0.0 else 1.0 }))
         val l2 = BrainLedger(); l2.load(l.toJson()); assertEquals(l.reliability(R)!!, l2.reliability(R)!!, 1e-9)
         // retry pick: most reliable, ties keep the order
         assertEquals(R, BrainRace.retryPick(listOf(P, R, C)) { if (it == R) 0.9 else 0.3 })

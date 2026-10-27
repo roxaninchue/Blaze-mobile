@@ -233,7 +233,9 @@ fun HomePane(onAsk: (String) -> Unit, onQuote: (String) -> Unit = {},
               * v0.45.8: Home's ground reaches the screen edges (under the status bar) and [bottom] (Swipe mode's "Swipe up to
               * chat" strip) sits ON it, so no other scene shows through behind the strip.
               */
-             edgeToEdge: Boolean = false, bottom: (@Composable () -> Unit)? = null) {
+             edgeToEdge: Boolean = false, bottom: (@Composable () -> Unit)? = null,
+             /** 0.47: the chat composer's slot on the redesigned Home (drawn at the bottom over the grid). */
+             chatBar: (@Composable androidx.compose.foundation.layout.BoxScope.() -> Unit)? = null) {
     val base = LocalBlaze.current.mono
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -249,6 +251,8 @@ fun HomePane(onAsk: (String) -> Unit, onQuote: (String) -> Unit = {},
     var create by rememberSaveable { mutableStateOf(false) }
     var cityFor by remember { mutableStateOf<String?>(null) }
     var glassUrl by rememberSaveable { mutableStateOf<String?>(null) }
+    // 0.47 redesign: Home is the splash -> grid; the board (stacks, Customise, Create) is one tap away ("All widgets").
+    var showBoard by rememberSaveable { mutableStateOf(false) }
     var askChange by remember { mutableStateOf<Widget?>(null) }
     var toast by remember { mutableStateOf("") }
     var look by remember { mutableIntStateOf(0) }   // bumps when the look changes
@@ -294,6 +298,9 @@ fun HomePane(onAsk: (String) -> Unit, onQuote: (String) -> Unit = {},
     val c = if (accent != null) ink0.copy(accent = accent) else ink0
     val glass = if (HomeGlass.on(kind)) (if (c.dark) HomeGlass.dark else HomeGlass.light) else null
     val bgImage = rememberHomeBackground(look).takeIf { !themed }
+    val redesign = HomeRedesign.enabled && onboarded && !showBoard
+    // The redesigned Home draws its sky full-bleed when the look is the default one (a picked look or theme still shows).
+    val skyHome = redesign && !themed && HomeGlass.isGlass(kind, HomeBoard.bgColor)
 
     fun open(url: String, w: Widget?) {
         if (w != null) { HomeBoard.tapped(w.id); if (w.type == WidgetTypes.CREATORS) HomeBoard.markSeen(w.id) }
@@ -316,7 +323,10 @@ fun HomePane(onAsk: (String) -> Unit, onQuote: (String) -> Unit = {},
     }
 
     CompositionLocalProvider(LocalBlaze provides c, LocalGlass provides glass) {
-        Box(Modifier.fillMaxSize().then(if (themed) Modifier else Modifier.homeBackground(c, HomeBoard.background, HomeBoard.bgColor, look))) {
+        Box(Modifier.fillMaxSize().then(if (skyHome) Modifier else if (themed) Modifier else Modifier.homeBackground(c, HomeBoard.background, HomeBoard.bgColor, look))) {
+            if (skyHome) HomeSkyBackground(night = remember(widgets, data, now / 600_000L) {
+                val t = java.time.LocalTime.now(); com.blaze.assistant.home.WeatherBoard.from(widgets, data, t.hour, t.minute).night
+            }, modifier = Modifier.fillMaxSize())
             if (bgImage != null && HomeBoard.background == "image") {
                 // v0.29.3: the photo shows in full now; the glass cards keep text readable over it.
                 Image(bgImage, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().graphicsLayer { alpha = if (c.dark) 0.9f else 1f })
@@ -327,11 +337,18 @@ fun HomePane(onAsk: (String) -> Unit, onQuote: (String) -> Unit = {},
                 InterestPicker(onDone = { chosen, subs, typed ->
                     HomeBoard.finishOnboarding(chosen, subs, typed, skipped = false); onboarded = true
                 }, onSkip = { HomeBoard.finishOnboarding(emptySet(), emptySet(), "", skipped = true); onboarded = true })
+            } else if (redesign) {
+                // Lazy start: the new Home (splash, grid) is composed from the frame after Blaze's first frame; the sky is the first frame.
+                if (firstFrameShown()) HomeRedesignScreen(onAsk = { t -> onAsk(t); toast = "Asked Blaze. The answer is in Chat." }, onOpenLink = { u -> open(u, null) },
+                    onAllWidgets = { showBoard = true }, onPickInterests = { onboarded = false }, drawSky = false,
+                    reserveBottom = false, chatBar = chatBar)
             } else {
+                if (HomeRedesign.enabled && showBoard) androidx.activity.compose.BackHandler { showBoard = false }
                 val stacks = remember(widgets) { Stacks.build(widgets) }
                 LaunchedEffect(stacks) { stackState = stackState.prune(stacks) }
                 PullToRefreshBox(isRefreshing = refreshing, onRefresh = { HomeBoard.pullToRefresh() }, modifier = Modifier.fillMaxSize()) {
-                    HomeBoardView(stacks, data, loading, offline, now, stackState,
+                    // Lazy start: the cards are composed from the frame after Blaze's first frame (ui/FirstFrame.kt).
+                    if (firstFrameShown()) HomeBoardView(stacks, data, loading, offline, now, stackState,
                         stamp = Ago.of(maxOf(HomeBoard.lastRefresh, data.values.maxOfOrNull { it.fetched } ?: 0L), now),
                         onToggle = { stackState = stackState.toggle(it) },
                         onMenu = { menuFor = it.id },

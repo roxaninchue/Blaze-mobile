@@ -163,21 +163,27 @@ object FastLane {
      * Try to handle [text] on the phone. Returns null to hand it to the cloud agent.
      * [offline] lowers the bar, since the cloud isn't an option.
      */
-    suspend fun tryHandle(ctx: Context, text: String, offline: Boolean, confirm: suspend (String, String, String) -> Boolean): Result? {
+    suspend fun tryHandle(ctx: Context, text: String, offline: Boolean, key: Long? = null,
+                          confirm: suspend (String, String, String) -> Boolean): Result? {
         if (text.length > 160 || text.contains('\n')) return null
+        // 0.48.0: one message = at most one direct command. A message the shortcut already saw (same key) never runs again.
+        if (key != null && !Once.claim(key)) return null
         // "open it for me", "send that": only the full agent knows what "it" is (v0.28.9).
         if (com.blaze.assistant.phone.AppMatch.refersBack(text)) { IntentCache.drop(text); return null }
         val t0 = System.currentTimeMillis()
+        val one = OneCommand { n, a -> execute(ctx, n, a, confirm) }
         // Intent cache: a command that worked before runs again with no model at all.
         IntentCache.get(text)?.let { (n, a) ->
-            val r = try { execute(ctx, n, a, confirm) } catch (_: Exception) { null }
-            if (r != null && FAIL_STARTS.none { r.startsWith(it) }) return Result(r, System.currentTimeMillis() - t0, n)
+            val r = one.run(n, a)
+            if (r != null) return Result(r, System.currentTimeMillis() - t0, n)
+            if (one.used) { IntentCache.drop(text); return null }   // it ran and failed: the agent takes it, no second try here
             IntentCache.drop(text)
         }
         // Everyday commands by plain rules: instant and offline, no model needed.
         QuickRules.parse(text)?.let { (n, a) ->
-            val r = try { execute(ctx, n, a, confirm) } catch (_: Exception) { null }
-            if (r != null && FAIL_STARTS.none { r.startsWith(it) }) return Result(r, System.currentTimeMillis() - t0, n)
+            val r = one.run(n, a)
+            if (r != null) return Result(r, System.currentTimeMillis() - t0, n)
+            if (one.used) return null
         }
         if (!useModel(offline) || !enabled(ctx) || compound(QuickRules.polite(text))) return null
         val out = lock.withLock {
@@ -199,10 +205,40 @@ object FastLane {
         val call = calls.getJSONObject(0)
         val name = call.optString("name")
         val a = call.optJSONObject("arguments") ?: JSONObject()
-        val reply = execute(ctx, name, a, confirm) ?: return null
-        if (FAIL_STARTS.any { reply.startsWith(it) }) return null
+        val reply = one.run(name, a) ?: return null
         if (conf >= 0.5 && name !in setOf("send_text", "call_contact", "web_search")) IntentCache.put(text, name, a)
         return Result(reply, System.currentTimeMillis() - t0, name)
+    }
+
+    /**
+     * 0.48.0: the direct-command shortcut runs at most ONE command per message, with no retry loop. Before, the intent
+     * cache, the plain rules and the model could each run a command in turn when the one before said it failed, so one
+     * "wifi on" could toggle up to three times. [run] executes only while nothing has run yet: a tool the fast lane does
+     * not handle (null) is not a run; a reply (success or failure) or an exception is. A failure line returns null so
+     * the full agent takes the request (and checks the phone) instead of a "Done".
+     */
+    class OneCommand(private val exec: suspend (String, JSONObject) -> String?) {
+        var runs = 0
+            private set
+        val used: Boolean get() = runs > 0
+        suspend fun run(name: String, args: JSONObject): String? {
+            if (used) return null
+            val r = try { exec(name, args) } catch (e: kotlinx.coroutines.CancellationException) { runs++; throw e } catch (_: Exception) { runs++; return null }
+            if (r == null) return null
+            runs++
+            return r.takeIf { reply -> FAIL_STARTS.none { reply.startsWith(it) } }
+        }
+    }
+
+    /** The messages (by id) the shortcut already handled, so a re-sent turn never runs its command twice. */
+    object Once {
+        private val seen = java.util.Collections.synchronizedSet(java.util.LinkedHashSet<Long>())
+        fun claim(key: Long): Boolean = synchronized(seen) {
+            if (!seen.add(key)) return false
+            if (seen.size > 64) seen.iterator().let { it.next(); it.remove() }
+            true
+        }
+        fun resetForTests() = seen.clear()
     }
 
     /**

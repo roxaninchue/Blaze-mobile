@@ -163,7 +163,7 @@ object OpenMeteo {
     fun forecastUrl(lat: Double, lon: Double, fahrenheit: Boolean): String =
         "https://api.open-meteo.com/v1/forecast?latitude=${"%.4f".format(Locale.US, lat)}&longitude=${"%.4f".format(Locale.US, lon)}" +
             "&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,is_day" +
-            "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto&forecast_days=4" +
+            "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunset&timezone=auto&forecast_days=4" +
             (if (fahrenheit) "&temperature_unit=fahrenheit&wind_speed_unit=mph" else "")
 
     fun geocodeUrl(city: String, lang: String = Locale.getDefault().language.ifBlank { "en" }): String =
@@ -201,7 +201,13 @@ object OpenMeteo {
         }
         return WidgetData(headline = place, value = "$t${unit.take(2)}", change = label(code) +
             (if (!feels.isNaN()) " · feels ${Math.round(feels)}°" else "") + " · wind ${Math.round(cur.optDouble("wind_speed_10m", 0.0))} $windUnit",
-            lines = lines)
+            lines = lines, sunset = sunset(d))
+    }
+
+    /** 0.47: today's sunset "HH:mm" from daily.sunset[0] ("2026-10-27T18:04", already the place's local time; timezone=auto). */
+    fun sunset(daily: JSONObject?): String {
+        val v = daily?.optJSONArray("sunset")?.optString(0).orEmpty()
+        return Regex("T(\\d{2}:\\d{2})").find(v)?.groupValues?.get(1).orEmpty()
     }
 
     private fun dayName(iso: String): String = try {

@@ -147,8 +147,9 @@ object LlmClient {
             kotlinx.coroutines.delay(ReserveBody.PAUSE_MS)
             return gateway(reserve, shrink(msgs, keep = ReserveBody.KEEP), ReserveBody.slimForReserve(tools, msgs), txt, thk)
         }
-        // 0.46.4 hotfix (BrainRace): brains in order by kind, each with hard deadlines, the next one hedged in parallel when
-        // the first is slow to show anything; the on-phone brain only when it is warm (never waits on its setup or start).
+        // 0.46.4 hotfix (BrainRace): brains in order, each with hard deadlines; the on-phone brain only when it is warm (never
+        // waits on its setup or start). 0.46.6: always on-phone → Nous → Blaze Cloud; a call that offers tools runs ONE brain
+        // at a time (no hedge, no first answer wins: a tool call is never returned by two brains); plain chat may hedge.
         val parent = CallState.current()
         val kind = BrainRace.kind(liteTurn, heavyTurn, tools?.length() ?: 0, coding, BrainRace.userChars(msgs), parent.raceKind)
         val warm = backupReady && try { BackupBrain.warm() } catch (_: Throwable) { false }
@@ -203,7 +204,8 @@ object LlmClient {
                 allFailed = { last, fatal -> BrainRace.finalError(steps, fatal, cloudErr, last) },
                 switching = BrainRace.SWITCHING,
                 retryPick = { s -> BrainRace.retryPick(s) { BrainLedger.app.reliability(it) } },
-                retryMs = if (cold) 0L else BrainRace.RETRY_MS)
+                retryMs = if (cold) 0L else BrainRace.RETRY_MS,
+                parallel = BrainRace.parallel(tools?.length() ?: 0))
         } catch (e: LlmException) {
             // A4: every final failure leaves a line on whether the on-device brain could run
             try { com.blaze.assistant.device.CrashLog.write("All brains failed (${e.code}): " + BackupBrain.diag()) } catch (_: Throwable) { }
@@ -393,6 +395,9 @@ object LlmClient {
                 if (alts.isNotEmpty()) put("models", JSONArray(listOf(t.model) + alts))
             }
             if (t.pid == Providers.GATEWAY) Cloud.tag(this, task ?: Cloud.task(messages, tools, liteTurn))
+            // 0.47 chat composer: the model family picked on the composer's chip (Auto sends nothing). Read-only hint; the brain
+            // order (on-phone brain → Nous → gateway) is unchanged and the gateway strips every blaze_* field before a provider.
+            if (t.pid == Providers.GATEWAY) com.blaze.assistant.composer.ModelChoice.wire()?.let { put("blaze_family", it) }
             // v0.45.3: a hint for short / plain turns that the first visible word matters more than long reasoning. The
             // gateway strips every blaze_* field before a provider sees it, so this is safe today; a gateway that reads it can
             // map it to each provider's own setting (e.g. reasoning_effort "low" for gpt-oss). Not sent on action turns.
