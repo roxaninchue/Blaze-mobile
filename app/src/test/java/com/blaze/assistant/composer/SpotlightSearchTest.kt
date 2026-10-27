@@ -179,6 +179,10 @@ class SpotlightSearchTest {
         assertEquals(Mode.VIEWS, r.mode)
         assertTrue(r.rows.map { it.title }.containsAll(listOf("@browser", "@music", "@video", "@terminal", "@settings")))
         assertEquals(Act.Complete("@browser "), s("@bro").rows.first().act)
+        // previewable views come first, even in a long live list
+        val many = SelfMap.of(List(30) { SelfMap.ViewInfo("v$it", "View $it", "d") } + views)
+        val first = SpotlightSearch.search("@", many).rows.take(6).map { it.title }
+        assertTrue(first.containsAll(listOf("@browser", "@music", "@video", "@terminal", "@settings")))
     }
 
     @Test fun atBrowserWithUrlOpensAnInlinePreviewOnEnter() {

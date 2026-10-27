@@ -9,7 +9,7 @@ package com.blaze.assistant.composer
  *  - plain text  → map matches; a view shows twice: "Views > Terminal" (full view, leaves Home) and "Terminal"
  *                  (inline preview, stays on Home); fuzzy library hits "Music > Library > {song}" / "Video > Library > {title}";
  *                  models ("inf" → Blaze Inferno · Smartest).
- * Never "No results": every query ends with Browse, Music, Video and "Ask Blaze about '<q>'" (sends into chat).
+ * Never an empty list (no "nothing found" row): every query ends with Browse, Music, Video and "Ask Blaze about '<q>'" (sends into chat).
  */
 object SpotlightSearch {
     enum class Icon { VIEW, TERMINAL, MUSIC, VIDEO, BROWSER, SETTINGS, MODEL, ACTION, CHAT, SEARCH, PREVIEW }
@@ -44,6 +44,8 @@ object SpotlightSearch {
     data class Result(val mode: Mode, val rows: List<Row>, val distros: List<Distro> = emptyList())
 
     const val MAX_ROWS = 12
+    /** "@" lists every view (the panel scrolls). */
+    const val VIEWS_MAX = 60
     const val LIBRARY_MAX = 3
     /** Library fuzzy hits need at least this score (one typo / word prefix; plain letters-in-order is too loose for songs). */
     const val LIBRARY_MIN = 45
@@ -96,9 +98,10 @@ object SpotlightSearch {
             rows += Row("at:${exact.target}:full", iconFor(exact.target), "Views > ${exact.name()}", "Open the full view" + (if (arg.isNotEmpty()) " \u00b7 $arg" else ""),
                 Act.OpenView(exact.target, arg), 90)
         }
-        val list = if (token.isEmpty()) views else views.map { it to maxOf(Fuzzy.score(token, it.target), Fuzzy.best(token, listOf(it.title) + it.keywords)) }
+        // "@" alone: the views with an inline preview first (@browser, @music, @video, @terminal, @settings, …), then the rest.
+        val list = if (token.isEmpty()) views.sortedByDescending { it.preview } else views.map { it to maxOf(Fuzzy.score(token, it.target), Fuzzy.best(token, listOf(it.title) + it.keywords)) }
             .filter { it.second >= MAP_MIN }.sortedByDescending { it.second }.map { it.first }
-        for (e in list) if (e != exact && rows.size < MAX_ROWS)
+        for (e in list) if (e != exact && rows.size < VIEWS_MAX)
             rows += Row("at:${e.target}", iconFor(e.target), "@${e.target}", e.title + " \u00b7 " + e.subtitle, Act.Complete("@${e.target} "), 60)
         if (rows.isEmpty()) rows += fallbacks("@$rest".trim())
         return Result(Mode.VIEWS, rows)
@@ -130,7 +133,7 @@ object SpotlightSearch {
             .sortedByDescending { it.second }.take(LIBRARY_MAX)
             .map { (m, s) -> Row("lib:${app.lowercase()}:${m.key}", icon, "$app > Library > ${m.title}", m.artist.ifBlank { "In your library" }, act(m.key), s - 3) }.toList()
 
-    /** Never "No results": Browse, Music, Video and Ask Blaze, always in this order at the end. */
+    /** Never an empty list: Browse, Music, Video and Ask Blaze, always in this order at the end. */
     fun fallbacks(q: String): List<Row> {
         val shown = if (q.isBlank()) "anything" else "\u2018$q\u2019"
         return listOf(
