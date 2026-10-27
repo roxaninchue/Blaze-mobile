@@ -54,7 +54,7 @@ class ProviderSandbox(private val http: SandboxHttp = DefaultSandboxHttp, privat
     }
 
     /**
-     * 0.46.6 (Rocky's 0.46.5 crash report, SM-A125F low-RAM, Android 12: the process died natively "while running: provider
+     * 0.46.6 (Rocky's 0.46.5 crash report, a low-RAM phone on Android 12: the process died natively "while running: provider
      * call getPosts x5; catalog x2"). Two causes, both from running several QuickJS engines at once:
      *
      * 1. quickjs-kt 1.0.0-alpha13 keeps the JavaVM pointer and its JNI class / method caches in process-wide C statics
@@ -180,7 +180,7 @@ class ProviderSandbox(private val http: SandboxHttp = DefaultSandboxHttp, privat
         // restarts (calls then get [BUSY]) and [ProviderStore] turns that source off.
         val settled = withTimeoutOrNull(500) { done.await() }
         if (settled == null) { abandoned.incrementAndGet(); if (!done.isCompleted) Gate.stuckSince = System.currentTimeMillis() }
-        return Result(null, "The source took longer than ${limits.timeoutMs / 1000} s", emptyList(), System.currentTimeMillis() - t0)
+        return Result(null, "The source took longer than ${maxOf(1L, limits.timeoutMs / 1000)} s", emptyList(), System.currentTimeMillis() - t0)
     }
 
     /** Runs on [lane] only, from engine create to engine close. */
@@ -217,7 +217,12 @@ class ProviderSandbox(private val http: SandboxHttp = DefaultSandboxHttp, privat
             var out: String? = null; var fail: String? = null
             q.function("__done") { a -> here("done"); out = a.getOrNull(0)?.toString() ?: "null"; null }
             q.function("__fail") { a -> here("fail"); fail = (a.getOrNull(0)?.toString() ?: "error").removePrefix("Error: ").take(500); null }
-            q.asyncFunction("__h_sleep") { a -> host("sleep") { if (!gaveUp.get()) delay(((a.getOrNull(0) as? Number)?.toLong() ?: 0L).coerceIn(0L, 10_000L)); null } }
+            // A timer ends early once the caller gave up, so an abandoned engine frees the lane within ~100 ms.
+            q.asyncFunction("__h_sleep") { a -> host("sleep") {
+                var left = ((a.getOrNull(0) as? Number)?.toLong() ?: 0L).coerceIn(0L, 10_000L)
+                while (left > 0 && !gaveUp.get()) { val step = minOf(left, 100L); delay(step); left -= step }
+                null
+            } }
             q.asyncFunction("__h_fetch") { a -> host("fetch") {
                 if (gaveUp.get()) JSONObject().put("error", "Cancelled").toString()
                 else if (requests.incrementAndGet() > limits.maxRequests) JSONObject().put("error", "Too many requests (over ${limits.maxRequests})").toString()

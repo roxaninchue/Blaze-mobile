@@ -18,7 +18,7 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * 0.46.6 (Rocky's 0.46.5 crash report, SM-A125F low-RAM: native crash "while running: provider call getPosts x5; catalog x2").
+ * 0.46.6 (Rocky's 0.46.5 crash report, a low-RAM phone: native crash "while running: provider call getPosts x5; catalog x2").
  * Root cause: the caller's timeout / cancel shut down the engine's executor while it still awaited a fetch, so kotlinx resumed
  * the engine on a Dispatchers.IO thread and quickjs-kt used (and closed) the runtime from there, several runtimes at once.
  * These tests drive that exact pattern (many concurrent calls, callers giving up mid-fetch) and check every host call and every

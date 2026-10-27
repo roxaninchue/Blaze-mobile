@@ -27,7 +27,7 @@ object HomeImages {
     private val mem = object : android.util.LruCache<String, ImageBitmap>(6 * 1024 * 1024) {
         override fun sizeOf(key: String, value: ImageBitmap) = value.width * value.height * bytesPerPixel
     }
-    /** 0.46.6: low-RAM phones (SM-A125F report, hundreds of memory trims a day) keep 2 MB of decoded pictures, RGB_565. */
+    /** 0.46.6: low-RAM phones (0.46.5 crash report, hundreds of memory trims a day) keep 2 MB of decoded pictures, RGB_565. */
     @Volatile var lowRam = false; private set
     private val bytesPerPixel: Int get() = 2
     fun cacheBytes(low: Boolean): Int = if (low) 2 * 1024 * 1024 else 6 * 1024 * 1024

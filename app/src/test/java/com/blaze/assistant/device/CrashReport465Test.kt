@@ -11,7 +11,7 @@ import org.junit.Test
 import java.io.File
 
 /**
- * 0.46.6: the other items of Rocky's 0.46.5 crash report (SM-A125F, low RAM), besides the QuickJS crash (ProviderConfinementTest):
+ * 0.46.6: the other items of Rocky's 0.46.5 crash report (a low-RAM phone), besides the QuickJS crash (ProviderConfinementTest):
  * the details screen's honest error with Retry, the main-thread accessibility calls, the slow start steps, the memory-trim
  * spam and the picture cache on low-RAM phones.
  */
