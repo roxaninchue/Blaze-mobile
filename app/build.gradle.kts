@@ -19,6 +19,8 @@ android {
         // empty = "not configured" (the user can paste one in the Music Store instead).
         buildConfigField("String", "JAMENDO_CLIENT_ID", "\"" + (System.getenv("JAMENDO_CLIENT_ID") ?: (project.findProperty("jamendo.clientId") as String?) ?: "").replace("\"", "") + "\"")
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+        // 0.46.6: the low-RAM emulator release gate (src/androidTest/.../smoke, .github/workflows/lowram-smoke.yml)
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     // 0.45.15 (key rotation, user-approved 22 Oct 08:32): no signing key or password lives in this repo. Gradle signs with the
     // SDK's own debug key (fine for local runs and CI test builds); a release APK is re-signed outside the repo with the
@@ -270,6 +272,11 @@ dependencies {
     testImplementation("androidx.test:core:1.6.1")
     testImplementation("androidx.test.ext:junit:1.2.1")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+    // 0.46.6: low-RAM emulator smoke gate (instrumented; runs only in .github/workflows/lowram-smoke.yml)
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:core:1.6.1")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("junit:junit:4.13.2")
 }
 
 // 0.46.2: JVM unit tests run the real QuickJS engine from quickjs-kt-jvm; the Android build of the same classes (whose native

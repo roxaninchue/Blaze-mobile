@@ -66,6 +66,10 @@ class DsmlCallsTest {
                 3 -> "Turn $i.\n" + block("set_alarm", "query" to "07:00", "count" to "$i")
                 else -> "Turn $i.\n<${B}DSML${B}invoke name=\"web_search\"><${B}DSML${B}parameter name=\"query\" string=\"true\">t$i</${B}DSML${B}parameter></${B}DSML${B}invoke>"   // no wrapper
             }
+            // while streaming, every prefix the bubble shows is clean too
+            var k = 0
+            while (k < reply.length) { k = minOf(reply.length, k + 23); val shown = CallScan.clean(reply.substring(0, k), final = false)
+                assertTrue("turn $i leaked while streaming: $shown", !shown.contains("DSML") && !shown.contains("<\uFF5C")) }
             val r = CallScan.toCalls(reply, all)
             val words = r?.second ?: CallScan.clean(reply)
             if (r != null) ran += r.first.length()
