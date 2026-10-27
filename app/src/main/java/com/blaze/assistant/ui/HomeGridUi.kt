@@ -260,7 +260,9 @@ fun HomeCard(card: HomeGrid.Card, intro: HomeIntroClock?, index: Int, modifier: 
                 translationY = (root.center.y + drop - b.center.y) * (1f - t.move)
             } else { translationX = 0f; translationY = t.lift * HomeSequence.LIFT_DP * density }
         }
-        .clip(shape)
+        // the card's rounded clip, as a layer that is always there (stable chain); off only while Interests' chips are
+        // still larger than the card at the centre (they overflow it in the video too)
+        .graphicsLayer { this.shape = shape; clip = HomeCardFrame.of(live, index).contentScale <= 1.01f }
         .drawWithCache {
             val settled = HomeGridLook.edgeWidth.toPx()
             val r = HomeGridLook.radius.toPx()
@@ -270,7 +272,7 @@ fun HomeCard(card: HomeGrid.Card, intro: HomeIntroClock?, index: Int, modifier: 
                 val t = HomeCardFrame.of(live, index)
                 val f = t.fill
                 val fa = t.frameAlpha
-                if (fa > 0f) drawRect(lerp(HomeGridLook.glassFill, HomeGridLook.cardFill, f), alpha = fa)
+                if (fa > 0f) drawRoundRect(lerp(HomeGridLook.glassFill, HomeGridLook.cardFill, f), cornerRadius = CornerRadius(r), alpha = fa)
                 val w = HomeCardFrame.edgePx(f, settled, density)
                 val edge = lerp(HomeGridLook.glassEdge, HomeGridLook.cardEdge, f)
                 if (t.outline >= 1f) {
