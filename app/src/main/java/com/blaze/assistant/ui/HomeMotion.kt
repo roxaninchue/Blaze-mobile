@@ -5,46 +5,34 @@ import androidx.compose.animation.core.Easing
 
 /**
  * RC2: ONE place for Home's motion durations (ms), shared with the composer (chat bar, chat over Home, Spotlight) so the
- * whole Home moves at one pace. RC1 was too fast on a low-RAM phone; these are measured from the approved video
- * (home-sequence-interests-headlines.mp4, 30 fps, frames counted from the per-frame difference, see the RC2 report) and
- * land at about 1.5-2.5x RC1. Holds where the video only waits (a card sitting in the centre while its text types) are
- * shortened so the cold open stays under ~6 s after the splash; the motions themselves follow the video.
+ * whole Home moves at one pace. 0.48.0 RC3: the intro follows the approved videos 1:1 (holds included): splash ~2.2 s, board
+ * ~3 s, then each card in turn, ~17 s in all with To-do (a tap skips straight to the settled Home; it plays once per
+ * cold start; reduce motion shows the settled Home at once).
  *
  * Reduce motion (MotionTokens.enabled false) never runs these: the intro is skipped and card focus crossfades
  * ([FOCUS_REDUCED_FADE_MS]).
  */
 object HomeMotion {
-    // ---- intro (u = ms since the splash ended); video frame numbers at 30 fps in brackets
-    /** Splash cloud gliding into the weather icon [72 -> 90: 600 ms]. RC1 520. */
-    const val GLIDE_MS = 600L
-    /** Board outline drawing itself [84 -> 102]. RC1 360 + 480. */
-    const val OUTLINE_AT = 420L
-    const val OUTLINE_MS = 600L
-    /** The board's two tiles fading in [96 -> 114]. RC1 560 + 320. */
-    const val TILES_AT = 700L
-    const val TILES_MS = 500L
-    /** Each board line types over 12 frames [place 114-126, condition 120-138, sunset 132-150]. RC1 260 per line. */
-    const val TYPE_MS = 400L
-    const val TYPE_PLACE_AT = 760L
-    const val TYPE_COND_AT = 1_100L
-    const val TYPE_SUN_AT = 1_450L
-    /** Light glass -> settled navy [150 -> 162: 400 ms]. RC1 220. */
-    const val BOARD_FILL_AT = 1_750L
-    const val FILL_MS = 400L
-    /** First centre card (Interests) [chips at 165]. RC1 1160. */
-    const val CARDS_AT = 2_000L
-    /**
-     * Next card's start. The video waits ~2.3 s between cards [Interests 165, Music 245, To-do 313, Next up 402, Quick
-     * actions 449]; here the next card emerges while the previous one moves into its cell. RC1 230.
-     */
-    const val CARD_STAGGER = 900L
-    /** A card emerging at the centre [Music 245 -> 258, To-do 313 -> 326: ~430 ms]. RC1 220. */
-    const val EMERGE_MS = 440L
-    /** Its glide into the grid cell [Music 291 -> 310, To-do 371 -> 389: ~620 ms]. RC1 200 + 320. */
-    const val SETTLE_AT = 600L
-    const val SETTLE_MS = 620L
-    /** It darkens from light glass while landing [~400 ms]. RC1 440. */
-    const val CARD_FILL_AT = 900L
+    // ---- intro (u = ms since the splash ended); 0.48.0 RC3: re-timed 1:1 from the approved videos (seconds into the video in
+    // brackets, the splash hands over at ~2.4 s). The cards after the board are timed in ui/splash/HomeSequence.kt.
+    /** Splash cloud shrinking and gliding into the weather icon [2.45 -> 3.0]. */
+    const val GLIDE_MS = 560L
+    /** Board outline drawing itself [3.0 -> 3.5]. */
+    const val OUTLINE_AT = 500L
+    const val OUTLINE_MS = 520L
+    /** The board's two tiles fading in [2.9 -> 3.3]. */
+    const val TILES_AT = 450L
+    const val TILES_MS = 420L
+    /** Each board line types in [place 3.2-3.6, condition + temperature 3.6-4.1, sunset 4.2-4.8]. */
+    const val TYPE_MS = 420L
+    const val TYPE_PLACE_AT = 800L
+    const val TYPE_COND_AT = 1_250L
+    const val TYPE_SUN_AT = 1_850L
+    /** Light glass -> settled navy [5.0 -> 5.3]. */
+    const val BOARD_FILL_AT = 2_550L
+    const val FILL_MS = 320L
+    /** First card after the board (Interests' chips) [5.5]. */
+    const val CARDS_AT = 3_100L
 
     // ---- transitions on Home
     /** Card focus: the card lifts from its cell to the centre (and back) and Home blurs behind it. */

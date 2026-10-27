@@ -175,9 +175,12 @@ object CloudSplashSpec {
     const val CLOUD_SCALE_FROM = 0.92f
     const val DOTS_IN_AT_MS = 150L
     const val DOTS_IN_MS = 150L
-    /** At least one full wave, then leave on a wave boundary once Home's data is ready, at the latest [SPLASH_MAX_MS]. */
-    const val SPLASH_MIN_MS = WAVE_T0_MS + PERIOD_MS
-    const val SPLASH_MAX_MS = 2_500L
+    /**
+     * 0.48.0 RC3: three full waves like the approved video (it hands over at ~2.4 s), then leave on a wave boundary once
+     * Home's data is ready, at the latest [SPLASH_MAX_MS]. The splash is also the time Home's data loads in.
+     */
+    const val SPLASH_MIN_MS = WAVE_T0_MS + 3 * PERIOD_MS
+    const val SPLASH_MAX_MS = 3_200L
 
     /** When the splash hands over to the glide, given that at [tMs] Home is [ready]; -1 = keep looping. */
     fun splashEnd(tMs: Long, ready: Boolean): Long {
@@ -213,15 +216,9 @@ object HomeIntroSpec {
     const val BOARD_FILL_AT = com.blaze.assistant.ui.HomeMotion.BOARD_FILL_AT
     const val FILL_MS = com.blaze.assistant.ui.HomeMotion.FILL_MS
     const val CARDS_AT = com.blaze.assistant.ui.HomeMotion.CARDS_AT
-    const val CARD_STAGGER = com.blaze.assistant.ui.HomeMotion.CARD_STAGGER
-    const val EMERGE_MS = com.blaze.assistant.ui.HomeMotion.EMERGE_MS
-    const val SETTLE_AT = com.blaze.assistant.ui.HomeMotion.SETTLE_AT
-    const val SETTLE_MS = com.blaze.assistant.ui.HomeMotion.SETTLE_MS
-    const val CARD_FILL_AT = com.blaze.assistant.ui.HomeMotion.CARD_FILL_AT
-    const val CENTER_SCALE = 0.55f
 
-    /** u when everything has settled for [cards] centre-emerging cards. */
-    fun end(cards: Int): Long = CARDS_AT + (cards - 1).coerceAtLeast(0) * CARD_STAGGER + CARD_FILL_AT + FILL_MS
+    /** u when everything (cards and chat bar) has settled for [cards] cards after the board (5 = with To-do). */
+    fun end(cards: Int): Long = HomeSequence.end(HomeSequence.orderFor(cards), CARDS_AT)
 
     /** Glide progress of the cloud into the icon (eased). */
     fun glide(u: Long): Float = CloudSplashSpec.easeInOutCubic(CloudSplashSpec.progress(u, 0, GLIDE_MS))
@@ -229,20 +226,15 @@ object HomeIntroSpec {
     /** Characters of a [len]-long line typed by u (the line types over [TYPE_MS] from [at]). */
     fun typed(len: Int, at: Long, u: Long): Int = (len * CloudSplashSpec.progress(u, at, TYPE_MS) + 0.0001f).toInt().coerceIn(0, len)
 
-    /** One card's state: [alpha], [scale], [move] 0 (at the centre) -> 1 (in its cell), [fill] 0 (light glass outline) -> 1 (settled), [content] alpha. */
-    data class CardT(val alpha: Float, val scale: Float, val move: Float, val fill: Float, val content: Float)
+    /** A card's transform ([HomeSequence.Frame]). */
+    val SETTLED = HomeSequence.SETTLED
 
-    val SETTLED = CardT(1f, 1f, 1f, 1f, 1f)
-
-    /** The [i]-th centre-emerging card (0 = Interests) at u. */
-    fun card(i: Int, u: Long): CardT {
-        val s = CARDS_AT + i * CARD_STAGGER
-        val e = CloudSplashSpec.easeOutCubic(CloudSplashSpec.progress(u, s, EMERGE_MS))
-        val m = CloudSplashSpec.easeInOutCubic(CloudSplashSpec.progress(u, s + SETTLE_AT, SETTLE_MS))
-        val f = CloudSplashSpec.progress(u, s + CARD_FILL_AT, FILL_MS)
-        val content = CloudSplashSpec.progress(u, s + EMERGE_MS / 2, EMERGE_MS)
-        return CardT(alpha = e, scale = CloudSplashSpec.lerp(CENTER_SCALE, 1f, CloudSplashSpec.easeOutCubic(CloudSplashSpec.progress(u, s, EMERGE_MS + SETTLE_AT))),
-            move = m, fill = f, content = content)
+    /** The [i]-th card after the board (0 = Interests) at u, for [cards] cards (5 = with To-do). */
+    fun card(i: Int, u: Long, cards: Int = 5): HomeSequence.Frame {
+        val order = HomeSequence.orderFor(cards)
+        val c = order.getOrNull(i) ?: return SETTLED
+        val s = HomeSequence.starts(order, CARDS_AT)[i]
+        return HomeSequence.frame(c, u - s)
     }
 
     /** The weather board: outline trim 0..1, tiles 0..1, fill 0..1. */

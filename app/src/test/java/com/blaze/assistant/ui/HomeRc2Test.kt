@@ -89,16 +89,15 @@ class HomeRc2Test {
         assertTrue(SoftBlur.steps(10, 10).last() == (1 to 1))
     }
 
-    @Test fun homeMotionIsSlowerThanRc1AndFollowsTheVideo() {
-        // RC1: glide 520, card emerge 220, settle 320, stagger 230, fill 220; RC2 about 1.5-2.5x (frames counted in the video)
-        assertTrue(HomeMotion.EMERGE_MS >= 2 * 220 - 10)
-        assertTrue(HomeMotion.SETTLE_MS >= 1.5 * 320)
-        assertTrue(HomeMotion.CARD_STAGGER >= 2 * 230)
-        assertTrue(HomeMotion.FILL_MS >= 1.5 * 220)
-        assertTrue(HomeMotion.TYPE_MS >= 1.5 * 260)
+    @Test fun homeMotionFollowsTheVideo() {
+        // 0.48.0 RC3: the board's timings come from the approved video (seconds into it, the splash hands over at ~2.4 s)
+        assertTrue(HomeMotion.GLIDE_MS in 450L..650L)
+        assertTrue(HomeMotion.BOARD_FILL_AT in 2_300L..2_900L)
+        assertTrue(HomeMotion.CARDS_AT in 2_900L..3_300L)
         assertEquals(HomeMotion.GLIDE_MS, HomeIntroSpec.GLIDE_MS)
-        // whole intro after the splash stays in a few seconds (4 centre cards)
-        assertTrue(HomeIntroSpec.end(4) in 4_000L..7_000L)
+        // whole intro after the splash: ~12 s without To-do, ~15 s with it (the video is ~17 s including the splash)
+        assertTrue(HomeIntroSpec.end(4) in 10_500L..13_500L)
+        assertTrue(HomeIntroSpec.end(5) in 13_500L..16_500L)
         assertTrue(HomeMotion.FOCUS_MS in 400..700)
     }
 }

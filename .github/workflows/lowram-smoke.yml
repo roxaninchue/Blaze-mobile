@@ -3,6 +3,8 @@
 # It builds the release APK of that commit exactly like Mobile build (R8 is deterministic: same dex as the published APK, the job
 # prints the dex hashes to compare) plus the debug app and the instrumented smoke test. No key, keystore or password is ever used
 # here: the release APK is signed with a throwaway key generated in the job, only so the emulator can install it.
+# 0.48.0 RC3: that throwaway-signed APK (rel/smoke-signed.apk) is kept in the artifact as the TEST build for the phone; it is
+# never published (a phone with the real Blaze must uninstall it first: the signatures differ).
 name: Low-RAM smoke gate
 
 on:
@@ -89,4 +91,5 @@ jobs:
             smoke-out/
             build-smoke.log
             rel/DEX-SHA256
+            rel/smoke-signed.apk
             app/build/outputs/mapping/release/mapping.txt

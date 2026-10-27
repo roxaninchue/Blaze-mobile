@@ -116,7 +116,7 @@ class HomeRedesignShotsTest {
     private fun afterIntro(name: String, withTasks: Boolean) {
         rule.mainClock.autoAdvance = false
         rule.setContent { HomeRedesignContent(HomeRedesignSample.state(withTasks), playIntro = true, drawSky = true) }
-        run(9_500)
+        run(19_500)
         assertFrames(save(name), withTasks, name)
     }
     @Test fun settledAfterIntro() = afterIntro("home-after-intro", true)
@@ -181,7 +181,25 @@ class HomeRedesignShotsTest {
     @Test fun splashNight() { home("intro-0-splash-night", night = true, frozenU = -900L) }
     @Test fun glide() { home("intro-1-glide", frozenU = HomeIntroSpec.GLIDE_MS / 2) }
     @Test fun board() { home("intro-2-board-typing", frozenU = HomeIntroSpec.TYPE_COND_AT + 120) }
-    @Test fun cards() { home("intro-3-cards", frozenU = HomeIntroSpec.CARDS_AT + HomeIntroSpec.CARD_STAGGER + 260) }
+    @Test fun cards() { home("intro-3-cards", frozenU = HomeIntroSpec.CARDS_AT + com.blaze.assistant.ui.splash.HomeSequence.INT_SPAN + 700) }
+
+    /**
+     * 0.48.0 RC3: the intro frame by frame at the approved video's clock (every 0.5 s, the splash handing over at 2.4 s like
+     * the video), 540 x 1200 like the video, so the two can be laid side by side (timeline-XX.X.png).
+     */
+    @Test fun timeline() {
+        rule.mainClock.autoAdvance = false
+        val frozen = androidx.compose.runtime.mutableLongStateOf(-1L)
+        rule.setContent { HomeRedesignContent(HomeRedesignSample.state(), playIntro = false, drawSky = true, frozenU = frozen.longValue) }
+        repeat(3) { rule.mainClock.advanceTimeBy(100); rule.waitForIdle(); Thread.sleep(200) }
+        for (k in 0..35) {
+            val tv = k * 500L
+            rule.runOnIdle { frozen.longValue = if (tv < 2_400L) -(tv.coerceAtLeast(1L)) else tv - 2_400L }
+            repeat(2) { rule.mainClock.advanceTimeBy(50); rule.waitForIdle() }
+            Thread.sleep(120)
+            save("timeline-%04.1f".format(java.util.Locale.ROOT, tv / 1000f))
+        }
+    }
 
     /** Every weather variant at splash size, day (black outline) over the day sky and night (white) over the night sky. */
     @Test fun variants() = run {

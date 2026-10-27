@@ -54,10 +54,13 @@ class CloudSplashSpecTest {
     }
 
     @Test fun splashLeavesOnAWaveBoundary() {
-        assertEquals(-1L, CloudSplashSpec.splashEnd(500, ready = true))   // before the first full wave
-        assertEquals(-1L, CloudSplashSpec.splashEnd(1500, ready = false))
-        val e = CloudSplashSpec.splashEnd(1500, ready = true)
-        assertTrue(e in CloudSplashSpec.SPLASH_MIN_MS..1500L)
+        // 0.48.0 RC3: three full waves like the approved video (it hands over at ~2.4 s)
+        assertEquals(-1L, CloudSplashSpec.splashEnd(500, ready = true))
+        assertEquals(-1L, CloudSplashSpec.splashEnd(2_000, ready = true))
+        assertEquals(-1L, CloudSplashSpec.splashEnd(2_400, ready = false))
+        val e = CloudSplashSpec.splashEnd(2_400, ready = true)
+        assertTrue(e in CloudSplashSpec.SPLASH_MIN_MS..2_400L)
+        assertTrue(CloudSplashSpec.SPLASH_MIN_MS in 2_000L..2_500L)
         assertEquals(0L, (e - CloudSplashSpec.WAVE_T0_MS) % CloudSplashSpec.PERIOD_MS)
         assertEquals(CloudSplashSpec.SPLASH_MAX_MS, CloudSplashSpec.splashEnd(CloudSplashSpec.SPLASH_MAX_MS, ready = false))
     }
@@ -68,13 +71,13 @@ class CloudSplashSpecTest {
         assertTrue(HomeIntroSpec.OUTLINE_AT < HomeIntroSpec.GLIDE_MS)
         assertEquals(0, HomeIntroSpec.typed(9, HomeIntroSpec.TYPE_PLACE_AT, HomeIntroSpec.TYPE_PLACE_AT))
         assertEquals(9, HomeIntroSpec.typed(9, HomeIntroSpec.TYPE_PLACE_AT, HomeIntroSpec.TYPE_PLACE_AT + HomeIntroSpec.TYPE_MS))
-        // cards: start small and transparent at the centre, end settled in their cell; one after the other
-        val c0 = HomeIntroSpec.card(0, HomeIntroSpec.CARDS_AT)
-        assertEquals(0f, c0.alpha); assertEquals(0f, c0.move); assertEquals(HomeIntroSpec.CENTER_SCALE, c0.scale, 1e-4f)
+        // cards: nothing before its turn, settled at the end; one after the other
+        val c0 = HomeIntroSpec.card(0, HomeIntroSpec.CARDS_AT - 1)
+        assertEquals(0f, c0.alpha); assertEquals(0f, c0.move)
         val end = HomeIntroSpec.end(5)
         for (i in 0 until 5) assertEquals(HomeIntroSpec.SETTLED, HomeIntroSpec.card(i, end))
         assertTrue(HomeIntroSpec.card(1, HomeIntroSpec.CARDS_AT + 100).alpha < HomeIntroSpec.card(0, HomeIntroSpec.CARDS_AT + 100).alpha)
-        // RC2: slower, measured from the approved video (HomeMotion); RC1 was under 3 s and too fast on the phone
-        assertTrue(end in 4_000L..7_500L)
+        // 0.48.0 RC3: the approved video's pace, 1:1 (about 15 s after the splash with To-do)
+        assertTrue("end $end", end in 13_500L..16_500L)
     }
 }

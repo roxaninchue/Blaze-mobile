@@ -27,22 +27,47 @@ import kotlin.math.PI
 import kotlin.math.sin
 
 /**
- * 0.47 Home sky: the blurred time-of-day sky with three soft mountain ridges behind the splash and the settled grid.
+ * 0.47 Home sky: the blurred time-of-day sky with three misty mountain ridges (traced from the approved video) behind the
+ * splash and the settled grid.
  * This is the one cached blur: drawn ONCE off the main thread at 1/[SCALE] size, box-blurred, and kept as that small
  * bitmap (about 130 KB on a 720 x 1600 phone); every frame only draws it scaled up with bilinear filtering, which also
  * softens it further. No RenderEffect, no per-frame blur. Pure numbers in [HomeSkySpec] (shared with the v1 sky splash).
  */
 object HomeSkySpec {
-    /** Sky top, middle, horizon, nearest mountain (ARGB): day and night (the splash outline is black by day, white at night). */
-    val DAY = intArrayOf(0xFF2F7FD0.toInt(), 0xFF78B6E8.toInt(), 0xFFD8ECF8.toInt(), 0xFF46627E.toInt())
-    val NIGHT = intArrayOf(0xFF060A1C.toInt(), 0xFF14214A.toInt(), 0xFF2A3B6E.toInt(), 0xFF070B1A.toInt())
-    val STOPS = floatArrayOf(0f, 0.42f, 0.66f, 1f)
-    /** Per ridge: base (fraction of height), haze towards the horizon colour, then (amp, freq, phase) x 3. */
-    val RIDGES = arrayOf(
-        floatArrayOf(0.585f, 0.55f, 0.050f, 1.30f, 0.40f, 0.020f, 3.10f, 1.70f, 0.008f, 7.30f, 4.10f),
-        floatArrayOf(0.650f, 0.30f, 0.038f, 1.90f, 2.20f, 0.016f, 4.30f, 0.60f, 0.007f, 9.10f, 3.30f),
-        floatArrayOf(0.735f, 0.00f, 0.028f, 2.30f, 5.10f, 0.013f, 5.70f, 2.90f, 0.006f, 11.9f, 0.90f),
+    /**
+     * Sky top, upper sky, horizon glow, and the three ridges far -> near (ARGB), sampled from the approved video's
+     * frames (540 x 1200): #2D7ECD at the top, #60A5E0 at 30 %, #B6D7EE just above the ridges, ridges #94ADC0 / #6F8AA1 /
+     * #45617C. Night keeps the same layering in deep blues (the splash outline is black by day, white at night).
+     */
+    val DAY = intArrayOf(0xFF2D7ECD.toInt(), 0xFF60A5E0.toInt(), 0xFFB6D7EE.toInt(), 0xFF94ADC0.toInt(), 0xFF6F8AA1.toInt(), 0xFF45617C.toInt())
+    val NIGHT = intArrayOf(0xFF060A1C.toInt(), 0xFF14214A.toInt(), 0xFF2A3B6E.toInt(), 0xFF1F2B4E.toInt(), 0xFF151F3C.toInt(), 0xFF0B1226.toInt())
+    val STOPS = floatArrayOf(0f, 0.30f, 0.58f, 1f)
+    /**
+     * The video's three misty mountain ridges, far -> near: the ridge's top edge in thousandths of the screen height at
+     * 46 evenly spaced points across the width (traced from the approved video's frame, every 12 px of 540).
+     */
+    val PROFILES = arrayOf(
+        shortArrayOf(550, 548, 543, 540, 543, 549, 558, 560, 555, 548, 547, 547, 552, 557, 560, 560, 570, 580, 593, 583, 583, 583, 587, 587,
+            583, 583, 583, 583, 585, 587, 587, 586, 580, 580, 573, 573, 570, 570, 560, 545, 530, 522, 520, 527, 533, 535),
+        shortArrayOf(617, 620, 625, 632, 652, 680, 694, 694, 692, 689, 687, 680, 668, 657, 656, 661, 662, 654, 638, 630, 624, 617, 608, 604,
+            623, 642, 655, 664, 671, 678, 683, 683, 675, 670, 672, 683, 688, 682, 672, 664, 655, 639, 617, 601, 599, 603),
+        shortArrayOf(757, 762, 765, 758, 733, 718, 710, 705, 705, 718, 728, 725, 722, 728, 733, 739, 755, 775, 778, 769, 760, 751, 738, 728,
+            730, 734, 728, 715, 710, 705, 702, 711, 735, 749, 753, 759, 760, 755, 750, 757, 764, 762, 752, 742, 730, 718),
     )
+    /** The tree-line roughness on top of each traced ridge (fraction of the height, number of small peaks across). */
+    val ROUGH_AMP = floatArrayOf(0.0045f, 0.0055f, 0.0065f)
+    val ROUGH_PEAKS = floatArrayOf(23f, 29f, 37f)
+
+    /** Top of ridge [r] (0 = far) at x in 0..1, as a fraction of the height: the traced profile (linear between points) plus a small zigzag. */
+    fun ridgeY(r: Int, x: Float): Float {
+        val p = PROFILES[r]; val n = p.size - 1
+        val f = (x.coerceIn(0f, 1f) * n); val i = f.toInt().coerceAtMost(n - 1); val t = f - i
+        val base = (p[i] + (p[i + 1] - p[i]) * t) / 1000f
+        val z = (x * ROUGH_PEAKS[r]) % 1f
+        val tri = if (z < 0.5f) z * 2f else 2f - z * 2f      // 0..1..0, a sharp peak per step
+        return base - ROUGH_AMP[r] * tri
+    }
+
     const val SCALE = 6
     const val RADIUS = 2
     const val PASSES = 3
@@ -106,11 +131,12 @@ object HomeSkyArt {
         c.drawRect(0f, 0f, sw.toFloat(), sh.toFloat(), paint)
         paint.shader = null
         val path = android.graphics.Path()
-        for (r in HomeSkySpec.RIDGES.indices) {
+        val steps = (sw * 2).coerceIn(90, 400)
+        for (r in HomeSkySpec.PROFILES.indices) {
             path.reset(); path.moveTo(0f, HomeSkySpec.ridgeY(r, 0f) * sh)
-            for (i in 1..120) { val x = i / 120f; path.lineTo(x * sw, HomeSkySpec.ridgeY(r, x) * sh) }
+            for (i in 1..steps) { val x = i / steps.toFloat(); path.lineTo(x * sw, HomeSkySpec.ridgeY(r, x) * sh) }
             path.lineTo(sw.toFloat(), sh.toFloat()); path.lineTo(0f, sh.toFloat()); path.close()
-            paint.color = HomeSkySpec.lerpArgb(p[3], p[2], HomeSkySpec.RIDGES[r][1]); c.drawPath(path, paint)
+            paint.color = p[3 + r]; c.drawPath(path, paint)
         }
         val px = IntArray(sw * sh); bmp.getPixels(px, 0, sw, 0, 0, sw, sh)
         HomeSkySpec.boxBlur(px, sw, sh, HomeSkySpec.RADIUS, HomeSkySpec.PASSES)
@@ -131,7 +157,7 @@ fun HomeSkyBackground(night: Boolean, modifier: Modifier = Modifier) {
     LaunchedEffect(px.value, night) { if (px.value != IntSize.Zero) img.value = HomeSkyArt.get(px.value.width, px.value.height, night) }
     val p = if (night) HomeSkySpec.NIGHT else HomeSkySpec.DAY
     Box(modifier.onSizeChanged { px.value = it }.graphicsLayer { }.drawWithCache {
-        val brush = Brush.verticalGradient(0f to Color(p[0]), HomeSkySpec.STOPS[1] to Color(p[1]), HomeSkySpec.STOPS[2] to Color(p[2]), 1f to Color(p[2]))
+        val brush = Brush.verticalGradient(0f to Color(p[0]), HomeSkySpec.STOPS[1] to Color(p[1]), HomeSkySpec.STOPS[2] to Color(p[2]), 0.62f to Color(p[4]), 1f to Color(p[5]))
         val bmp = img.value
         val dst = IntSize(size.width.toInt(), size.height.toInt())
         onDrawBehind {
@@ -140,3 +166,13 @@ fun HomeSkyBackground(night: Boolean, modifier: Modifier = Modifier) {
         }
     })
 }
+
+/**
+ * When the redesigned Home draws its sky (pure, HomeSequenceTest). The approved design is one look: the sky and mountains
+ * are drawn on the new Home whatever living theme or Home colour is picked (0.48.0 showed the theme's dark scene there,
+ * so the phone never looked like the video). Only a photo the user picked as Home's background still shows instead.
+ */
+object HomeSkyRule {
+    fun drawsSky(redesign: Boolean, background: String, hasPhoto: Boolean): Boolean = redesign && !(background == "image" && hasPhoto)
+}
+

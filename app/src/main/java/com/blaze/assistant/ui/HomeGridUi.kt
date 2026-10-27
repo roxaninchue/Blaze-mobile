@@ -120,6 +120,8 @@ import com.blaze.assistant.home.TodoFeed
 import com.blaze.assistant.home.WeatherBoard
 import com.blaze.assistant.ui.splash.CloudGlyphPainter
 import com.blaze.assistant.ui.splash.HomeIntroSpec
+import com.blaze.assistant.ui.splash.HomeSequence
+import androidx.compose.ui.graphics.drawscope.clipRect
 
 /**
  * 0.47 Home redesign: the settled 2-column grid (Weather | Interests, Music | To-do, Next up, Quick actions) in the
@@ -231,8 +233,9 @@ object HomeIntroKeys {
 }
 
 /**
- * A card: rounded navy glass. During the intro the [index]-th centre card starts small at the centre as light glass with
- * a bright edge, expands, glides to its cell and darkens ([HomeIntroSpec.card]). index < 0 = no centre animation.
+ * A card: rounded navy glass. During the intro the [index]-th card after the board plays its part of the approved
+ * sequence ([HomeSequence]): Interests' chips first then its frame, Music / To-do emerging at the centre and gliding to
+ * their cell, Next up / Quick actions drawing their outline in place and lifting into their row. index < 0 = no intro.
  */
 @Composable
 fun HomeCard(card: HomeGrid.Card, intro: HomeIntroClock?, index: Int, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null,
@@ -249,20 +252,40 @@ fun HomeCard(card: HomeGrid.Card, intro: HomeIntroClock?, index: Int, modifier: 
         .onGloballyPositioned { if (intro != null && !intro.done) intro.bounds[key] = it.boundsInRoot(); focus?.cells?.set(card, it.boundsInRoot()) }
         .graphicsLayer {
             val t = HomeCardFrame.of(live, index)
-            alpha = t.alpha * (focus?.gridAlpha(card) ?: 1f); scaleX = t.scale; scaleY = t.scale
+            alpha = t.alpha * (focus?.gridAlpha(card) ?: 1f); scaleX = t.scale * t.contentScale; scaleY = t.scale * t.contentScale
             val b = live?.bounds?.get(key); val root = live?.bounds?.get(HomeIntroKeys.ROOT)
             if (b != null && root != null && t.move < 1f) {
+                val drop = if (card == HomeGrid.Card.TODO) HomeSequence.TODO_CENTER_DROP * root.height else 0f
                 translationX = (root.center.x - b.center.x) * (1f - t.move)
-                translationY = (root.center.y - b.center.y) * (1f - t.move)
-            } else { translationX = 0f; translationY = 0f }
+                translationY = (root.center.y + drop - b.center.y) * (1f - t.move)
+            } else { translationX = 0f; translationY = t.lift * HomeSequence.LIFT_DP * density }
         }
         .clip(shape)
-        .drawBehind {
-            val f = HomeCardFrame.of(live, index).fill
-            drawRect(lerp(HomeGridLook.glassFill, HomeGridLook.cardFill, f))
-            val w = HomeCardFrame.edgePx(f, HomeGridLook.edgeWidth.toPx(), density)
-            drawRoundRect(lerp(HomeGridLook.glassEdge, HomeGridLook.cardEdge, f), topLeft = Offset(w / 2, w / 2), size = Size(size.width - w, size.height - w),
-                cornerRadius = CornerRadius(HomeGridLook.radius.toPx() - w / 2), style = Stroke(w))
+        .drawWithCache {
+            val settled = HomeGridLook.edgeWidth.toPx()
+            val r = HomeGridLook.radius.toPx()
+            val trimPath = Path(); val pm = PathMeasure(); val seg = Path()
+            var measuredW = settled
+            onDrawBehind {
+                val t = HomeCardFrame.of(live, index)
+                val f = t.fill
+                val fa = t.frameAlpha
+                if (fa > 0f) drawRect(lerp(HomeGridLook.glassFill, HomeGridLook.cardFill, f), alpha = fa)
+                val w = HomeCardFrame.edgePx(f, settled, density)
+                val edge = lerp(HomeGridLook.glassEdge, HomeGridLook.cardEdge, f)
+                if (t.outline >= 1f) {
+                    drawRoundRect(edge, topLeft = Offset(w / 2, w / 2), size = Size(size.width - w, size.height - w),
+                        cornerRadius = CornerRadius(r - w / 2), style = Stroke(w))
+                } else if (t.outline > 0f) {
+                    // the outline draws itself (path trim) from the top-left corner, clockwise
+                    if (trimPath.isEmpty || measuredW != w) {
+                        trimPath.reset(); trimPath.addRoundRect(RoundRect(w / 2, w / 2, size.width - w / 2, size.height - w / 2, CornerRadius(r - w / 2)))
+                        pm.setPath(trimPath, false); measuredW = w
+                    }
+                    seg.reset(); pm.getSegment(0f, pm.length * t.outline, seg, true)
+                    drawPath(seg, edge, style = Stroke(w))
+                }
+            }
         }
         .then(if (onClick != null) Modifier.clickable(role = Role.Button, onClickLabel = label.ifBlank { null }, onClick = onClick) else Modifier)
         .graphicsLayer { alpha = HomeCardFrame.of(live, index).content }
@@ -275,12 +298,28 @@ fun HomeCard(card: HomeGrid.Card, intro: HomeIntroClock?, index: Int, modifier: 
  * motion), an intro that finished, and an intro that was skipped.
  */
 object HomeCardFrame {
-    fun of(intro: HomeIntroClock?, index: Int = 0): HomeIntroSpec.CardT = when {
+    fun of(intro: HomeIntroClock?, index: Int = 0): HomeSequence.Frame = when {
         intro == null || intro.done -> HomeIntroSpec.SETTLED
         else -> intro.cardT(index)
     }
     /** The outline's width: a bright 1.5 dp edge while the card is light glass, the reference's band when settled. */
     fun edgePx(fill: Float, settledPx: Float, density: Float): Float = 1.5f * density + (settledPx - 1.5f * density) * fill.coerceIn(0f, 1f)
+}
+
+// ---------------------------------------------------------------- card content in the intro
+
+/** ms on card [index]'s own intro clock; huge (= settled) without a running intro. */
+fun HomeIntroClock?.local(index: Int): Long = if (this == null || done || index < 0) Long.MAX_VALUE / 4 else cardLocal(index)
+
+/** A line that "types in" during the intro: revealed left to right from [at] (card-local ms), read in draw only (no recomposition). */
+fun Modifier.introType(intro: HomeIntroClock?, index: Int, at: Long, len: Int): Modifier = drawWithContent {
+    val p = if (intro == null || intro.done || index < 0) 1f else HomeSequence.p(intro.cardLocal(index), at, HomeSequence.lineMs(len))
+    if (p >= 1f) drawContent() else if (p > 0f) clipRect(right = size.width * p) { this@drawWithContent.drawContent() }
+}
+
+/** An element that fades in during the intro from [at] (card-local ms). */
+fun Modifier.introAppear(intro: HomeIntroClock?, index: Int, at: Long, ms: Long = 180L): Modifier = graphicsLayer {
+    alpha = if (intro == null || intro.done || index < 0) 1f else HomeSequence.appear(intro.cardLocal(index), at, ms)
 }
 
 // ---------------------------------------------------------------- Weather board
@@ -382,18 +421,24 @@ fun InterestsCardV2(topics: List<InterestsFeed.Topic>, intro: HomeIntroClock?, i
         FitTitle(buildAnnotatedString {
             withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, color = HomeGridLook.ink)) { append("Interests") }
             withStyle(SpanStyle(color = HomeGridLook.sub)) { append(" \u00b7 Tracking") }
-        }, header(HomeGrid.Card.INTERESTS).semantics { heading() })
+        }, Modifier.introType(intro, index, HomeSequence.INT_TITLE_AT, 20).then(header(HomeGrid.Card.INTERESTS)).semantics { heading() })
         Spacer(Modifier.height(5.dp))
         if (topics.isEmpty()) {
             Text("Tell me what you're into and the latest headlines show up here.", style = style(11.sp, color = HomeGridLook.sub), maxLines = 4)
         } else Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            topics.forEach { t ->
+            topics.forEachIndexed { i, t ->
                 Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable(enabled = t.url.isNotBlank(), role = Role.Button) { onTopic(t) }
                     .semantics(mergeDescendants = true) { }) {
-                    TopicChip(t.label, t.icon)
-                    Text(t.headline.ifBlank { "Fetching the latest\u2026" }, style = style(9.5.sp), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(top = 2.dp))
-                    if (t.meta.isNotBlank()) Text(t.meta, style = style(8.sp, color = HomeGridLook.faint), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    // intro: the chips pop in one by one at the centre before the card's frame exists
+                    TopicChip(t.label, t.icon, Modifier.graphicsLayer {
+                        val a = if (intro == null || intro.done || index < 0) 1f else HomeSequence.chipPop(i, intro.cardLocal(index))
+                        alpha = a; scaleX = 0.6f + 0.4f * a; scaleY = 0.6f + 0.4f * a
+                    })
+                    val headline = t.headline.ifBlank { "Fetching the latest\u2026" }
+                    Text(headline, style = style(9.5.sp), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 2.dp).introType(intro, index, HomeSequence.headlineAt(i), headline.length.coerceAtMost(28)))
+                    if (t.meta.isNotBlank()) Text(t.meta, style = style(8.sp, color = HomeGridLook.faint), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.introAppear(intro, index, HomeSequence.headlineAt(i) + HomeSequence.lineMs(headline.length.coerceAtMost(28))))
                 }
             }
         }
@@ -421,8 +466,8 @@ fun FitTitle(text: androidx.compose.ui.text.AnnotatedString, modifier: Modifier 
 }
 
 @Composable
-fun TopicChip(label: String, icon: String) {
-    Row(Modifier.clip(CircleShape).background(HomeGridLook.chipFill).border(1.dp, HomeGridLook.chipEdge, CircleShape)
+fun TopicChip(label: String, icon: String, modifier: Modifier = Modifier) {
+    Row(modifier.clip(CircleShape).background(HomeGridLook.chipFill).border(1.dp, HomeGridLook.chipEdge, CircleShape)
         .padding(horizontal = 7.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(topicIcon(icon), contentDescription = null, tint = HomeGridLook.ink, modifier = Modifier.size(10.dp))
         Spacer(Modifier.width(4.dp))
@@ -437,20 +482,24 @@ private fun clock(ms: Long): String { if (ms < 0) return "0:00"; val s = ms / 10
 @Composable
 fun MusicCardV2(m: HomeMusicNow?, intro: HomeIntroClock?, index: Int, modifier: Modifier = Modifier, onOpen: () -> Unit, onToggle: () -> Unit) {
     HomeCard(HomeGrid.Card.MUSIC, intro, index, modifier, onClick = onOpen, label = "Open Music") {
-        Text(musicLabel(m), style = style(11.sp, color = HomeGridLook.sub), modifier = header(HomeGrid.Card.MUSIC).fillMaxWidth())
+        Text(musicLabel(m), style = style(11.sp, color = HomeGridLook.sub), modifier = header(HomeGrid.Card.MUSIC).fillMaxWidth()
+            .introAppear(intro, index, HomeSequence.MUSIC_ART_AT))
         Spacer(Modifier.height(7.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            MusicArt(Modifier.size(56.dp))
+            MusicArt(Modifier.size(56.dp).introAppear(intro, index, HomeSequence.MUSIC_ART_AT))
             Spacer(Modifier.weight(1f))
-            PlayButton(m, 36.dp, onOpen, onToggle)
+            Box(Modifier.introAppear(intro, index, HomeSequence.MUSIC_PLAY_AT)) { PlayButton(m, 36.dp, onOpen, onToggle) }
             Spacer(Modifier.width(6.dp))
         }
         Spacer(Modifier.height(9.dp))
-        Text(m?.title?.ifBlank { null } ?: "Nothing playing", style = style(13.sp, FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        val title = m?.title?.ifBlank { null } ?: "Nothing playing"
+        Text(title, style = style(13.sp, FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.introType(intro, index, HomeSequence.MUSIC_TITLE_AT, title.length.coerceAtMost(18)))
         Spacer(Modifier.height(2.dp))
-        Text(m?.artist?.ifBlank { null } ?: "Open Music", style = style(11.sp, color = HomeGridLook.sub), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(m?.artist?.ifBlank { null } ?: "Open Music", style = style(11.sp, color = HomeGridLook.sub), maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.introAppear(intro, index, HomeSequence.MUSIC_ARTIST_AT))
         Spacer(Modifier.weight(1f))
-        MusicProgress(m)
+        Box(Modifier.fillMaxWidth().introAppear(intro, index, HomeSequence.MUSIC_BAR_AT)) { Column { MusicProgress(m) } }
     }
 }
 
@@ -462,18 +511,22 @@ fun MusicCardV2(m: HomeMusicNow?, intro: HomeIntroClock?, index: Int, modifier: 
 fun MusicCardWide(m: HomeMusicNow?, intro: HomeIntroClock?, index: Int, modifier: Modifier = Modifier, onOpen: () -> Unit, onToggle: () -> Unit) {
     HomeCard(HomeGrid.Card.MUSIC, intro, index, modifier, onClick = onOpen, label = "Open Music") {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            MusicArt(Modifier.size(44.dp), corner = 10.dp)
+            MusicArt(Modifier.size(44.dp).introAppear(intro, index, HomeSequence.MUSIC_ART_AT), corner = 10.dp)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text(musicLabel(m), style = style(10.5.sp, color = HomeGridLook.sub), maxLines = 1, modifier = header(HomeGrid.Card.MUSIC))
-                Text(m?.title?.ifBlank { null } ?: "Nothing playing", style = style(13.sp, FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(m?.artist?.ifBlank { null } ?: "Open Music", style = style(11.sp, color = HomeGridLook.sub), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(musicLabel(m), style = style(10.5.sp, color = HomeGridLook.sub), maxLines = 1, modifier = header(HomeGrid.Card.MUSIC)
+                    .introAppear(intro, index, HomeSequence.MUSIC_ART_AT))
+                val title = m?.title?.ifBlank { null } ?: "Nothing playing"
+                Text(title, style = style(13.sp, FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.introType(intro, index, HomeSequence.MUSIC_TITLE_AT, title.length.coerceAtMost(18)))
+                Text(m?.artist?.ifBlank { null } ?: "Open Music", style = style(11.sp, color = HomeGridLook.sub), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.introAppear(intro, index, HomeSequence.MUSIC_ARTIST_AT))
             }
             Spacer(Modifier.width(10.dp))
-            PlayButton(m, 36.dp, onOpen, onToggle)
+            Box(Modifier.introAppear(intro, index, HomeSequence.MUSIC_PLAY_AT)) { PlayButton(m, 36.dp, onOpen, onToggle) }
         }
         Spacer(Modifier.weight(1f))
-        MusicProgress(m, times = false)
+        Box(Modifier.fillMaxWidth().introAppear(intro, index, HomeSequence.MUSIC_BAR_AT)) { Column { MusicProgress(m, times = false) } }
     }
 }
 
@@ -532,23 +585,28 @@ internal fun MusicProgress(m: HomeMusicNow?, times: Boolean = true) {
 @Composable
 fun TodoCardV2(tasks: List<TodoFeed.Task>, count: Int, intro: HomeIntroClock?, index: Int, modifier: Modifier = Modifier, onOpen: () -> Unit) {
     HomeCard(HomeGrid.Card.TODO, intro, index, modifier, onClick = onOpen, label = "Open to-do") {
-        Row(header(HomeGrid.Card.TODO), verticalAlignment = Alignment.CenterVertically) {
+        Row(header(HomeGrid.Card.TODO).introType(intro, index, 120L, 8), verticalAlignment = Alignment.CenterVertically) {
             Text("To-do", style = style(12.5.sp, FontWeight.SemiBold), modifier = Modifier.weight(1f).semantics { heading() })
             Text("$count", style = style(11.sp, color = HomeGridLook.sub))
         }
+        val firstDone = remember(tasks) { tasks.indexOfFirst { it.done } }
         Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceEvenly) {
-            tasks.forEach { t ->
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.semantics(mergeDescendants = true) {
-                    contentDescription = t.title + if (t.done) ", done" else ""
-                }) {
+            tasks.forEachIndexed { i, t ->
+                // intro: each row types in, then the first done task ticks (the video's "Buy groceries")
+                val ticked by remember(t, intro, index) { derivedStateOf {
+                    if (intro == null || intro.done || index < 0) t.done else HomeSequence.todoTicked(i, t.done, firstDone, intro.cardLocal(index))
+                } }
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.introAppear(intro, index, HomeSequence.todoRowAt(i), 120L)
+                    .semantics(mergeDescendants = true) { contentDescription = t.title + if (t.done) ", done" else "" }) {
                     Box(Modifier.size(19.dp).clip(RoundedCornerShape(5.dp))
-                        .then(if (t.done) Modifier.background(HomeGridLook.accent) else Modifier.border(1.5.dp, Color(0xFFE6ECF4), RoundedCornerShape(5.dp))),
+                        .then(if (ticked) Modifier.background(HomeGridLook.accent) else Modifier.border(1.5.dp, Color(0xFFE6ECF4), RoundedCornerShape(5.dp))),
                         contentAlignment = Alignment.Center) {
-                        if (t.done) Icon(Icons.Rounded.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                        if (ticked) Icon(Icons.Rounded.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
                     }
                     Spacer(Modifier.width(9.dp))
-                    Text(t.title, style = style(11.5.sp, color = if (t.done) HomeGridLook.faint else HomeGridLook.ink)
-                        .copy(textDecoration = if (t.done) TextDecoration.LineThrough else null), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(t.title, style = style(11.5.sp, color = if (ticked) HomeGridLook.faint else HomeGridLook.ink)
+                        .copy(textDecoration = if (ticked) TextDecoration.LineThrough else null), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.introType(intro, index, HomeSequence.todoRowAt(i), t.title.length.coerceAtMost(16)))
                 }
             }
         }
@@ -562,16 +620,19 @@ fun NextUpCardV2(item: NextUp.Item?, now: Long, h24: Boolean, intro: HomeIntroCl
     val line = if (item == null) "Nothing scheduled" else item.title + " \u00b7 " + NextUp.whenLabel(item.at, now, h24)
     HomeCard(HomeGrid.Card.NEXT_UP, intro, index, modifier, onClick = onOpen, label = "Open next up") {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(37.dp).clip(CircleShape).background(HomeGridLook.bell), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(37.dp).introAppear(intro, index, 260L).clip(CircleShape).background(HomeGridLook.bell), contentAlignment = Alignment.Center) {
                 Icon(if (item?.kind == NextUp.Kind.CALENDAR) Icons.Rounded.Event else Icons.Rounded.NotificationsNone, contentDescription = null,
                     tint = Color.White, modifier = Modifier.size(20.dp))
             }
             Spacer(Modifier.width(13.dp))
             Column(Modifier.weight(1f)) {
-                Text("Next up", style = style(11.sp, color = HomeGridLook.sub), modifier = header(HomeGrid.Card.NEXT_UP))
-                Text(line, style = style(14.5.sp, FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("Next up", style = style(11.sp, color = HomeGridLook.sub), modifier = header(HomeGrid.Card.NEXT_UP)
+                    .introAppear(intro, index, HomeSequence.NEXT_FILL_AT - 100L, 260L))
+                Text(line, style = style(14.5.sp, FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.introType(intro, index, HomeSequence.NEXT_TEXT_AT, line.length.coerceAtMost(20)))
             }
-            Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, contentDescription = null, tint = HomeGridLook.sub, modifier = Modifier.size(24.dp))
+            Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, contentDescription = null, tint = HomeGridLook.sub, modifier = Modifier.size(24.dp)
+                .introAppear(intro, index, HomeSequence.NEXT_FILL_AT))
         }
     }
 }
@@ -582,9 +643,14 @@ fun NextUpCardV2(item: NextUp.Item?, now: Long, h24: Boolean, intro: HomeIntroCl
 @Composable
 fun QuickActionsCardV2(actions: List<QuickActions.Action>, intro: HomeIntroClock?, index: Int, modifier: Modifier = Modifier, onAction: (QuickActions.Action) -> Unit) {
     HomeCard(HomeGrid.Card.QUICK, intro, index, modifier) {
-        Text("Quick actions", style = style(12.sp, FontWeight.SemiBold), modifier = header(HomeGrid.Card.QUICK).semantics { heading() })
+        Text("Quick actions", style = style(12.sp, FontWeight.SemiBold), modifier = header(HomeGrid.Card.QUICK).semantics { heading() }
+            .introType(intro, index, 120L, 13))
         Spacer(Modifier.height(5.dp))
-        actions.forEach { a ->
+        actions.forEachIndexed { row, a ->
+            val words = QuickChipRow.words(a.rest)
+            // intro: the chip, then the line's words appear left to right; the second chip flashes like "Catch up" in the video
+            fun shown(j: Int): Float = if (intro == null || intro.done || index < 0) 1f
+                else (HomeSequence.quickRow(row, intro.cardLocal(index)) * (words.size + 1) - j).coerceIn(0f, 1f)
             // 0.48.0: one chip row per action like the approved video: the verb chip, then the rest of the line beside it,
             // word by word, so a long line wraps back to the card's left edge (not a chip with a text block under it).
             FlowRow(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(role = Role.Button, onClickLabel = a.verb) { onAction(a) }
@@ -592,13 +658,20 @@ fun QuickActionsCardV2(actions: List<QuickActions.Action>, intro: HomeIntroClock
                 .clearAndSetSemantics { contentDescription = a.verb + " " + a.rest; text = androidx.compose.ui.text.AnnotatedString(a.rest)
                     role = Role.Button; onClick(label = a.verb) { onAction(a); true } }.padding(vertical = 3.dp),
                 horizontalArrangement = Arrangement.spacedBy(QuickChipRow.WORD_GAP.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Box(Modifier.padding(end = (QuickChipRow.CHIP_GAP - QuickChipRow.WORD_GAP).dp).clip(RoundedCornerShape(10.dp)).background(Color.White.copy(alpha = 0.10f))
+                Box(Modifier.padding(end = (QuickChipRow.CHIP_GAP - QuickChipRow.WORD_GAP).dp).graphicsLayer { alpha = shown(0) }
+                    .clip(RoundedCornerShape(10.dp)).background(Color.White.copy(alpha = 0.10f))
+                    .drawBehind {
+                        if (row == 1 && intro != null && !intro.done && index >= 0) {
+                            val f = HomeSequence.quickFlash(intro.cardLocal(index))
+                            if (f > 0f) drawRect(HomeGridLook.accent, alpha = f)
+                        }
+                    }
                     .border(1.dp, Color.White.copy(alpha = 0.32f), RoundedCornerShape(10.dp)).padding(horizontal = 8.dp, vertical = 5.dp)) {
                     Text(a.verb, style = style(12.sp, FontWeight.SemiBold), maxLines = 1)
                 }
-                QuickChipRow.words(a.rest).forEach { w ->
+                words.forEachIndexed { j, w ->
                     Text(w, style = style(11.5.sp, color = HomeGridLook.ink.copy(alpha = 0.92f)), maxLines = 1, softWrap = false,
-                        modifier = Modifier.align(Alignment.CenterVertically))
+                        modifier = Modifier.align(Alignment.CenterVertically).graphicsLayer { alpha = shown(j + 1) })
                 }
             }
         }
@@ -624,7 +697,8 @@ fun HomeGridV2(s: HomeGridState, intro: HomeIntroClock?, modifier: Modifier = Mo
                onMusic: () -> Unit = {}, onMusicToggle: () -> Unit = {}, onTodo: () -> Unit = {}, onNextUp: () -> Unit = {},
                onAction: (QuickActions.Action) -> Unit = {}, footer: @Composable ColumnScope.() -> Unit = {}) {
     val order = remember(s.hasTasks) { HomeGrid.order(s.hasTasks).filter { it != HomeGrid.Card.WEATHER } }
-    fun idx(c: HomeGrid.Card) = order.indexOf(c)
+    // the intro's own card list wins (it is fixed when the intro starts; a card that shows up later just appears settled)
+    fun idx(c: HomeGrid.Card) = intro?.order?.indexOf(c) ?: order.indexOf(c)
     Column(modifier.fillMaxWidth().padding(horizontal = HomeGridLook.side), verticalArrangement = Arrangement.spacedBy(HomeGridLook.gap)) {
         HomeGrid.rows(s.hasTasks).forEach { row ->
             if (row.full) {

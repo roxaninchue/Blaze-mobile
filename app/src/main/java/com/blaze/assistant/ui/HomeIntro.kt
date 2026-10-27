@@ -62,6 +62,7 @@ import com.blaze.assistant.home.WidgetTypes
 import com.blaze.assistant.ui.splash.CloudGlyphPainter
 import com.blaze.assistant.ui.splash.CloudSplashSpec
 import com.blaze.assistant.ui.splash.HomeIntroSpec
+import com.blaze.assistant.ui.splash.HomeSequence
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -75,7 +76,13 @@ import java.util.Calendar
  * phone's "Remove animations") skips straight to the settled grid. A tap skips the rest.
  */
 @Stable
-class HomeIntroClock(val kind: WeatherKind, val night: Boolean, private val cards: Int) {
+class HomeIntroClock(val kind: WeatherKind, val night: Boolean, private val cards: Int,
+                     order0: List<HomeGrid.Card> = HomeSequence.orderFor(cards)) {
+    /** The cards after the board, in the order they come ([HomeSequence.order]); settled when the splash hands over (data has loaded by then). */
+    var order by mutableStateOf(order0)
+        private set
+    private var starts = HomeSequence.starts(order0, HomeIntroSpec.CARDS_AT)
+    fun setOrder(o: List<HomeGrid.Card>) { if (o != order) { order = o; starts = HomeSequence.starts(o, HomeIntroSpec.CARDS_AT) } }
     /** ms since the intro's first frame. */
     val t = mutableLongStateOf(0L)
     /** When the splash handed over (-1 = still on the splash). */
@@ -88,19 +95,33 @@ class HomeIntroClock(val kind: WeatherKind, val night: Boolean, private val card
 
     /** ms since the splash ended (negative while it's still showing). */
     fun u(): Long = if (done) Long.MAX_VALUE / 4 else splashEnd.longValue.let { if (it < 0) -1L else t.longValue - it }
-    val endU: Long get() = HomeIntroSpec.end(cards)
+    val endU: Long get() = HomeSequence.end(order, HomeIntroSpec.CARDS_AT)
 
-    fun cardT(i: Int): HomeIntroSpec.CardT { val u = u(); return if (u < 0) HomeIntroSpec.CardT(0f, HomeIntroSpec.CENTER_SCALE, 0f, 0f, 0f) else HomeIntroSpec.card(i, u) }
+    /** The [i]-th card after the board. */
+    fun card(i: Int): HomeGrid.Card? = order.getOrNull(i)
+    /** ms on card [i]'s own clock (negative before it starts; huge once the intro is done). */
+    fun cardLocal(i: Int): Long { val u = u(); if (done) return Long.MAX_VALUE / 4; return if (u < 0 || i !in starts.indices) -1L else u - starts[i] }
+    fun cardT(i: Int): HomeSequence.Frame { val c = card(i) ?: return HomeSequence.SETTLED; return HomeSequence.frame(c, cardLocal(i)) }
     fun boardOutline(): Float { val u = u(); return if (u < 0) 0f else HomeIntroSpec.outline(u) }
     fun boardTiles(): Float { val u = u(); return if (u < 0) 0f else HomeIntroSpec.tiles(u) }
     fun boardFill(): Float { val u = u(); return if (u < 0) 0f else HomeIntroSpec.boardFill(u) }
     fun iconAlpha(): Float { val u = u(); return if (u >= HomeIntroSpec.GLIDE_MS) 1f else 0f }
     fun typed(len: Int, at: Long): Int { val u = u(); return if (u < 0) 0 else HomeIntroSpec.typed(len, at, u) }
+    /** The chat bar's alpha (it fades in after the last card). */
+    fun barAlpha(): Float = if (done) 1f else HomeSequence.barAlpha(order, HomeIntroSpec.CARDS_AT, u())
 
     companion object {
         /** The intro plays once per process (the cold open); later visits to Home show the settled grid. */
         @Volatile var played = false
     }
+}
+
+/**
+ * 0.48.0 RC3: the chat bar is drawn by the composer host, outside Home's own tree; while the intro runs it reads its alpha
+ * here (in a graphicsLayer lambda, so no recomposition). 1 whenever no intro is running.
+ */
+object HomeIntroBus {
+    val barAlpha = androidx.compose.runtime.mutableFloatStateOf(1f)
 }
 
 /** Is the redesigned Home on? (A switch for the combined release; the old board stays one tap away.) */
@@ -257,9 +278,10 @@ fun HomeRedesignContent(
     forceSoftwareBlur: Boolean = false,
 ) {
     val cards = remember(s.hasTasks) { HomeGrid.order(s.hasTasks).size - 1 }
-    // The intro decides its variant once (the cloud must match the icon it lands on).
-    val intro = remember { if (playIntro || frozenU != null) HomeIntroClock(s.board.kind, s.board.night, cards) else null }
+    // The intro decides its variant and its cards once (the cloud must match the icon it lands on).
+    val intro = remember { if (playIntro || frozenU != null) HomeIntroClock(s.board.kind, s.board.night, cards, HomeSequence.order(s.hasTasks)) else null }
     val boardNow by rememberUpdatedState(s.board)
+    val stateNow by rememberUpdatedState(s)
     val done by rememberUpdatedState(onIntroDone)
     if (intro != null && frozenU != null) {
         // negative = still on the splash, -frozenU ms into it
@@ -272,14 +294,21 @@ fun HomeRedesignContent(
             if (t0 < 0) t0 = f
             val t = f - t0
             intro.t.longValue = t
+            HomeIntroBus.barAlpha.floatValue = intro.barAlpha()
             if (intro.skipped) { intro.done = true; break }
             if (intro.splashEnd.longValue < 0) {
                 // ready: the weather board has content (or we stop waiting at the splash's max)
-                val e = CloudSplashSpec.splashEnd(t, boardNow.loaded || t >= 1_600L)
-                if (e >= 0) intro.splashEnd.longValue = e
+                val e = CloudSplashSpec.splashEnd(t, boardNow.loaded || t >= CloudSplashSpec.SPLASH_MIN_MS)
+                if (e >= 0) { intro.setOrder(HomeSequence.order(stateNow.hasTasks)); intro.splashEnd.longValue = e }
             } else if (t - intro.splashEnd.longValue >= intro.endU) intro.done = true
         }
+        HomeIntroBus.barAlpha.floatValue = 1f
         done()
+    }
+    // the host's chat bar stays hidden until the last card has landed; never left hidden if Home goes away mid-intro
+    if (intro != null && frozenU == null) androidx.compose.runtime.DisposableEffect(intro) {
+        if (!intro.done) HomeIntroBus.barAlpha.floatValue = 0f
+        onDispose { HomeIntroBus.barAlpha.floatValue = 1f }
     }
     val introOn = intro != null && !intro.done
     val scroll = rememberScrollState()
@@ -312,7 +341,7 @@ fun HomeRedesignContent(
         }
         if (introOn) IntroOverlay(intro!!)
         if (chatBar != null) Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding()
-            .graphicsLayer { alpha = 1f - focus.progress.value }) { chatBar() }
+            .graphicsLayer { alpha = (1f - focus.progress.value) * (if (intro != null && frozenU == null) HomeIntroBus.barAlpha.floatValue else 1f) }) { chatBar() }
         if (focus.shown && !introOn) HomeFocusOverlay(focus, s, backdrop, onWeather = onWeather, onTopic = onTopic, onPickInterests = onPickInterests,
             onMusic = onMusic, onMusicToggle = onMusicToggle, onTodo = onTodo, onNextUp = onNextUp, onAction = onAction)
     }

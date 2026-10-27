@@ -301,8 +301,8 @@ fun HomePane(onAsk: (String) -> Unit, onQuote: (String) -> Unit = {},
     val glass = if (HomeGlass.on(kind)) (if (c.dark) HomeGlass.dark else HomeGlass.light) else null
     val bgImage = rememberHomeBackground(look).takeIf { !themed }
     val redesign = HomeRedesign.enabled && onboarded && !showBoard
-    // The redesigned Home draws its sky full-bleed when the look is the default one (a picked look or theme still shows).
-    val skyHome = redesign && !themed && HomeGlass.isGlass(kind, HomeBoard.bgColor)
+    // The redesigned Home always draws its sky full-bleed (the approved look); only a picked Home photo still shows instead.
+    val skyHome = HomeSkyRule.drawsSky(redesign, HomeBoard.background, bgImage != null)
 
     fun open(url: String, w: Widget?) {
         if (w != null) { HomeBoard.tapped(w.id); if (w.type == WidgetTypes.CREATORS) HomeBoard.markSeen(w.id) }

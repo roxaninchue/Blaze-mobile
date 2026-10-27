@@ -262,7 +262,7 @@ fun HomeSurface(progress: Float, onAsk: (String) -> Unit, onQuote: (String) -> U
     // chat sheet; a quote goes into the bar. The bar fades while a Home card is focused, and a tap on it closes the card.
     val composer = com.blaze.assistant.ui.composer.rememberComposerState()
     com.blaze.assistant.ui.composer.BlazeComposerHome(state = composer,
-        barModifier = Modifier.graphicsLayer { alpha = (1f - progress * 2f).coerceIn(0f, 1f) * (1f - HomeFocusBus.amount) }
+        barModifier = Modifier.graphicsLayer { alpha = (1f - progress * 2f).coerceIn(0f, 1f) * (1f - HomeFocusBus.amount) * HomeIntroBus.barAlpha.floatValue }
             .then(if (HomeFocusBus.active) Modifier.pointerInput(Unit) {
                 awaitPointerEventScope { while (true) { val e = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
                     e.changes.forEach { it.consume() }; if (e.changes.any { !it.pressed }) HomeFocusBus.close?.invoke() } }
