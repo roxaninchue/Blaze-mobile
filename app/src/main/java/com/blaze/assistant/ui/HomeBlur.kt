@@ -111,7 +111,7 @@ object SoftBlur {
 
     fun blur(src: ImageBitmap): ImageBitmap {
         var b: Bitmap = src.asAndroidBitmap()
-        if (b.config == Bitmap.Config.HARDWARE || b.config == null) b = b.copy(Bitmap.Config.ARGB_8888, false)
+        if (b.config == Bitmap.Config.HARDWARE) b = b.copy(Bitmap.Config.ARGB_8888, false)
         for ((w, h) in steps(b.width, b.height)) b = Bitmap.createScaledBitmap(b, w, h, true)
         return b.asImageBitmap()
     }

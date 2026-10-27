@@ -10,6 +10,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.click
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.blaze.assistant.home.HomeGrid
 import org.junit.Assert.assertEquals
