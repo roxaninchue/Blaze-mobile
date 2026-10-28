@@ -81,9 +81,15 @@ class HomeFocusCheck {
         val sc = ActivityScenario.launch(ComponentActivity::class.java)
         sc.onActivity { a -> a.setContent { HomeRedesignContent(sample(), playIntro = false, drawSky = true, focus = focus, forceSoftwareBlur = software) } }
         SystemClock.sleep(2_000); mark("warm-up $path launch")
-        // warm-up (like the gate's warm-up launch): the first open loads the classes and compiles the emulator's shaders
-        main.post { focus.open(HomeGrid.Card.INTERESTS) }; SystemClock.sleep(1_500); main.post { focus.close() }; SystemClock.sleep(1_500)
-        mark("warm-up $path first open/close")
+        // warm-up (like the gate's warm-up launch): the first open of each card loads its classes and compiles the
+        // emulator's software-GL shaders for what it draws. RC4: every card once, not only Interests: the first Weather
+        // focus spent ~1.1 s in RenderThread's IssueDrawCommands -> SwapBuffers (swiftshader shader compiles, main thread
+        // only waiting on the frame; its own work was ~12 ms), which is the emulator, not the app (Rocky's rule: count
+        // app-attributable stalls only). The 3 measured rounds below are unchanged.
+        for (c in HomeGrid.Card.values()) {
+            main.post { focus.open(c) }; SystemClock.sleep(1_300); main.post { focus.close() }; SystemClock.sleep(1_300)
+        }
+        mark("warm-up $path first open/close of every card")
         repeat(3) { round ->
             for (c in HomeGrid.Card.values()) {
                 main.post { focus.open(c) }; SystemClock.sleep(1_100); mark("$path open ${c.name} #$round")
