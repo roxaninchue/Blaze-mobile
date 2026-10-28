@@ -96,9 +96,10 @@ class HomeRc2Test {
         assertTrue(HomeMotion.BOARD_FILL_AT in 2_300L..2_900L)
         assertTrue(HomeMotion.CARDS_AT in 2_900L..3_300L)
         assertEquals(HomeMotion.GLIDE_MS, HomeIntroSpec.GLIDE_MS)
-        // whole intro after the splash: ~12 s without To-do, ~15 s with it (the video is ~17 s including the splash)
-        assertTrue(HomeIntroSpec.end(4) in 10_500L..13_500L)
+        // whole intro after the splash: ~15 s (the video is ~17 s including the splash). RC4: To-do always lands (its empty
+        // state without tasks), so the intro is the same length with or without tasks
         assertTrue(HomeIntroSpec.end(5) in 13_500L..16_500L)
+        assertEquals(HomeIntroSpec.end(5), HomeIntroSpec.end(4))
         assertTrue(HomeMotion.FOCUS_MS in 400..700)
     }
 }

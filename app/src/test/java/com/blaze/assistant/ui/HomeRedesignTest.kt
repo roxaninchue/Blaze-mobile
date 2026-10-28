@@ -11,15 +11,17 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 
-/** 0.47 Home redesign (Compose): the settled grid shows To-do only with tasks, and Interests from the news widgets. */
+/** 0.47 Home redesign (Compose): the settled grid (RC4: To-do always, empty state without tasks), and Interests from the news widgets. */
 @RunWith(AndroidJUnit4::class)
 @Config(sdk = [33], qualifiers = "w360dp-h800dp-mdpi", application = android.app.Application::class)
 class HomeRedesignTest {
     @get:Rule val rule = createComposeRule()
 
-    @Test fun todoHiddenWithoutTasks() {
+    @Test fun todoEmptyStateWithoutTasks() {
+        // RC4 (owner's target dashboard): To-do keeps its cell beside Now playing and shows its empty state
         rule.setContent { HomeRedesignContent(HomeRedesignSample.state(withTasks = false), playIntro = false, drawSky = false) }
-        rule.onNodeWithText("To-do").assertDoesNotExist()
+        rule.onNodeWithText("To-do").assertExists()
+        rule.onNodeWithText("Nothing to do", useUnmergedTree = true).assertExists()
         rule.onNodeWithText("Track name").assertIsDisplayed()
     }
 

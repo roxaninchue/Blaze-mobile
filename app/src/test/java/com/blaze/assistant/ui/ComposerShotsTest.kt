@@ -54,6 +54,8 @@ class ComposerShotsTest {
         }
     }
     @get:Rule(order = 1) val rule = createAndroidComposeRule<androidx.activity.ComponentActivity>()
+    // RC4: Blaze's bubbles in the chat over Home read Settings (fold answers), as in the app
+    @org.junit.Before fun initSettings() { try { com.blaze.assistant.agent.Settings.init(androidx.test.core.app.ApplicationProvider.getApplicationContext()) } catch (_: Throwable) { } }
 
     private fun capture(name: String): Bitmap {
         val root = rule.activity.window.decorView

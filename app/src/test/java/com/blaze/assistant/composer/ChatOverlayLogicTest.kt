@@ -50,11 +50,11 @@ class ChatOverlayLogicTest {
         assertEquals(null, ChatOverlayLogic.initial(""))
         assertEquals(null, ChatOverlayLogic.initial(null))
         // RC4: the real account, never a static "Y"
-        assertEquals(ChatOverlayLogic.Avatar.Letter("L"), ChatOverlayLogic.avatar(true, "Lackson", "x@y.z", ""))
-        assertEquals(ChatOverlayLogic.Avatar.Letter("L"), ChatOverlayLogic.avatar(true, "", "lackson@y.z", null))
-        assertEquals(ChatOverlayLogic.Avatar.Photo("https://img/x.png", "L"), ChatOverlayLogic.avatar(true, "Lackson", "", "https://img/x.png"))
-        assertEquals(ChatOverlayLogic.Avatar.Letter("L"), ChatOverlayLogic.avatar(true, "Lackson", "", "http://insecure/x.png"))
-        assertEquals(ChatOverlayLogic.Avatar.Neutral, ChatOverlayLogic.avatar(false, "Lackson", "x@y.z", "https://img/x.png"))
+        assertEquals(ChatOverlayLogic.Avatar.Letter("A"), ChatOverlayLogic.avatar(true, "Ada", "x@y.z", ""))
+        assertEquals(ChatOverlayLogic.Avatar.Letter("A"), ChatOverlayLogic.avatar(true, "", "ada@y.z", null))
+        assertEquals(ChatOverlayLogic.Avatar.Photo("https://img/x.png", "A"), ChatOverlayLogic.avatar(true, "Ada", "", "https://img/x.png"))
+        assertEquals(ChatOverlayLogic.Avatar.Letter("A"), ChatOverlayLogic.avatar(true, "Ada", "", "http://insecure/x.png"))
+        assertEquals(ChatOverlayLogic.Avatar.Neutral, ChatOverlayLogic.avatar(false, "Ada", "x@y.z", "https://img/x.png"))
         assertEquals(ChatOverlayLogic.Avatar.Neutral, ChatOverlayLogic.avatar(true, "", "", ""))
     }
 
