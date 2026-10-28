@@ -53,7 +53,13 @@ object Voice {
     private lateinit var app: Context
     private var recognizer: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
-    private var ttsReady = false
+    @Volatile private var ttsReady = false
+    /**
+     * 0.48.0 RC4: the speech engine's setup calls (setLanguage / voices / rate / pitch) are blocking binder calls into the
+     * engine; TextToSpeech's onInit runs on the main thread, and while the engine is still busy (first boot, voice
+     * downloads) they held main for ~1.3 s (focus check on the low-RAM emulator). They now run on this thread.
+     */
+    private val ttsConfig = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "blaze-tts-config").apply { isDaemon = true } }
     /** Something can speak: the phone's TTS, or My voice. */
     fun ttsOk() = ttsReady || MyVoice.route().first == VoiceRoute.Route.MINE || GeminiVoice.ready()
 
@@ -86,8 +92,7 @@ object Voice {
         tts = TextToSpeech(app) { status ->
             ttsReady = status == TextToSpeech.SUCCESS
             if (ttsReady) {
-                tts?.language = Locale.getDefault()
-                applyPrefs()
+                applyPrefs()   // off the main thread (sets the language when no voice is chosen)
                 tts?.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
                     override fun onStart(id: String?) = utteranceStarted()
                     override fun onDone(id: String?) = utteranceDone(id)
@@ -302,6 +307,10 @@ object Voice {
     fun applyPrefs() {
         val t = tts ?: return
         if (!ttsReady) return
+        try { ttsConfig.execute { applyPrefsNow(t) } } catch (_: Exception) { }
+    }
+
+    private fun applyPrefsNow(t: TextToSpeech) {
         val S = com.blaze.assistant.agent.Settings
         try {
             t.setSpeechRate(S.str("tts_rate", "1.0").toFloatOrNull() ?: 1f)

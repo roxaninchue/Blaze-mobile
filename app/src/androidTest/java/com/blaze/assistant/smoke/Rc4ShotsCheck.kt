@@ -6,6 +6,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -95,7 +96,13 @@ class Rc4ShotsCheck {
         val st = ComposerState()
         val sc = ActivityScenario.launch(ComponentActivity::class.java)
         sc.onActivity { a ->
-            androidx.core.view.WindowCompat.setDecorFitsSystemWindows(a.window, false)
+            // the window exactly like MainActivity's: adjustResize (manifest) + enableEdgeToEdge, and a dark window
+            // ground (the test activity's default white otherwise shows through the reserved bar / keyboard space)
+            a.window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+            a.enableEdgeToEdge(
+                statusBarStyle = androidx.activity.SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
+                navigationBarStyle = androidx.activity.SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT))
+            a.window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0xFF0B1220.toInt()))
             a.setContent {
                 CompositionLocalProvider(LocalBlaze provides DarkColors) {
                     BlazeComposerHome(state = st) {
