@@ -17,12 +17,14 @@ object HomeGrid {
     data class Row(val cards: List<Card>, val full: Boolean)
 
     /**
-     * Weather | Interests, Music | To-do (To-do only when there are tasks), Next up (full width), Quick actions (full
-     * width). RC2: without tasks Music is one full-width compact row, so no empty cell is left beside it.
+     * Weather | Interests, Now playing | To-do, Next up (full width), Quick actions (full width): the approved dashboard.
+     * 0.48.0 RC4: the 2-column look always holds (owner's target): Now playing stays the square card and, with no tasks,
+     * To-do shows its empty state ("Nothing to do · Tap to add") instead of Music stretching across the row (RC2).
      */
+    @Suppress("UNUSED_PARAMETER")
     fun rows(hasTasks: Boolean): List<Row> = listOf(
         Row(listOf(Card.WEATHER, Card.INTERESTS), full = false),
-        if (hasTasks) Row(listOf(Card.MUSIC, Card.TODO), full = false) else Row(listOf(Card.MUSIC), full = true),
+        Row(listOf(Card.MUSIC, Card.TODO), full = false),
         Row(listOf(Card.NEXT_UP), full = true),
         Row(listOf(Card.QUICK), full = true),
     )

@@ -19,12 +19,13 @@ class HomeGridTest {
 
     // ---------------- grid ----------------
 
-    @Test fun todoHiddenWithoutTasks() {
+    @Test fun twoColumnsHoldWithoutTasks() {
+        // RC4 (owner's target dashboard): Now playing stays square beside To-do, which shows its empty state
         val rows = HomeGrid.rows(hasTasks = false)
-        assertFalse(rows.flatMap { it.cards }.contains(HomeGrid.Card.TODO))
-        assertEquals(listOf(HomeGrid.Card.MUSIC), rows[1].cards)
-        assertTrue(rows[1].full)   // RC2: Music alone is full width (no empty cell)
-        assertEquals(listOf(HomeGrid.Card.INTERESTS, HomeGrid.Card.MUSIC, HomeGrid.Card.NEXT_UP, HomeGrid.Card.QUICK), HomeGrid.order(false).drop(1))
+        assertEquals(listOf(HomeGrid.Card.MUSIC, HomeGrid.Card.TODO), rows[1].cards)
+        assertFalse(rows[1].full)
+        assertEquals(HomeGrid.rows(true), rows)
+        assertEquals(listOf(HomeGrid.Card.INTERESTS, HomeGrid.Card.MUSIC, HomeGrid.Card.TODO, HomeGrid.Card.NEXT_UP, HomeGrid.Card.QUICK), HomeGrid.order(false).drop(1))
     }
 
     @Test fun gridWithTasks() {

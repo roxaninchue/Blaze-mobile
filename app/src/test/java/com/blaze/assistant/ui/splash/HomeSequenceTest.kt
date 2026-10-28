@@ -15,8 +15,9 @@ class HomeSequenceTest {
 
     @Test fun orderLikeTheVideo() {
         assertEquals(listOf(HomeGrid.Card.INTERESTS, HomeGrid.Card.MUSIC, HomeGrid.Card.TODO, HomeGrid.Card.NEXT_UP, HomeGrid.Card.QUICK), all)
-        assertFalse(HomeGrid.Card.TODO in noTasks)
-        assertEquals(all, HomeSequence.orderFor(5)); assertEquals(noTasks, HomeSequence.orderFor(4))
+        // RC4: To-do always has its cell (an empty state without tasks), so the sequence is the same
+        assertEquals(all, noTasks)
+        assertEquals(all, HomeSequence.orderFor(5))
     }
 
     @Test fun cardStartsMatchTheVideo() {
@@ -27,8 +28,8 @@ class HomeSequenceTest {
         // the chat bar appears last, ~17 s into the video
         val bar = (HomeSequence.cardsEnd(all, HomeIntroSpec.CARDS_AT) + 2_400) / 1000.0
         assertEquals(16.9, bar, 0.6)
-        // without tasks the To-do step is simply left out
-        assertEquals(HomeSequence.TODO_SPAN, HomeSequence.cardsEnd(all, 0) - HomeSequence.cardsEnd(noTasks, 0))
+        // RC4: without tasks the To-do card still lands (its empty state), so the bar comes at the same time
+        assertEquals(HomeSequence.cardsEnd(all, 0), HomeSequence.cardsEnd(noTasks, 0))
     }
 
     @Test fun everyCardIsHiddenBeforeAndSettledAfter() {

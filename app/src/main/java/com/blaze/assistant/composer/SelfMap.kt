@@ -30,6 +30,16 @@ object SelfMap {
         Entry("action:private", Kind.ACTION, "Private chat", "A chat Blaze doesn't keep", "private", listOf("incognito", "ghost", "secret chat")),
         Entry("action:voice", Kind.ACTION, "Talk", "Speak to Blaze", "voice", listOf("mic", "microphone", "speak", "listen", "hey blaze")),
         Entry("action:attach", Kind.ACTION, "Attach a file", "Add a photo or file to your message", "attach", listOf("photo", "picture", "image", "upload", "file", "document", "pdf")),
+        // 0.48.0 RC4: everything the old chat screen's + menu and top bar did, now reachable from Spotlight.
+        Entry("action:history", Kind.ACTION, "Chat history", "The whole conversation, over Home", "history", listOf("history", "earlier", "old messages", "full chat", "scroll back")),
+        Entry("action:photos", Kind.ACTION, "Attach photos", "Pick photos for your message", "photos", listOf("gallery photo", "pictures", "images")),
+        Entry("action:camera", Kind.ACTION, "Take a photo", "Camera, attached to your message", "camera", listOf("camera", "snap", "picture")),
+        Entry("action:paste", Kind.ACTION, "Paste image", "The picture on your clipboard", "paste", listOf("clipboard", "paste")),
+        Entry("action:call", Kind.ACTION, "Call Blaze", "A hands-free voice call", "call", listOf("phone call", "voice call", "ring")),
+        Entry("action:plan", Kind.ACTION, "Plan mode", "Blaze plans before it acts (on / off)", "plan", listOf("plan first", "work mode")),
+        Entry("action:approval", Kind.ACTION, "Ask before acting", "Autopilot or ask first (on / off)", "approval", listOf("autopilot", "approvals", "ask first", "drafts")),
+        Entry("action:clear", Kind.ACTION, "Clear the screen", "/clear: hides the chat, nothing is forgotten", "clear", listOf("/clear", "clean")),
+        Entry("action:account", Kind.ACTION, "Profile", "Account, settings, sign out", "profile", listOf("me", "sign out", "logout", "avatar")),
     )
 
     /** Settings people look for by name (each opens its page). */

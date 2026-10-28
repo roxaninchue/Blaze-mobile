@@ -610,7 +610,17 @@ fun TodoCardV2(tasks: List<TodoFeed.Task>, count: Int, intro: HomeIntroClock?, i
             Text("$count", style = style(11.sp, color = HomeGridLook.sub))
         }
         val firstDone = remember(tasks) { tasks.indexOfFirst { it.done } }
-        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceEvenly) {
+        // RC4: no tasks = the empty state, so the grid keeps its two columns (Now playing | To-do) like the approved design.
+        if (tasks.isEmpty()) Column(Modifier.fillMaxSize().introAppear(intro, index, HomeSequence.todoRowAt(0), 120L), verticalArrangement = Arrangement.Center) {
+            Box(Modifier.size(34.dp).clip(CircleShape).background(HomeGridLook.chipFill).border(1.dp, HomeGridLook.chipEdge, CircleShape), contentAlignment = Alignment.Center) {
+                Icon(Icons.Rounded.Check, contentDescription = null, tint = HomeGridLook.ink, modifier = Modifier.size(18.dp))
+            }
+            Spacer(Modifier.height(10.dp))
+            Text("Nothing to do", style = style(13.sp, FontWeight.SemiBold), maxLines = 1)
+            Spacer(Modifier.height(2.dp))
+            Text("Tap to add a task", style = style(11.sp, color = HomeGridLook.sub), maxLines = 1)
+        }
+        else Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceEvenly) {
             tasks.forEachIndexed { i, t ->
                 // intro: each row types in, then the first done task ticks (the video's "Buy groceries")
                 val ticked by remember(t, intro, index) { derivedStateOf {

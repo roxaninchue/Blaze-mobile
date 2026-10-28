@@ -15,6 +15,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
@@ -57,22 +58,28 @@ import kotlinx.coroutines.launch
  */
 @Composable
 fun BlazeComposerHome(modifier: Modifier = Modifier, state: ComposerState = rememberComposerState(), barModifier: Modifier = Modifier,
-                      onLeaveHome: () -> Unit = {}, onProfile: () -> Unit = {}, content: @Composable () -> Unit) {
+                      onLeaveHome: () -> Unit = {}, onProfile: () -> Unit = {},
+                      /** RC4: what Blaze is waiting on (approvals, questions, secure forms…), shown under the chat over Home. */
+                      cards: @Composable ColumnScope.() -> Unit = {},
+                      content: @Composable () -> Unit) {
     Box(modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().composerBlur(state.covering)) { content() }
-        ComposerOverlay(state, onLeaveHome = onLeaveHome, modifier = Modifier.fillMaxSize())
-        Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().imePadding().then(barModifier)) {
+        ComposerOverlay(state, onLeaveHome = onLeaveHome, modifier = Modifier.fillMaxSize(), cards = cards)
+        // RC4: Spotlight floats on its own (like macOS Spotlight), so the bar steps aside while it is up.
+        val barShown by animateFloatAsState(if (state.spotlightOpen) 0f else 1f, MotionTokens.fast(), label = "bar")
+        if (barShown > 0f) Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().imePadding()
+            .graphicsLayer { alpha = barShown }.then(barModifier)) {
             BlazeChatBar(state, onProfile = onProfile)
         }
     }
 }
 
 /**
- * The dim + chat over Home / Spotlight panel, filling the area above the bar. Draw it above the (blurred) Home content
- * and below [BlazeChatBar]. Handles Back (closes Spotlight, then the chat).
+ * The dim + chat over Home, and the floating Spotlight panel. Draw it above the (blurred) Home content and below
+ * [BlazeChatBar]. Handles Back (closes Spotlight, then the chat).
  */
 @Composable
-fun ComposerOverlay(state: ComposerState, onLeaveHome: () -> Unit = {}, modifier: Modifier = Modifier) {
+fun ComposerOverlay(state: ComposerState, onLeaveHome: () -> Unit = {}, modifier: Modifier = Modifier, cards: @Composable ColumnScope.() -> Unit = {}) {
     val c = LocalBlaze.current
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -86,7 +93,7 @@ fun ComposerOverlay(state: ComposerState, onLeaveHome: () -> Unit = {}, modifier
             }
         }
     }
-    val actions = rememberSpotlightActions(state, onLeaveHome = { state.closeChat(); onLeaveHome() }, onAttach = { runCatching { pick.launch("*/*") } })
+    val actions = rememberSpotlightActions(state, onLeaveHome = { onLeaveHome() }, onAttach = { runCatching { pick.launch("*/*") } })
     val dim by animateFloatAsState(if (state.covering) 1f else 0f, MotionTokens.medium(), label = "dim")
     val solid = rememberComposerSolid()
     androidx.compose.runtime.CompositionLocalProvider(LocalComposerSolid provides solid) {
@@ -96,12 +103,10 @@ fun ComposerOverlay(state: ComposerState, onLeaveHome: () -> Unit = {}, modifier
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding().padding(bottom = (ChatBarTokens.HEIGHT_DP + 8).dp)) {
             AnimatedVisibility(state.chatOpen && !state.spotlightOpen, modifier = Modifier.weight(1f),
                 enter = fadeIn(MotionTokens.medium()), exit = fadeOut(MotionTokens.fast())) {
-                ChatOverHome(state, onOpenFull = { state.closeChat(); onLeaveHome() })
-            }
-            if (state.spotlightOpen || !state.chatOpen) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.BottomCenter) {
-                SpotlightSlot(state, actions)
+                ChatOverHome(state, bottom = cards)
             }
         }
+        SpotlightLayer(state, actions)
     }
     }
     BackHandler(enabled = state.spotlightOpen || state.chatOpen || state.pickerOpen) {
@@ -114,13 +119,23 @@ fun ComposerOverlay(state: ComposerState, onLeaveHome: () -> Unit = {}, modifier
     }
 }
 
-/** The Spotlight panel with its enter / exit (its own composable: no Column scope leaks into AnimatedVisibility). */
+/**
+ * RC4 Spotlight: a standalone floating panel, centred over the dimmed Home in the space above the keyboard (upper third
+ * like macOS; just under the status bar while the keyboard is up), never attached to the chat bar. Its height is capped
+ * to that space, so the keyboard never covers it.
+ */
 @Composable
-private fun SpotlightSlot(state: ComposerState, actions: SpotlightActions) {
-    AnimatedVisibility(state.spotlightOpen,
-        enter = fadeIn(MotionTokens.medium()) + (if (MotionTokens.enabled) scaleIn(MotionTokens.medium(), initialScale = 0.96f) else fadeIn(MotionTokens.fast())),
-        exit = fadeOut(MotionTokens.fast()) + (if (MotionTokens.enabled) scaleOut(MotionTokens.fast(), targetScale = 0.98f) else fadeOut(MotionTokens.fast()))) {
-        SpotlightPanel(state, onAct = actions::run)
+private fun SpotlightLayer(state: ComposerState, actions: SpotlightActions) {
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()
+        .padding(horizontal = 14.dp, vertical = 10.dp)) {
+        val room = maxHeight
+        // Upper third when there is room (no keyboard); right under the top when the keyboard leaves less.
+        val top = if (room > 560.dp) room * 0.14f else 4.dp
+        AnimatedVisibility(state.spotlightOpen, modifier = Modifier.align(Alignment.TopCenter).padding(top = top),
+            enter = fadeIn(MotionTokens.medium()) + (if (MotionTokens.enabled) scaleIn(MotionTokens.medium(), initialScale = 0.96f) else fadeIn(MotionTokens.fast())),
+            exit = fadeOut(MotionTokens.fast()) + (if (MotionTokens.enabled) scaleOut(MotionTokens.fast(), targetScale = 0.98f) else fadeOut(MotionTokens.fast()))) {
+            SpotlightPanel(state, onAct = actions::run, maxHeight = room - top)
+        }
     }
 }
 

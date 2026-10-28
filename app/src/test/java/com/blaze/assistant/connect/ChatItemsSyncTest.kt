@@ -210,4 +210,28 @@ class ChatItemsSyncTest {
             .put("reactions", JSONArray().put(JSONObject().put("e", "👍")))
         assertEquals(ChatItems.normMsg(m1).toString(), ChatItems.normMsg(m2).toString())
     }
+
+    /**
+     * 0.48.0 RC4 (cloud sync took minutes for a ~3 MB copy): a restore of a long chat indexes it a handful of times, not
+     * once per applied message, and the restored phone has nothing to send back afterwards (stamps read after the writes).
+     */
+    @Test fun restoringALongChatIndexesItOnceNotPerMessage() {
+        val n = 1500
+        val o = JSONObject().put("id", "main").put("title", "Blaze").put("updated", 10).put("messages", JSONArray().apply {
+            for (i in 0 until n) put(JSONObject().put("id", i + 1).put("role", if (i % 2 == 0) "USER" else "BLAZE").put("text", "message number $i " + "x".repeat(i % 40)).put("at", 1_000L + i))
+        })
+        a.write("main", o)
+        assertEquals(n + 1, a.sync().pushed)
+        val t0 = System.nanoTime()
+        val before = b.split.indexed
+        val r = b.sync()
+        val ms = (System.nanoTime() - t0) / 1_000_000
+        println("RC4 restore: $n messages in $ms ms, ${b.split.indexed - before} chat index(es), ${server.pulls} pulls")
+        assertEquals(n + 1, r.pulled)
+        assertEquals(n, b.msgs("main").length())
+        assertEquals("message number 0 ", b.texts("main").first())
+        assertTrue("indexed ${b.split.indexed - before} times", b.split.indexed - before <= 6)
+        assertEquals(0, b.sync().pushed)
+        assertEquals(0, a.sync().pushed)
+    }
 }

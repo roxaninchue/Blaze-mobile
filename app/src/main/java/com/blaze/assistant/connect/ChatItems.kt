@@ -94,10 +94,19 @@ class ChatSplit(private val dir: () -> File) {
         var head: SyncMerge.Item? = null; var headStamp = ""
         val msgStamps = HashMap<String, String>()      // item id → stamp
         val reactStamps = HashMap<String, String>()
+        /**
+         * 0.48.0 RC4 (cloud sync speed): changed by sync applies since its last [index]. Its stamps / head are still the
+         * ones from before those applies (messages it already had keep their stamps; new ones have none yet), and its
+         * [byGid] may miss new messages. Re-indexed once, when something needs the whole chat ([get], [all], [flush]),
+         * instead of after every applied message (that made a restore O(messages²)).
+         */
+        var stale = false
         fun messages(): JSONArray = o.optJSONArray("messages") ?: JSONArray().also { o.put("messages", it) }
     }
 
     private val chats = HashMap<String, Chat>()
+    /** Full re-indexes so far (tests: a restore indexes each chat a handful of times, never once per message). */
+    @Volatile var indexed = 0; private set
     private val dirty = LinkedHashSet<String>()
     /** The edits made to each dirty chat, replayed on a fresh read if the app saved the file meanwhile. */
     private val edits = HashMap<String, MutableList<(JSONObject) -> JSONObject?>>()
@@ -114,7 +123,7 @@ class ChatSplit(private val dir: () -> File) {
             val id = f.name.removeSuffix(".json")
             if (!syncable(id)) continue
             seen += id
-            if (id in dirty) continue
+            if (id in dirty) { chats[id]?.let { fresh(id, it) }; continue }
             val st = stampOf(f)
             val c = chats[id]
             if (c != null && c.stamp == st) continue
@@ -122,6 +131,7 @@ class ChatSplit(private val dir: () -> File) {
             chats[id] = index(id, Chat(st, o))
         }
         chats.keys.retainAll(seen + dirty)
+        for (id in dirty) chats[id]?.let { fresh(id, it) }
         return HashMap(chats)
     }
 
@@ -135,10 +145,13 @@ class ChatSplit(private val dir: () -> File) {
         return get(id)
     }
 
+    /** A chat changed by sync, re-indexed if [Chat.stale]. */
+    private fun fresh(id: String, c: Chat): Chat = if (!c.stale) c else index(id, Chat(c.stamp, c.o)).also { chats[id] = it }
+
     /** One chat with its messages (read again when it was released or changed on disk). */
     @Synchronized fun get(id: String): Chat? {
         if (!syncable(id)) return null
-        if (id in dirty) return chats[id]
+        if (id in dirty) return chats[id]?.let { fresh(id, it) }
         val f = file(id)
         if (!f.isFile) { chats.remove(id); return null }
         val st = stampOf(f)
@@ -149,9 +162,14 @@ class ChatSplit(private val dir: () -> File) {
 
     /** Changes chat [id] in memory ([create]: start an empty chat when there is none); written at [flush]. */
     @Synchronized fun edit(id: String, create: Boolean, change: (JSONObject) -> JSONObject?): Boolean {
-        val c = get(id) ?: if (create && syncable(id)) Chat("", JSONObject().put("id", id).put("title", "").put("updated", 0).put("messages", JSONArray())) else return false
+        // A chat already changed this round is edited as it is (no re-index per applied item; see [Chat.stale]).
+        val c = (if (id in dirty) chats[id] else get(id))
+            ?: if (create && syncable(id)) Chat("", JSONObject().put("id", id).put("title", "").put("updated", 0).put("messages", JSONArray())) else return false
         val next = change(c.o) ?: return false
-        chats[id] = index(id, Chat(c.stamp, next))
+        chats[id] = Chat(c.stamp, next).also { n ->
+            n.byGid.putAll(c.byGid); n.msgStamps.putAll(c.msgStamps); n.reactStamps.putAll(c.reactStamps)
+            n.head = c.head; n.headStamp = c.headStamp; n.stale = true
+        }
         dirty += id
         edits.getOrPut(id) { ArrayList() } += change
         return true
@@ -184,6 +202,7 @@ class ChatSplit(private val dir: () -> File) {
                 catch (e: Exception) { tmp.delete(); throw e }
             }
             c.stamp = stampOf(f)
+            if (c.stale) { c = index(id, Chat(c.stamp, c.o)); chats[id] = c }
             dirty.remove(id); edits.remove(id); done += id
         }
         return done
@@ -206,6 +225,7 @@ class ChatSplit(private val dir: () -> File) {
 
     /** Ids, stamps and the chat item of one parsed chat. */
     private fun index(id: String, c: Chat): Chat {
+        indexed++
         val arr = c.messages()
         Gid.fill(arr)
         val localToGid = HashMap<Long, String>()

@@ -55,6 +55,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -68,6 +71,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.coerceAtLeast
+import androidx.compose.ui.unit.coerceAtMost
+import androidx.compose.ui.unit.coerceIn
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.blaze.assistant.composer.SelfMap
@@ -85,12 +91,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 0.47 Spotlight v2 panel over the widget area: a search field (with the distro picker on its right in "!" mode) and
- * result rows (icon, title, subtitle), top row highlighted; Enter runs the top row. Inline previews (@browser, @terminal,
+ * Spotlight v2 panel. 0.48.0 RC4 (owner: "detached from the chat box, floats on its own in the style of Apple Spotlight"):
+ * one frosted panel with a large radius, the search field with a magnifier on top, a hairline, then result rows (icon tile,
+ * title, subtitle), the top row highlighted; Enter runs it. No category pills. [maxHeight] is the room above the keyboard,
+ * so the list and the inline previews shrink to fit instead of going under it. Inline previews (@browser, @terminal,
  * @music, @video, @settings) show inside the panel and keep the user on Home. Search runs off the main thread.
  */
 @Composable
-fun SpotlightPanel(state: ComposerState, onAct: (Act) -> Unit, modifier: Modifier = Modifier) {
+fun SpotlightPanel(state: ComposerState, onAct: (Act) -> Unit, modifier: Modifier = Modifier, maxHeight: androidx.compose.ui.unit.Dp = 560.dp) {
     val c = LocalBlaze.current
     val songs by com.blaze.assistant.mediaapps.MediaLib.songs.collectAsState()
     val videos by com.blaze.assistant.mediaapps.MediaLib.videos.collectAsState()
@@ -110,29 +118,43 @@ fun SpotlightPanel(state: ComposerState, onAct: (Act) -> Unit, modifier: Modifie
     }
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    val solid = LocalComposerSolid.current
+    val shape = RoundedCornerShape(26.dp)
 
-    Column(modifier.fillMaxWidth().padding(horizontal = 12.dp).clip(RoundedCornerShape(24.dp))
-        .then(if (LocalComposerSolid.current) Modifier.background(ComposerLook.panel(c)) else Modifier)
-        .glass(RoundedCornerShape(24.dp), GlassIntensity.High, shadow = false).padding(8.dp)) {
-        // ---- the field
-        Row(Modifier.fillMaxWidth().heightIn(min = 46.dp).clip(RoundedCornerShape(16.dp)).background(c.ink.copy(alpha = 0.06f))
-            .padding(start = 12.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Rounded.Search, null, tint = c.sub, modifier = Modifier.size(20.dp))
-            Spacer(Modifier.width(8.dp))
-            Box(Modifier.weight(1f).padding(vertical = 10.dp)) {
-                if (state.query.isEmpty()) Text("Search Blaze, ! command, @ view", maxLines = 1, style = TextStyle(fontFamily = Type.Sans, fontSize = 15.sp, color = c.sub))
+    Column(modifier.fillMaxWidth().widthIn(max = 560.dp).heightIn(max = maxHeight)
+        .shadow(24.dp, shape, clip = false)
+        .clip(shape)
+        .background(ComposerLook.spotlight(c, blur = !solid))
+        .then(if (solid) Modifier else Modifier.glass(shape, GlassIntensity.High, shadow = false))
+        .border(1.dp, Color.White.copy(alpha = if (c.dark) 0.14f else 0.55f), shape)
+        // taps on the panel stay in it (the dim around it closes Spotlight)
+        .clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null) { }
+        .semantics { contentDescription = "Spotlight" }) {
+        // ---- the field: magnifier, big text, the distro picker on the right in "!" mode
+        Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(start = 18.dp, end = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.Search, null, tint = c.sub, modifier = Modifier.size(24.dp))
+            Spacer(Modifier.width(10.dp))
+            Box(Modifier.weight(1f).padding(vertical = 12.dp)) {
+                if (state.query.isEmpty()) Text("Spotlight Search", maxLines = 1, style = TextStyle(fontFamily = Type.Sans, fontSize = 20.sp, color = c.sub))
                 BasicTextField(state.query, { state.query = it; if (state.preview != null && !it.startsWith("@") && !it.startsWith("!")) state.preview = null },
-                    singleLine = true, textStyle = TextStyle(fontFamily = Type.Sans, fontSize = 15.sp, color = c.ink), cursorBrush = SolidColor(DuoColors.blazeBlue),
+                    singleLine = true, textStyle = TextStyle(fontFamily = Type.Sans, fontSize = 20.sp, color = c.ink), cursorBrush = SolidColor(DuoColors.blazeBlue),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
                     keyboardActions = KeyboardActions(onGo = { result.rows.firstOrNull()?.let { onAct(it.act) } }),
                     modifier = Modifier.fillMaxWidth().focusRequester(focus).semantics { contentDescription = "Spotlight search" })
             }
             if (result.mode == SpotlightSearch.Mode.TERMINAL && result.distros.isNotEmpty()) DistroPicker(result.distros, state.distro) { state.distro = it.id; if (!it.installed) onAct(Act.OpenView("terminal")) }
         }
-        Spacer(Modifier.height(6.dp))
+        Box(Modifier.fillMaxWidth().padding(horizontal = 14.dp).height(1.dp).background(c.ink.copy(alpha = 0.10f)))
         val pv = state.preview
-        if (pv != null) InlinePreview(pv, state, onAct)
-        else LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+        // the room left under the field (56 dp + hairline + padding)
+        val rest = (maxHeight - 72.dp).coerceAtLeast(120.dp)
+        if (pv != null) Box(Modifier.padding(8.dp)) { InlinePreview(pv, state, onAct, height = (rest - 56.dp).coerceIn(140.dp, 360.dp)) }
+        else LazyColumn(Modifier.fillMaxWidth().heightIn(max = rest.coerceAtMost(430.dp)),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 8.dp)) {
+            if (result.mode == SpotlightSearch.Mode.CURATED) item(key = "hint") {
+                Text("Search views, settings, models, your music and video \u00b7 ! runs a command \u00b7 @ opens a view", maxLines = 2,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp), style = TextStyle(fontFamily = Type.Sans, fontSize = 11.sp, color = c.sub))
+            }
             itemsIndexed(result.rows, key = { _, r -> r.id }) { i, r -> SpotRow(r, top = i == 0) { onAct(r.act) } }
         }
     }
@@ -157,21 +179,22 @@ fun spotIcon(i: SpotlightSearch.Icon): ImageVector = when (i) {
     SpotlightSearch.Icon.PREVIEW -> Icons.Rounded.Visibility
 }
 
-/** One result: icon, title, subtitle; the top row is highlighted (Enter runs it). */
+/** One result: icon tile, title, subtitle; the top row is highlighted (Enter runs it), like macOS Spotlight. */
 @Composable
 fun SpotRow(r: SpotlightSearch.Row, top: Boolean, onClick: () -> Unit) {
     val c = LocalBlaze.current
-    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(if (top) DuoColors.blazeBlue.copy(alpha = 0.22f) else Color.Transparent)
-        .clickable(onClick = onClick).semantics { contentDescription = r.title + ". " + r.subtitle }.padding(horizontal = 10.dp, vertical = 9.dp),
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(if (top) DuoColors.blazeBlue.copy(alpha = if (c.dark) 0.34f else 0.20f) else Color.Transparent)
+        .clickable(onClick = onClick).semantics { contentDescription = r.title + ". " + r.subtitle }.padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(34.dp).clip(RoundedCornerShape(10.dp)).background(c.ink.copy(alpha = 0.08f)), contentAlignment = Alignment.Center) {
-            Icon(spotIcon(r.icon), null, tint = if (top) DuoColors.blazeBlue else c.ink, modifier = Modifier.size(19.dp))
+        Box(Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).background(if (top) DuoColors.blazeBlue else c.ink.copy(alpha = 0.10f)), contentAlignment = Alignment.Center) {
+            Icon(spotIcon(r.icon), null, tint = if (top) Color.White else c.ink, modifier = Modifier.size(19.dp))
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(r.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = TextStyle(fontFamily = Type.Sans, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = c.ink))
+            Text(r.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = TextStyle(fontFamily = Type.Sans, fontWeight = FontWeight.Medium, fontSize = 15.sp, color = c.ink))
             if (r.subtitle.isNotBlank()) Text(r.subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis, style = TextStyle(fontFamily = Type.Sans, fontSize = 12.sp, color = c.sub))
         }
+        if (top) Text("\u21b5", style = TextStyle(fontFamily = Type.Sans, fontSize = 13.sp, color = c.sub), modifier = Modifier.padding(start = 8.dp))
     }
 }
 
@@ -209,7 +232,7 @@ private fun InstallMark(installed: Boolean) {
 // ---------------------------------------------------------------- inline previews (stay on Home)
 
 @Composable
-private fun InlinePreview(p: Act.Preview, state: ComposerState, onAct: (Act) -> Unit) {
+private fun InlinePreview(p: Act.Preview, state: ComposerState, onAct: (Act) -> Unit, height: androidx.compose.ui.unit.Dp = 360.dp) {
     val c = LocalBlaze.current
     val name = SelfMap.default.firstOrNull { it.kind == SelfMap.Kind.VIEW && it.target == p.view }?.title ?: p.view.replaceFirstChar { it.uppercase() }
     Column(Modifier.fillMaxWidth()) {
@@ -223,9 +246,9 @@ private fun InlinePreview(p: Act.Preview, state: ComposerState, onAct: (Act) -> 
             PreviewButton(Icons.Rounded.Close, "Close preview") { state.preview = null }
         }
         Spacer(Modifier.height(6.dp))
-        Box(Modifier.fillMaxWidth().height(360.dp).clip(RoundedCornerShape(16.dp)).background(c.ink.copy(alpha = 0.05f))) {
+        Box(Modifier.fillMaxWidth().height(height).clip(RoundedCornerShape(16.dp)).background(c.ink.copy(alpha = 0.05f))) {
             when (p.view) {
-                "browser" -> BrowserPreview(SpotUrl.of(p.arg.ifBlank { "google.com" }))
+                "browser" -> BrowserPreview(SpotUrl.of(p.arg.ifBlank { "google.com" }), height)
                 "terminal" -> TerminalPreview(state)
                 "music" -> MediaPreview(video = false, onAct)
                 "video" -> MediaPreview(video = true, onAct)
@@ -245,7 +268,7 @@ private fun PreviewButton(icon: ImageVector, desc: String, onClick: () -> Unit) 
 /** A preview browser inside Spotlight (one WebView per address, destroyed when the preview closes or the address changes). */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun BrowserPreview(url: String) {
+private fun BrowserPreview(url: String, height: androidx.compose.ui.unit.Dp = 360.dp) {
     androidx.compose.runtime.key(url) {
         var view by remember { mutableStateOf<android.webkit.WebView?>(null) }
         AndroidView(factory = { ctx ->
@@ -254,7 +277,7 @@ private fun BrowserPreview(url: String) {
                 webViewClient = android.webkit.WebViewClient()
                 loadUrl(url); view = this
             }
-        }, modifier = Modifier.fillMaxWidth().height(360.dp).semantics { contentDescription = "Preview browser: $url" })
+        }, modifier = Modifier.fillMaxWidth().height(height).semantics { contentDescription = "Preview browser: $url" })
         DisposableEffect(Unit) { onDispose { view?.apply { stopLoading(); destroy() }; view = null } }
     }
 }
@@ -311,11 +334,13 @@ class SpotlightActions(private val ctx: android.content.Context, private val sta
             is Act.Preview -> { state.preview = a; if (a.view == "terminal" && a.arg.isNotBlank()) runCommand(a.arg, state.distro) }
             is Act.RunAction -> when (a.action) {
                 "chat" -> state.openChat()
+                // RC4: the whole thread over Home (the old full chat screen is gone)
+                "history" -> state.openChat(full = true)
                 "new_chat" -> { state.closeSpotlight(); com.blaze.assistant.agent.Agent.clear(); state.openChat() }
-                "private" -> { state.closeSpotlight(); com.blaze.assistant.agent.Agent.enterPrivate(); onLeaveHome() }
+                "private" -> { state.closeSpotlight(); com.blaze.assistant.agent.Agent.enterPrivate(); state.openChat(full = true) }
                 "voice" -> { state.closeSpotlight(); com.blaze.assistant.voice.Voice.listenRequests.value = com.blaze.assistant.voice.Voice.listenRequests.value + 1 }
-                "attach" -> { state.closeSpotlight(); onAttach() }
-                else -> state.closeSpotlight()
+                "attach" -> { state.closeSpotlight(); if (state.hostAction?.invoke("files") != true) onAttach() }
+                else -> { state.closeSpotlight(); state.hostAction?.invoke(a.action) }
             }
             is Act.PickModel -> { com.blaze.assistant.composer.ModelChoice.set(com.blaze.assistant.composer.ModelChoice.of(a.family)); state.closeSpotlight() }
             is Act.PlaySong -> { state.closeSpotlight(); playSong(a.key) }

@@ -158,7 +158,8 @@ fun HomeRedesignScreen(
         onPickInterests = onPickInterests,
         onMusic = { try { com.blaze.assistant.mediaapps.MusicActivity.open(ctx) } catch (_: Throwable) { } },
         onMusicToggle = { mediaPlayPause(ctx) },
-        onTodo = onAllWidgets,
+        // RC4: with no tasks the To-do card is an "add one" card
+        onTodo = { if (s.hasTasks) onAllWidgets() else onAsk("Add a task to my to-do list") },
         onNextUp = { s.next?.let { n -> if (n.kind == NextUp.Kind.CALENDAR) onOpenLink("calendar:" + n.at) else onAsk("What's next on my schedule today?") } ?: onAsk("Set a reminder for me") },
         onAction = { a -> onAsk(a.prompt) },
         onAllWidgets = onAllWidgets,

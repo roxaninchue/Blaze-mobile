@@ -120,6 +120,8 @@ class BlazeTerminalActivity : ComponentActivity(), TermSessions.Listener {
         setContentView(frame)
         com.blaze.assistant.ui.MotionTokens.refresh(this)
 
+        // RC4: signed in to Blaze in the app = the `blaze` CLI here is signed in too (off the main thread, files only when done).
+        CliAuth.sync()
         TermSessions.screen = this
         val tab = TermSessions.ensureOne(this)
         applyTheme()

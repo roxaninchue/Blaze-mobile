@@ -207,14 +207,49 @@ object BlazeAccount {
 
     private fun setSession(token: String?, user: User?) {
         if (token == null || user == null) {
+            val had = _view.value.user != null || Settings.secret(SESSION).isNotBlank()
             Settings.setSecret(SESSION, ""); Settings.setStr(USER, "")
             _view.value = _view.value.copy(user = null)
+            if (had) runCatching { com.blaze.assistant.terminal.CliAuth.signedOut() }   // RC4: the terminal's CLI signs out too
             return
         }
         val fresh = Settings.secret(SESSION) != token
         Settings.setSecret(SESSION, token); Settings.setStr(USER, user.json().toString())
         _view.value = _view.value.copy(user = user)
         if (fresh) { KeySync.syncSoon(); SkillSync.syncSoon() }   // just signed in: bring this account's model keys here, and ours there
+        // RC4: the terminal's `blaze` CLI is signed in to the same account (its own session; nothing to do when it already is).
+        runCatching { com.blaze.assistant.terminal.CliAuth.sync() }
+    }
+
+    /**
+     * 0.48.0 RC4: a NEW session for the `blaze` CLI in the phone's Linux, for the signed-in account, through blaze-auth's
+     * device-code flow (start → approve with this app's session → redeem). The app's own token never leaves the app.
+     * Blocking (network); null when signed out or the service refused. Never logs the token.
+     */
+    internal fun mintCliSession(client: String): Pair<String, User>? {
+        val mine = Settings.secret(SESSION).ifBlank { return null }
+        val start = call("POST", "/v1/auth/device/start", body = JSONObject().put("client", client))
+        val device = start.optString("device_code"); val code = start.optString("user_code")
+        if (device.isBlank() || code.isBlank()) return null
+        call("POST", "/v1/auth/device/approve", mine, JSONObject().put("user_code", code))
+        var last: Exception? = null
+        repeat(3) { i ->
+            try {
+                val o = call("POST", "/v1/auth/device/poll", body = JSONObject().put("device_code", device).put("client", client).put("wait", 5))
+                val tok = o.optString("token"); val u = User.from(o.optJSONObject("user"))
+                return if (tok.isNotBlank() && u != null) tok to u else null
+            } catch (e: ApiError) {
+                if (e.code != "authorization_pending" && e.code != "slow_down") throw e
+                last = e; Thread.sleep(1_100L * (i + 1))
+            }
+        }
+        throw last ?: ApiError(400, "expired_token")
+    }
+
+    /** RC4: ends another session of this account (the CLI's, when the app signs out or the account changes). Best effort. */
+    internal fun endSession(token: String) {
+        if (token.isBlank()) return
+        runCatching { call("POST", "/v1/logout", token, JSONObject()) }
     }
 
     private fun takeSession(o: JSONObject) {

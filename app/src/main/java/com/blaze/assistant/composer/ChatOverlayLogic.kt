@@ -43,6 +43,25 @@ object ChatOverlayLogic {
         }
     }
 
-    /** The user's avatar letter (their name, else "Y" for You). */
-    fun initial(name: String?): String = name?.trim()?.firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "Y"
+    /** The first letter or digit of [name], upper case; null when there is none (no made-up letter). */
+    fun initial(name: String?): String? = name?.trim()?.firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString()
+
+    /**
+     * 0.48.0 RC4: what the user's avatar shows (the chat bar, their bubbles), the same person as the profile button:
+     * the account's photo, else the initial of the account's name, else of its email; signed out = a neutral icon
+     * (never the old static "Y").
+     */
+    sealed class Avatar {
+        data class Photo(val url: String, val letter: String?) : Avatar()
+        data class Letter(val letter: String) : Avatar()
+        object Neutral : Avatar()
+    }
+
+    fun avatar(signedIn: Boolean, name: String?, email: String?, photoUrl: String?): Avatar {
+        if (!signedIn) return Avatar.Neutral
+        val letter = initial(name?.takeIf { it.isNotBlank() } ?: email)
+        val url = photoUrl?.trim().orEmpty()
+        if (url.startsWith("https://")) return Avatar.Photo(url, letter)
+        return if (letter != null) Avatar.Letter(letter) else Avatar.Neutral
+    }
 }

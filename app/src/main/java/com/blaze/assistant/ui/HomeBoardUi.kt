@@ -289,7 +289,7 @@ fun HomePane(onAsk: (String) -> Unit, onQuote: (String) -> Unit = {},
     val lightInk = HomeGlass.lightInk(kind, base.dark)
     // v0.45.8 one theme everywhere: with a living theme picked, Home shows the theme's scene (drawn behind it by the chat
     // screen) in the theme's palette, instead of its own Home look (the navy gradient that ignored a desert theme).
-    val themed = themeOn()
+    val themed = themeOn() && !HomeRedesign.enabled   // RC4: one Blaze look on the new Home (no living-theme palette or scene)
     val ink0 = when {
         themed -> base
         HomeGlass.on(kind) -> if (lightInk) LightColors else DarkColors

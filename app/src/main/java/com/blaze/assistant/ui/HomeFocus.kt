@@ -261,7 +261,7 @@ private fun CompactCard(card: HomeGrid.Card, s: HomeGridState, modifier: Modifie
     when (card) {
         HomeGrid.Card.WEATHER -> WeatherCardV2(s.board, s.h24, null, modifier)
         HomeGrid.Card.INTERESTS -> InterestsCardV2(s.topics, null, -1, modifier, onTopic = {}, onEmpty = {})
-        HomeGrid.Card.MUSIC -> if (s.hasTasks) MusicCardV2(s.music, null, -1, modifier, onOpen = {}, onToggle = {}) else MusicCardWide(s.music, null, -1, modifier, onOpen = {}, onToggle = {})
+        HomeGrid.Card.MUSIC -> MusicCardV2(s.music, null, -1, modifier, onOpen = {}, onToggle = {})
         HomeGrid.Card.TODO -> TodoCardV2(s.tasks, s.taskCount, null, -1, modifier, onOpen = {})
         HomeGrid.Card.NEXT_UP -> NextUpCardV2(s.next, s.now, s.h24, null, -1, modifier, onOpen = {})
         HomeGrid.Card.QUICK -> QuickActionsCardV2(s.actions, null, -1, modifier, onAction = {})

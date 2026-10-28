@@ -23,6 +23,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.windowInsetsBottomHeight
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -253,27 +258,38 @@ internal val homeRequests = kotlinx.coroutines.flow.MutableStateFlow(0)
 fun HomeSurface(progress: Float, onAsk: (String) -> Unit, onQuote: (String) -> Unit, onOpen: () -> Unit,
                 drag: androidx.compose.foundation.gestures.DraggableState,
                 onDragStart: suspend kotlinx.coroutines.CoroutineScope.(Offset) -> Unit,
-                onDragStop: suspend kotlinx.coroutines.CoroutineScope.(Float) -> Unit) {
+                onDragStop: suspend kotlinx.coroutines.CoroutineScope.(Float) -> Unit,
+                /** 0.48.0 RC4: the shell owns the composer (it routes approvals, project / private chats and voice into it). */
+                composer: com.blaze.assistant.ui.composer.ComposerState = com.blaze.assistant.ui.composer.rememberComposerState(),
+                onProfile: () -> Unit = {},
+                cards: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit = {},
+                /** RC4: the old full chat sheet is gone; no swipe up to it. */
+                swipeToChat: Boolean = true) {
     // v0.45.8: the strip sits on Home's own ground (HomePane bottom slot), so the scene behind Home never shows through
     // under "Swipe up to chat" (on a dark Home, a light ink scene used to); with a theme, Home and the strip both show it.
     // 0.47 chat composer: the bottom Blaze button ("Swipe up to chat" strip) is replaced by the chat bar (profile · Message Blaze · +);
     // chat and Spotlight open over the blurred Home. Swiping up on the bar still slides the full chat over Home.
     // RC2: asks from Home (Quick actions, the board's "ask" buttons) open the chat OVER Home (the composer), not the full
     // chat sheet; a quote goes into the bar. The bar fades while a Home card is focused, and a tap on it closes the card.
-    val composer = com.blaze.assistant.ui.composer.rememberComposerState()
-    com.blaze.assistant.ui.composer.BlazeComposerHome(state = composer,
+    // RC4: one Blaze look: the bar, the chat over Home and Spotlight use Home's dark glass palette whatever the app theme.
+    androidx.compose.runtime.CompositionLocalProvider(LocalBlaze provides (if (com.blaze.assistant.ui.HomeRedesign.enabled) DarkColors.mono else LocalBlaze.current)) {
+    com.blaze.assistant.ui.composer.BlazeComposerHome(state = composer, onProfile = onProfile, cards = cards,
         barModifier = Modifier.graphicsLayer { alpha = (1f - progress * 2f).coerceIn(0f, 1f) * (1f - HomeFocusBus.amount) * HomeIntroBus.barAlpha.floatValue }
             .then(if (HomeFocusBus.active) Modifier.pointerInput(Unit) {
                 awaitPointerEventScope { while (true) { val e = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
                     e.changes.forEach { it.consume() }; if (e.changes.any { !it.pressed }) HomeFocusBus.close?.invoke() } }
             } else Modifier)
-            .draggable(drag, androidx.compose.foundation.gestures.Orientation.Vertical, onDragStarted = onDragStart, onDragStopped = onDragStop),
+            .then(if (swipeToChat) Modifier.draggable(drag, androidx.compose.foundation.gestures.Orientation.Vertical, onDragStarted = onDragStart, onDragStopped = onDragStop) else Modifier),
         onLeaveHome = onOpen) {
         HomePane(onAsk = { t -> if (HomeRoute.askOverHome(com.blaze.assistant.ui.HomeRedesign.enabled)) composer.send(t) else onAsk(t) },
             onQuote = { t -> if (HomeRoute.askOverHome(com.blaze.assistant.ui.HomeRedesign.enabled)) { composer.text = t; composer.openChat() } else onQuote(t) },
             askToast = !com.blaze.assistant.ui.HomeRedesign.enabled, edgeToEdge = true, bottom = {
-            Spacer(Modifier.fillMaxWidth().navigationBarsPaddingCompat().height((com.blaze.assistant.ui.composer.ChatBarTokens.HEIGHT_DP + 8).dp))
+            // RC4: room for the bar AND the keyboard while it is up, so Home's cards scroll clear of the bar instead of
+            // sitting under it (Quick actions used to bleed into the input).
+            Spacer(Modifier.fillMaxWidth().windowInsetsBottomHeight(WindowInsets.ime.union(WindowInsets.navigationBars)))
+            Spacer(Modifier.fillMaxWidth().height((com.blaze.assistant.ui.composer.ChatBarTokens.HEIGHT_DP + 8).dp))
         })
+    }
     }
 }
 

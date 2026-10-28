@@ -184,6 +184,10 @@ fun ChatScreen() {
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val clip = LocalClipboardManager.current
+    // 0.48.0 RC4: the new Blaze look is the only chat surface: chat happens over the blurred Home (the composer), the old
+    // full chat screen (Chat / Projects pills, themed scenes, Hold to talk / Type / Photo, draft cards) is never drawn.
+    val newLook = HomeRedesign.enabled
+    val composer = com.blaze.assistant.ui.composer.rememberComposerState()
 
     var settingsPage by rememberSaveable { mutableStateOf<String?>(null) }
     // First run only: people who already set Blaze up never see it.
@@ -224,7 +228,9 @@ fun ChatScreen() {
         scope.launch {
             val loaded = uris.take(5).mapNotNull { Attachments.load(ctx, it, mimeHint) }
             if (loaded.size < uris.take(5).size) Toast.makeText(ctx, "Some files couldn't be read (photos, PDFs and text work).", Toast.LENGTH_SHORT).show()
-            pending = pending + loaded; loadingFiles = false
+            // RC4: picked / shot / pasted files go into the bar's attachments (the chip row over the pill)
+            if (newLook) composer.attachments.addAll(loaded) else pending = pending + loaded
+            loadingFiles = false
         }
     }
     val files = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { addUris(it) }
@@ -286,6 +292,7 @@ fun ChatScreen() {
     LaunchedEffect(shared) {
         val d = shared ?: return@LaunchedEffect
         Agent.sharedDraft.value = null
+        if (newLook) { if (d.text.isNotBlank()) composer.text = d.text; d.attachment?.let { composer.attachments.add(it) }; return@LaunchedEffect }
         if (d.text.isNotBlank()) input = TextFieldValue(d.text, androidx.compose.ui.text.TextRange(d.text.length))
         d.attachment?.let { pending = pending + it }
     }
@@ -488,6 +495,38 @@ fun ChatScreen() {
     // v0.24.4 private chat: confirm before leaving (the chat is thrown away).
     val isPrivate by Agent.privateChat.collectAsState()
     var confirmLeavePrivate by remember { mutableStateOf(false) }
+    // ---- 0.48.0 RC4: the composer over Home does everything the old chat screen did ----
+    // A message from the bar takes the old screen's send path (slash commands, /clear, call words, quotes, project chats).
+    composer.sender = { t, files -> pending = files; send(t) }
+    composer.privateChat = isPrivate
+    composer.onClosePrivate = { confirmLeavePrivate = true }
+    composer.title = if (nav.inProjectChat) listOfNotNull(projects.firstOrNull { it.id == nav.project }?.name?.ifBlank { null },
+        allChats.firstOrNull { it.id == nav.chat }?.title?.ifBlank { null }).joinToString(" \u00b7 ").ifBlank { "Project chat" } else ""
+    // The old + menu and top bar, from Spotlight rows (SelfMap actions) and the profile avatar.
+    composer.hostAction = { id ->
+        when (id) {
+            "camera" -> { cameraCapture.open(); true }
+            "blazecam" -> { com.blaze.assistant.device.BlazeCamera.open(ctx, null, com.blaze.assistant.device.CameraModes.Origin.CHAT_PLUS, Agent.chatId.value); true }
+            "photos" -> { photos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)); true }
+            "files" -> { files.launch(arrayOf("image/*", "application/pdf", "text/*")); true }
+            "paste" -> { pasteImage(); true }
+            "voice" -> { onMic(); true }
+            "call" -> { startCall(); true }
+            "plan" -> { com.blaze.assistant.agent.Modes.toggleWork()
+                Toast.makeText(ctx, if (com.blaze.assistant.agent.Modes.plan) "Plan mode on: Blaze plans before it acts" else "Plan mode off", Toast.LENGTH_SHORT).show(); true }
+            "approval" -> { com.blaze.assistant.agent.Modes.toggleApproval()
+                Toast.makeText(ctx, if (com.blaze.assistant.agent.Modes.autopilot) "Autopilot: Blaze acts, you can undo" else "Blaze asks before it acts", Toast.LENGTH_SHORT).show(); true }
+            "clear" -> { clearScreen(); true }
+            "views" -> { composer.openSpotlight(); composer.query = "@"; true }
+            "profile" -> { avatarMenu = true; true }
+            else -> false
+        }
+    }
+    // A project chat opens over Home with its whole thread; closing it goes back to its project page.
+    LaunchedEffect(nav.inProjectChat, nav.chat) { if (newLook && nav.inProjectChat) composer.openChat(full = true) }
+    LaunchedEffect(composer.chatOpen) { if (newLook && !composer.chatOpen && navNow().inProjectChat) navNow().back()?.let { go(it) } }
+    // A private chat shows over Home too.
+    LaunchedEffect(isPrivate) { if (newLook && isPrivate) composer.openChat(full = true) }
     // v0.28.3: the thread + composer show on main Chat and on a project chat screen; views (Design…) belong to main Chat.
     val chatBody = nav.tab == ChatNav.CHAT || nav.inProjectChat
     // 0.46.0 Blaze Stage: the main chat is one playground (heroes, widgets, a movable chat, top / reply bars that can hide).
@@ -499,10 +538,11 @@ fun ChatScreen() {
     // ---- v0.39.0 Swipe navigation (Settings › Navigation, independent of Simple / Advanced): Home underneath, Chat slides up over it (SwipeNav). ----
     val density = LocalDensity.current.density
     var sheetH by remember { mutableFloatStateOf(1f) }
-    var sheetP by rememberSaveable { mutableFloatStateOf(if (com.blaze.assistant.agent.SwipeNav.startSurface(swipeMode, !onboard && Settings.bool("onboarded", false)) == com.blaze.assistant.agent.SwipeNav.HOME) 0f else 1f) }
+    var sheetP by rememberSaveable { mutableFloatStateOf(if (newLook || com.blaze.assistant.agent.SwipeNav.startSurface(swipeMode, !onboard && Settings.bool("onboarded", false)) == com.blaze.assistant.agent.SwipeNav.HOME) 0f else 1f) }
     val sheetJob = remember { arrayOfNulls<kotlinx.coroutines.Job>(1) }
     var dragFrom by remember { mutableFloatStateOf(1f) }
-    fun settleTo(t: Float, velocity: Float = 0f) {
+    fun settleTo(t0: Float, velocity: Float = 0f) {
+        val t = if (newLook) 0f else t0   // RC4: there is no chat sheet to slide up; Home stays
         sheetJob[0]?.cancel()
         sheetJob[0] = scope.launch {
             androidx.compose.animation.core.animate(sheetP, t, velocity, androidx.compose.animation.core.spring(dampingRatio = 0.86f, stiffness = 380f)) { x, _ -> sheetP = x }
@@ -513,14 +553,18 @@ fun ChatScreen() {
     val onSheetStop: suspend kotlinx.coroutines.CoroutineScope.(Float) -> Unit = { v ->
         settleTo(com.blaze.assistant.agent.SwipeNav.settle(sheetP, v / density, dragFrom), -v / sheetH.coerceAtLeast(1f))
     }
-    val p = if (swipeMode) sheetP else 1f
+    val p = if (newLook) 0f else if (swipeMode) sheetP else 1f
     // Swipe has no Home tab: a remembered Home tab from Classic tabs becomes the Home surface.
     LaunchedEffect(swipeMode) { if (swipeMode && navNow().tab == ChatNav.HOME) { go(navNow().switchTab(ChatNav.CHAT)); settleTo(0f) } }
     // Things that need the chat bring it up: a question, an approval, a fix card, the computer card, a shared text, the mic.
     val pendingConfirmNow by Agent.pendingConfirm.collectAsState()
     val fixNow by com.blaze.assistant.agent.FixCards.current.collectAsState()
-    LaunchedEffect(question, pendingConfirmNow, fixNow, listenReq) {
-        if (swipeMode && (question != null || pendingConfirmNow != null || fixNow != null || listenReq > 0) && sheetP < 1f) settleTo(1f)
+    val formNow by Agent.pendingForm.collectAsState()
+    val secretNow by com.blaze.assistant.agent.SecretDesk.pending.collectAsState()
+    LaunchedEffect(question, pendingConfirmNow, fixNow, listenReq, formNow, secretNow) {
+        // RC4: what Blaze waits on opens the chat over Home, where its card shows under the messages
+        if (newLook) { if (question != null || pendingConfirmNow != null || fixNow != null || formNow != null || secretNow != null || listenReq > 0) composer.openChat() }
+        else if (swipeMode && (question != null || pendingConfirmNow != null || fixNow != null || listenReq > 0) && sheetP < 1f) settleTo(1f)
     }
     val homeReq by homeRequests.collectAsState()
     LaunchedEffect(homeReq) {
@@ -530,6 +574,7 @@ fun ChatScreen() {
                 settingsPage = null; showViews = false; plusOpen = false; arcOpen = false; avatarMenu = false; showSearch = false
                 GalleryUi.open.value = false; Views.showing.value = ""
                 val n = navNow(); if (n.tab != ChatNav.CHAT || n.inProjectChat) go(n.switchTab(ChatNav.CHAT))
+                composer.closeSpotlight()
                 settleTo(0f)
             } else go(navNow().switchTab(ChatNav.HOME))
         }
@@ -541,6 +586,8 @@ fun ChatScreen() {
     // longer goes down to Home (that made Home and Chat a loop Back could never leave). The shell publishes what is
     // in front and how to close it; BackRule's window interceptor acts on it before any nested BackHandler.
     fun backToChat() {
+        // RC4: Back from a project chat over Home closes it (it showed that chat); the main chat over Home stays as it was.
+        if (newLook) { composer.closeSpotlight(); if (navNow().inProjectChat) composer.dismissChat() }
         settingsPage = null; showViews = false; plusOpen = false; arcOpen = false; avatarMenu = false; showSearch = false
         GalleryUi.open.value = false; Agent.roomOpen.value = -1L; ThemePickerState.open.value = false
         Views.showing.value = ""
@@ -557,7 +604,8 @@ fun ChatScreen() {
                 settingsPage = settingsPage, view = if (n.inProjectChat) "" else Views.showing.value,
                 viewsSheet = showViews, plusMenu = plusOpen, arc = arcOpen, avatarMenu = avatarMenu, search = showSearch,
                 gallery = GalleryUi.open.value, room = Agent.roomOpen.value >= 0, themePicker = ThemePickerState.open.value,
-                homeRoot = HomeRoute.homeRoot(swipe, HomeRedesign.enabled, Agent.privateChat.value))
+                // RC4: with the new look Home is always where Back stops (a private chat over Home asks before leaving itself)
+                homeRoot = newLook || HomeRoute.homeRoot(swipe, HomeRedesign.enabled, Agent.privateChat.value))
         }
         BackRule.toChat = { backToChat() }
     }
@@ -567,11 +615,19 @@ fun ChatScreen() {
     Box(Modifier.fillMaxSize().background(c.paper).glassBackground(c.dark).onSizeChanged { sheetH = it.height.toFloat() }) {
         // v0.39.0 Simple mode: Home (the Home cards) underneath, with the grab handle; Chat slides over it.
         if (swipeMode && p < 1f) {
-            LivingBackground()
+            // RC4: one Blaze look: the new Home's own sky, never the living themes' scenes behind it.
+            if (!newLook) LivingBackground()
+            CompositionLocalProvider(LocalOpenLink provides openLink) {
             HomeSurface(progress = p, onAsk = { t -> Agent.send(t); settleTo(1f) }, onQuote = { t -> quote = t; settleTo(1f) },
-                onOpen = { settleTo(1f) }, drag = sheetDrag, onDragStart = onSheetStart, onDragStop = onSheetStop)
+                onOpen = { settleTo(1f) }, drag = sheetDrag, onDragStart = onSheetStart, onDragStop = onSheetStop,
+                composer = composer, onProfile = { avatarMenu = true }, swipeToChat = !newLook,
+                cards = { if (newLook) WaitingCards(voiceState == Voice.State.LISTENING, clearedAt, onUndoClear = { Agent.undoClear(); clearedAt = 0L },
+                    onClearedGone = { clearedAt = 0L }, control = control, viewOffer = viewOffer, showing = showing,
+                    onOpenOffer = { o -> Views.offer.value = null; Views.find(o.id)?.let { openView(it, o.target) } }) })
+            }
         }
-        Box(Modifier.fillMaxSize().graphicsLayer { translationY = (1f - p) * sheetH }
+        // RC4: the old full chat sheet (top pills, themed scene, thread, Hold to talk / Type / Photo) only without the new look.
+        if (!newLook) Box(Modifier.fillMaxSize().graphicsLayer { translationY = (1f - p) * sheetH }
             .then(if (swipeMode && p < 1f) Modifier.background(c.paper).glassBackground(c.dark) else Modifier)) {
         // v0.39.0 Look & feel: the living background (nothing is drawn for Calm paper, the default).
         // v0.45.8: with a theme picked it is behind every pane, Home included (one theme everywhere).
@@ -808,6 +864,52 @@ fun ChatScreen() {
         }
         }   // v0.39.0: end of the Chat sheet
 
+        // RC4: Projects and Design open over Home (they used to live in the chat sheet).
+        if (newLook && nav.tab == ChatNav.PROJECTS && !nav.inProjectChat) Box(Modifier.fillMaxSize().background(c.paper).statusBarsPadding().navigationBarsPadding()) {
+            val needs = remember(question, allChats) { question?.let { q -> allChats.filter { it.title == q.chat }.map { it.id }.toSet() } ?: emptySet() }
+            Column(Modifier.fillMaxSize()) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(44.dp).clip(CircleShape).clickable { go(navNow().switchTab(ChatNav.CHAT)) }.semantics { contentDescription = "Close Projects" },
+                        contentAlignment = Alignment.Center) { Text("\u2715", style = TextStyle(fontFamily = Type.Sans, fontSize = 18.sp, color = c.ink)) }
+                }
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    ProjectsPane(projects, allChats, busyChats, needs, nav.project,
+                        onOpen = { go(navNow().openProject(it)) }, onBack = { navNow().back()?.let { go(it) } },
+                        onCreate = { go(navNow().openProject(com.blaze.assistant.agent.Projects.create(it).id)) },
+                        onChat = { openProjectChat(it) }, onNewChat = { newProjectChat(it) },
+                        onInstructions = { id, t -> com.blaze.assistant.agent.Projects.setInstructions(id, t) },
+                        onBrief = { id, t -> com.blaze.assistant.agent.Projects.setBrief(id, t) },
+                        onDelete = { com.blaze.assistant.agent.Projects.delete(it); go(navNow().projectDeleted(it)) },
+                        onRenameChat = { id, t -> Agent.renameChat(id, t) },
+                        onDeleteChat = { deleteProjectChat(it) })
+                }
+            }
+            LaunchedEffect(Unit) { Agent.refreshChats() }
+        }
+        if (newLook && showing == "design") Box(Modifier.fillMaxSize().background(c.paper).statusBarsPadding().navigationBarsPadding()) {
+            DesignView(designTarget, busy = mood != Mood.IDLE, status = liveStatus,
+                onAsk = { composer.send(it) }, onOpenInBrowser = { u ->
+                    try { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                    catch (_: Exception) { com.blaze.assistant.browser.BrowserTools.show(ctx) } },
+                home = try { com.blaze.assistant.terminal.Terminal.home() } catch (_: Exception) { null },
+                onBack = { Views.showing.value = DesignNav.back(Views.showing.value) })
+            BackHandler { Views.showing.value = DesignNav.back(Views.showing.value) }
+        }
+        if (newLook) {
+            // RC4: the one-time questions the chat screen used to ask, over Home.
+            val askData by com.blaze.assistant.agent.BackupBrain.askMobile.collectAsState()
+            if (askData) BlazeDialog(com.blaze.assistant.agent.BackupNudge.mobileDataQuestion(com.blaze.assistant.agent.BackupBrain.DOWNLOAD_BYTES),
+                "Until then, Blaze answers online. On Wi-Fi this finishes by itself.",
+                confirm = "Use mobile data", onConfirm = { com.blaze.assistant.agent.BackupBrain.answerMobile(true) },
+                dismiss = "Wait for Wi-Fi", onDismiss = { com.blaze.assistant.agent.BackupBrain.answerMobile(false) })
+            val explain by com.blaze.assistant.phone.flash.PhoneExplainer.requested.collectAsState()
+            if (explain) PhoneExplainerDialog(onOpenSettings = {
+                ComeBack.watch(ctx) { BlazeAccessibilityService.instance != null }
+                try { ctx.startActivity(com.blaze.assistant.phone.PhoneControl.fixIntent(ctx)) }
+                catch (_: Exception) { ctx.startActivity(Intent(AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            }, onClose = { com.blaze.assistant.phone.flash.PhoneExplainer.requested.value = false; Settings.setBool("a11y_seen", true) })
+        }
+
         // v0.45.28: the same glass window Home opens links in, for links tapped in chat replies.
         chatGlassUrl?.let { u -> GlassWindow(u, onClose = { chatGlassUrl = null }, onOpenOutside = { openHomeLink(ctx, it) },
             onAsk = { t -> chatGlassUrl = null; send(t) }, onQuote = { t -> chatGlassUrl = null; quote = t }) }
@@ -826,10 +928,11 @@ fun ChatScreen() {
             val items = buildList {
                 add(MenuItem("account", "Account", if (me != null) "Signed in" else "Sign in"))
                 add(MenuItem("settings", "Settings"))
-                add(MenuItem("views", "All views", "/VIEWS"))
+                add(MenuItem("views", "All views", if (newLook) "@" else "/VIEWS"))
+                if (newLook) add(MenuItem("projects", "Projects"))
                 add(MenuItem("control", "Phone control", if (Settings.phoneControl && a11yOn) "ON" else "OFF"))
                 // v0.45.2: "Themes" opens the theme picker; light / dark moved to a long-press on the profile icon (and Settings › Look & feel).
-                add(MenuItem("themes", "Themes", themeName))
+                if (!newLook) add(MenuItem("themes", "Themes", themeName))   // RC4: one Blaze look
                 // 0.46.0: one tap back to the plain chat layout (cards stay as small widgets).
                 if (!stage.isNormal) add(MenuItem("stage_reset", "Reset layout", "STAGE"))
                 add(MenuItem("update", "Check for updates", "v" + runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrDefault("")))
@@ -842,7 +945,8 @@ fun ChatScreen() {
                         "account" -> settingsPage = "account"
                         "settings" -> settingsPage = ""
                         "router" -> settingsPage = "ai"
-                        "views" -> showViews = true
+                        "views" -> if (newLook) { composer.openSpotlight(); composer.query = "@" } else showViews = true
+                        "projects" -> go(navNow().projectsList())
                         "control" -> settingsPage = "control"
                         "themes" -> ThemePickerState.open.value = true
                         "stage_reset" -> com.blaze.assistant.stage.StageStore.dispatch(com.blaze.assistant.stage.StageAction.Reset)
@@ -867,7 +971,7 @@ fun ChatScreen() {
         }
         if (confirmLeavePrivate) BlazeDialog(
             title = com.blaze.assistant.agent.PrivateChat.LEAVE_TITLE, body = com.blaze.assistant.agent.PrivateChat.LEAVE_TEXT,
-            confirm = "Leave", onConfirm = { confirmLeavePrivate = false; Agent.leavePrivate() }, warm = true,
+            confirm = "Leave", onConfirm = { confirmLeavePrivate = false; Agent.leavePrivate(); composer.dismissChat() }, warm = true,
             dismiss = "Stay", onDismiss = { confirmLeavePrivate = false })
         if (!onboard && gate) SetupGateScreen(onOpenPage = { settingsPage = it }, onDone = { gate = false })
         if (onboard) SetupFlow(setupPage) { prompt ->
@@ -876,6 +980,7 @@ fun ChatScreen() {
             when {
                 prompt == null -> { if (swipeMode) settleTo(0f) }
                 prompt.startsWith("/settings") -> settingsPage = "ai"
+                newLook -> composer.send(prompt)
                 else -> Agent.send(prompt)
             }
         }
@@ -1552,3 +1657,36 @@ internal fun SpeakerName(who: com.blaze.assistant.agent.Duo.Who) {
 
 /** v0.31.2: how long a "streaming" reply may go without new words before it settles (orb home, last word solid). */
 const val STREAM_STALE_MS = 2200L
+
+/**
+ * 0.48.0 RC4: what Blaze is waiting on, under the chat over Home (it lived at the bottom of the old chat screen): the
+ * listening strip, approvals and drafts (Send / Not now), questions, fix cards, secure forms and secret requests, Blaze
+ * Phone's live tile, "Open in Design?", the update banner, and the Undo bars.
+ */
+@Composable
+private fun WaitingCards(listening: Boolean, clearedAt: Long, onUndoClear: () -> Unit, onClearedGone: () -> Unit,
+                         control: com.blaze.assistant.phone.PhoneControl.State, viewOffer: Views.Offer?, showing: String,
+                         onOpenOffer: (Views.Offer) -> Unit) {
+    val ctx = LocalContext.current
+    if (listening) ListeningStrip(onStop = { Voice.stopByTap() })
+    if (control != com.blaze.assistant.phone.PhoneControl.State.CONNECTED && Settings.phoneControl && Settings.bool("a11y_seen", false))
+        PhoneControlBanner(control) {
+            ComeBack.watch(ctx) { BlazeAccessibilityService.instance != null }
+            try { ctx.startActivity(com.blaze.assistant.phone.PhoneControl.fixIntent(ctx)) }
+            catch (_: Exception) { ctx.startActivity(Intent(AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        }
+    UpdateBanner()
+    ConfirmCard()
+    QuestionCard()
+    FixCard()
+    SecureFormCard()
+    SecretRequestCard()
+    SecretPasteCard()
+    PhoneLiveCard()
+    viewOffer?.let { o -> if (showing != o.id) ViewOfferChip(Views.offerLabel(o.id), onOpen = { onOpenOffer(o) }, onDismiss = { Views.offer.value = null }) }
+    if (clearedAt > 0L) {
+        LaunchedEffect(clearedAt) { delay(com.blaze.assistant.agent.ClearScreen.UNDO_MS - 3_000); onClearedGone() }
+        Box(Modifier.fillMaxWidth().height(72.dp)) { UndoBar("Chat cleared \u00b7 nothing is forgotten", onUndo = onUndoClear, onDismiss = onClearedGone) }
+    }
+    Box(Modifier.fillMaxWidth()) { UndoCountdownBar(onUndone = { line -> Agent.note(line) }) }
+}

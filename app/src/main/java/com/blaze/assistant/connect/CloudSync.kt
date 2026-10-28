@@ -151,6 +151,7 @@ object CloudSync {
         val token = BlazeAccount.sessionToken()
         if (token.isBlank()) throw HttpError(401, "signed_out")
         val c = try { UrlSafety.open(base() + path) } catch (e: Exception) { throw Offline(e) }
+        var ok = false
         try {
             c.requestMethod = method
             c.connectTimeout = 15_000; c.readTimeout = 45_000
@@ -166,8 +167,13 @@ object CloudSync {
             val text = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
             val o = runCatching { JSONObject(text) }.getOrElse { JSONObject() }
             if (code >= 400) throw HttpError(code, o.optJSONObject("error")?.optString("code").orEmpty().ifBlank { "http_$code" })
+            ok = true
             return o
-        } catch (e: java.io.IOException) { throw Offline(e) } finally { c.disconnect() }
+        } catch (e: java.io.IOException) { throw Offline(e) } finally {
+            // 0.48.0 RC4: a fully read answer leaves the connection open for the next page (keep-alive); disconnect()
+            // after every request made each pull page and push batch a new TLS handshake.
+            if (!ok) c.disconnect()
+        }
     }
 
     private fun metaOf(o: JSONObject) = SyncEngine.Meta(o.optBoolean("set_up"), o.optString("salt"), o.optString("kdf"), o.optString("check"), o.optString("epoch"), o.optLong("bytes"))

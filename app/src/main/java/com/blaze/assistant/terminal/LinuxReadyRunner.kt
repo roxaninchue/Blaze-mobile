@@ -95,6 +95,7 @@ object LinuxReadyRunner {
      * the published SHA256SUMS (a mismatch installs nothing). 32-bit phones: no build is published, so it's skipped.
      */
     private fun installCli(rootfs: File) {
+        CliAuth.sync()   // RC4: the CLI is signed in to the app's account (also where no CLI build is published yet)
         val asset = LinuxReady.cliAsset(cpu()) ?: return
         if (!online()) return
         val sums = httpText("${LinuxReady.CLI_BASE}/SHA256SUMS") ?: return

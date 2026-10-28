@@ -113,13 +113,30 @@ class SyncEngine(
             state.clearItems(); state.cursor = 0; state.epoch = meta.epoch
         }
         pullAll(meta.bytes)
-        flushAll()
-        try { pushAll() } finally { flushAll() }
+        flushAll(); restampAll()
+        try { pushAll() } finally { flushAll(); restampAll() }
         state.save()
         return Report(pulled, pushed, merged, skipped.toList(), full, failedOpen)
     }
 
     private fun flushAll() { for (a in adapters) a.flush() }
+
+    /**
+     * 0.48.0 RC4 (cloud sync speed): items applied from the server whose local stamp is read once the applies are written
+     * ([flushAll]), not right after each apply. Reading it per item made every applied message re-index its whole chat.
+     * Key: kind + NUL + id.
+     */
+    private val restamp = LinkedHashMap<String, Adapter>()
+
+    private fun restampAll() {
+        if (restamp.isEmpty()) return
+        for ((k, a) in restamp) {
+            val id = k.substringAfter('\u0000')
+            val e = state.get(a.kind, id) ?: continue
+            state.put(a.kind, id, e.copy(stamp = a.stamp(id) ?: ""))
+        }
+        restamp.clear()
+    }
 
     // ---------------- pull ----------------
 
@@ -128,15 +145,29 @@ class SyncEngine(
         val full = since == 0L
         var guard = 0
         var seen = 0; var bytes = 0L
-        while (guard++ < 10_000) {
-            val page = api.pull(since, PULL_LIMIT)
-            for (r in page.items) take(r)
-            since = page.next
-            state.cursor = since
-            seen += page.items.size; bytes += page.items.sumOf { (it.blob?.length ?: 0).toLong() }
-            tell(SyncProgress.Step(SyncProgress.Phase.PULL, seen, 0, bytes, if (full) cloudBytes else 0, full, page.more && page.items.isNotEmpty()))
-            if (!page.more || page.items.isEmpty()) break
-        }
+        // 0.48.0 RC4: the next page downloads while this one is applied (one request in flight, cursor saved only after a
+        // page is applied), so a restore waits on the network or the phone, not both one after the other.
+        val net = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "sync-pull").apply { isDaemon = true } }
+        try {
+            val first = since
+            var next: java.util.concurrent.Future<Page>? = net.submit<Page> { api.pull(first, PULL_LIMIT) }
+            while (guard++ < 10_000) {
+                val page = await(next ?: break)
+                val more = page.more && page.items.isNotEmpty()
+                next = if (more) { val from = page.next; net.submit<Page> { api.pull(from, PULL_LIMIT) } } else null
+                for (r in page.items) take(r)
+                since = page.next
+                state.cursor = since
+                seen += page.items.size; bytes += page.items.sumOf { (it.blob?.length ?: 0).toLong() }
+                tell(SyncProgress.Step(SyncProgress.Phase.PULL, seen, 0, bytes, if (full) cloudBytes else 0, full, more))
+                if (!more) break
+            }
+        } finally { net.shutdownNow() }
+    }
+
+    /** The page, or the exception the request threw (unwrapped, so Busy / HTTP errors keep their type). */
+    private fun await(f: java.util.concurrent.Future<Page>): Page = try { f.get() } catch (e: java.util.concurrent.ExecutionException) {
+        throw (e.cause ?: e)
     }
 
     private fun tell(s: SyncProgress.Step) { try { progress?.invoke(s) } catch (_: Exception) { } }
@@ -147,12 +178,15 @@ class SyncEngine(
         val st = state.get(r.kind, r.id)
         if (st != null && st.rev >= r.rev && !st.skipped) return   // already have it (our own push coming back)
         val remote = openRemote(r) ?: return
-        val stampNow = a.stamp(r.id)
+        val key = r.kind + "\u0000" + r.id
+        // Applied earlier this round (stamp not read yet): unchanged here since.
+        val stampNow = if (key in restamp) st?.stamp else a.stamp(r.id)
         val changedHere = stampNow != (st?.stamp) && !(stampNow == null && (st == null || st.deleted))
         if (!changedHere) {
             if (!(remote.deleted && stampNow == null)) a.apply(remote)
             pulled++
-            state.put(r.kind, r.id, Entry(r.rev, a.stamp(r.id) ?: "", remote.t, remote.deleted))
+            state.put(r.kind, r.id, Entry(r.rev, st?.stamp.takeIf { key in restamp } ?: "", remote.t, remote.deleted))
+            restamp[key] = a
             return
         }
         // Changed on both sides since the last sync.
@@ -160,7 +194,8 @@ class SyncEngine(
         when (val o = SyncMerge.resolve(local, remote)) {
             SyncMerge.Outcome.TakeRemote -> {
                 a.apply(remote); pulled++
-                state.put(r.kind, r.id, Entry(r.rev, a.stamp(r.id) ?: "", remote.t, remote.deleted))
+                state.put(r.kind, r.id, Entry(r.rev, "", remote.t, remote.deleted))
+                restamp[key] = a
             }
             SyncMerge.Outcome.KeepLocal -> {
                 // Push ours on top of the server's rev: the old stamp stays, so it still counts as changed.
@@ -234,6 +269,7 @@ class SyncEngine(
                 tell(SyncProgress.Step(SyncProgress.Phase.PUSH, sent, out.size))
             }
             if (conflicts == 0) return
+            flushAll(); restampAll()   // the conflicts taken above: write them and read their stamps before the next round
         }
     }
 

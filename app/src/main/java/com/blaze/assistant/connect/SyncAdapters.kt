@@ -190,9 +190,22 @@ class MemoryAdapter(private val store: MemoryStore) : SyncEngine.Adapter {
         }
     }
 
-    private fun byId(): Map<String, MemoryStore.Line> = store.all().associateBy { idOf(it.text) }
+    /**
+     * 0.48.0 RC4 (cloud sync speed): the lines by id, read and hashed once and kept until [flush] / [stamps] instead of
+     * re-reading and re-hashing every line for each pulled item (a restore was O(lines²) database reads and hashes).
+     * [apply] keeps it current.
+     */
+    private var cache: HashMap<String, MemoryStore.Line>? = null
 
-    override fun stamps(): Map<String, String> = byId().mapValues { (_, l) -> "${l.updated}:${l.kind}:${l.subject}" }
+    private fun byId(): HashMap<String, MemoryStore.Line> = cache ?: HashMap(store.all().associateBy { idOf(it.text) }).also { cache = it }
+
+    private fun stampOf(l: MemoryStore.Line) = "${l.updated}:${l.kind}:${l.subject}"
+
+    override fun stamps(): Map<String, String> { cache = null; return byId().mapValues { (_, l) -> stampOf(l) } }
+
+    override fun stamp(id: String): String? = byId()[id]?.let(::stampOf)
+
+    override fun flush() { cache = null }
 
     override fun read(id: String): SyncMerge.Item? {
         val l = byId()[id] ?: return null
@@ -200,14 +213,19 @@ class MemoryAdapter(private val store: MemoryStore) : SyncEngine.Adapter {
     }
 
     override fun apply(item: SyncMerge.Item) {
-        val here = byId()[item.id]
-        if (item.deleted) { here?.let { store.remove(it) }; return }
+        val map = byId()
+        val here = map[item.id]
+        if (item.deleted) { here?.let { store.remove(it); map.remove(item.id) }; return }
         val d = item.data!!
         val text = d.optString("text")
         if (text.isBlank() || idOf(text) != item.id) return
         if (here != null && here.kind == d.optString("kind") && here.subject == d.optString("subject")) return
         if (here != null) store.remove(here)
-        store.add(MemoryStore.Line(d.optString("kind"), d.optString("subject"), text, d.optString("related"), item.t))
+        val line = MemoryStore.Line(d.optString("kind"), d.optString("subject"), text, d.optString("related"), item.t)
+        store.add(line)
+        // Kept current for the rest of the pull; the store may normalise what it saves, so the stamps the engine keeps
+        // are read after the flush, from the database again.
+        map[item.id] = line
     }
 }
 

@@ -31,7 +31,8 @@ class HomeRc2Test {
     @Test fun noEmptyCellWithoutTasks() {
         val rows = HomeGrid.rows(hasTasks = false)
         assertTrue(rows.all { it.full || it.cards.size == 2 })
-        assertEquals(listOf(HomeGrid.Card.MUSIC), rows[1].cards)
+        // RC4: Music | To-do (empty state) like the target, not Music across the row
+        assertEquals(listOf(HomeGrid.Card.MUSIC, HomeGrid.Card.TODO), rows[1].cards)
     }
 
     @Test fun newHomeIsTheRoot() {

@@ -92,4 +92,25 @@ class SyncAdaptersTest {
         a.apply(SyncMerge.Item("memory", id, 7, null))
         assertTrue(lines.isEmpty())
     }
+
+    /** 0.48.0 RC4: a memory restore reads the store once per flush, not once per pulled line (it was O(lines²)). */
+    @Test fun memoryRestoreReadsTheStoreOnce() {
+        val lines = ArrayList<MemoryStore.Line>()
+        var reads = 0
+        val store = object : MemoryStore {
+            override fun all(): List<MemoryStore.Line> { reads++; return lines.toList() }
+            override fun add(l: MemoryStore.Line) { lines += l }
+            override fun remove(l: MemoryStore.Line) { lines.removeAll { it.text == l.text } }
+        }
+        val a = MemoryAdapter(store)
+        for (i in 0 until 300) {
+            val text = "Fact number $i about the user"
+            val id = MemoryAdapter.idOf(text)
+            if (a.stamp(id) == null) a.apply(SyncMerge.Item("memory", id, i.toLong() + 1, JSONObject().put("kind", "fact").put("subject", "You").put("text", text)))
+        }
+        assertEquals(300, lines.size)
+        assertTrue("store read $reads times", reads <= 2)
+        a.flush()
+        assertEquals(300, a.stamps().size)
+    }
 }

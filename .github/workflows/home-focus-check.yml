@@ -63,6 +63,12 @@ jobs:
             adb logcat -d -v threadtime > focus-out/logcat.txt
             grep -E "OK \(|FAILURES|Tests run|shortMsg|stack=" focus-out/instrument.txt | head -20 | tee focus-out/SUMMARY.md
             grep "BlazeFocusCheck" focus-out/logcat.txt | sed 's/^.*BlazeFocusCheck: /  /' | tee -a focus-out/SUMMARY.md
+            # 0.48.0 RC4: phone-size screenshots of the new Home / keyboard / floating Spotlight (no recording)
+            adb shell settings put secure show_ime_with_hard_keyboard 1 || true
+            timeout 600 adb shell am instrument -w -r -e class com.blaze.assistant.smoke.Rc4ShotsCheck com.blaze.assistant.test/androidx.test.runner.AndroidJUnitRunner > focus-out/rc4-instrument.txt 2>&1 || true
+            adb pull /sdcard/Android/data/com.blaze.assistant/files/rc4 focus-out/rc4 > /dev/null 2>&1 || echo "no rc4 screenshots" >> focus-out/SUMMARY.md
+            adb logcat -d -v threadtime | grep "BlazeRc4Shots" | sed 's/^.*BlazeRc4Shots: /  /' | tee -a focus-out/SUMMARY.md
+            grep -E "OK \(|FAILURES|Tests run" focus-out/rc4-instrument.txt | head -5 | tee -a focus-out/SUMMARY.md
             grep -q "^OK (1 test)" focus-out/instrument.txt
       - name: Summary
         if: always()

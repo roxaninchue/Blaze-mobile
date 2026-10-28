@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -92,8 +93,8 @@ class HomeRedesignShotsTest {
         val sky = px(180f, 101f)
         assertTrue("$label: the gutter between the top cards is sky (${Integer.toHexString(sky)})", blue(sky) > 150)
         val inside = mutableListOf(23f to 101f, 337f to 101f)
-        // row 2: Music | To-do (171 dp, centre 293) or, without tasks, Music full width (92 dp, centre 254)
-        if (withTasks) { inside += 23f to 293f; inside += 337f to 293f } else { inside += 23f to 254f; inside += 337f to 254f }
+        // row 2: Music | To-do (171 dp, centre 293); RC4: also without tasks (To-do's empty state), like the target
+        inside += 23f to 293f; inside += 337f to 293f
         for ((x, y) in inside) {
             val p = px(x, y)
             assertTrue("$label: card fill at ($x, $y) dp is navy, got ${Integer.toHexString(p)}", blue(p) < 140)
@@ -299,11 +300,11 @@ class HomeRedesignShotsTest {
         val st = com.blaze.assistant.ui.composer.ComposerState().apply { spotlightOpen = true }
         com.blaze.assistant.ui.MotionTokens.setEnabledForTests(false)
         overNewHome("spotlight-over-new-home") {
-            androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
-                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = androidx.compose.ui.Alignment.BottomCenter) {
-                    com.blaze.assistant.ui.composer.SpotlightPanel(st, onAct = {})
+            // RC4: Spotlight floats on its own in the upper third (no chat bar under it), like macOS Spotlight
+            Box(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
+                Box(Modifier.align(androidx.compose.ui.Alignment.TopCenter).padding(top = 96.dp)) {
+                    com.blaze.assistant.ui.composer.SpotlightPanel(st, onAct = {}, maxHeight = 560.dp)
                 }
-                com.blaze.assistant.ui.composer.BlazeChatBar(st)
             }
         }
         com.blaze.assistant.ui.MotionTokens.setEnabledForTests(true)
